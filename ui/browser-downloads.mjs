@@ -89,6 +89,8 @@ export class BrowserDownloads {
         const cancel = node.dataset.downloadAction === "cancel"; node.hidden = cancel ? item.status !== "running" : item.status !== "completed";
         node.disabled = this.busy.has(item.id) || (!cancel && !item.available) || Boolean(this.value.storageError);
       }
+      const focused = document.activeElement;
+      if (row.contains(focused) && focused.hidden) (row.querySelector("button:not([hidden]):not(:disabled)") || this.root.querySelector('[data-download-action="close"]')).focus();
     }
     let empty = list.querySelector(".downloads-empty");
     if (!items.length && !empty) { empty = document.createElement("p"); empty.className = "downloads-empty"; empty.textContent = "还没有下载文件"; list.append(empty); }

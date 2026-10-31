@@ -302,13 +302,24 @@ internal sealed class BrowserDownloads {
     internal void Start(CoreWebView2DownloadStartingEventArgs args, BrowserTab source, string owner) {
         if (storageError != "") throw new Exception(storageError);
         var operation = args.DownloadOperation;
-        var item = new BrowserDownloadRecord { id = Guid.NewGuid().ToString("D"), owner = owner, name = Filename(args.ResultFilePath), url = operation.Uri,
-            at = DateTime.UtcNow.ToString("o"), status = "running", error = "", total = Total(operation), Operation = operation, Source = source };
-        string directory = Path.Combine(DirectoryRoot(), item.id); Directory.CreateDirectory(directory);
-        item.path = Path.Combine(directory, item.name); items.Add(item);
-        try { Save(); } catch { items.Remove(item); throw; }
+        // WebView2 can replace an operation during a network retry without
+        // terminating its earlier wrapper. Keep one active request per URL/tab;
+        // an explicit repeat also restarts that request rather than orphaning it.
+        var item = items.Find(entry => entry.Source == source && entry.url == operation.Uri && entry.status == "running");
+        bool fresh = item == null;
+        if (fresh) { item = new BrowserDownloadRecord { id = Guid.NewGuid().ToString("D"), owner = owner, at = DateTime.UtcNow.ToString("o"), status = "running" }; items.Add(item); }
+        else { var prior = item.Operation; item.Operation = null; if (prior != null) prior.Cancel(); }
+        item.name = Filename(args.ResultFilePath); item.url = operation.Uri; item.error = ""; item.received = 0; item.total = Total(operation); item.Operation = operation; item.Source = source;
+        try {
+            string directory = Path.Combine(DirectoryRoot(), Guid.NewGuid().ToString("D")); Directory.CreateDirectory(directory);
+            item.path = Path.Combine(directory, item.name); Save();
+        } catch (Exception error) {
+            item.status = "interrupted"; item.error = storageError == "" ? error.Message : storageError; item.Operation = null; item.Source = null;
+            if (storageError == "") { try { Save(); } catch { } }
+            source.ReleaseDownloadView(); Publish(); throw;
+        }
         args.ResultFilePath = item.path; args.Handled = true;
-        operation.StateChanged += delegate { if (item.Operation != null) { Update(item); Publish(); } };
+        operation.StateChanged += delegate { if (Object.ReferenceEquals(item.Operation, operation)) { Update(item); Publish(); } };
         Publish();
     }
     private bool Update(BrowserDownloadRecord item) {

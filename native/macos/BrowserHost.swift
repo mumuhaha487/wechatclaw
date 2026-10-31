@@ -168,9 +168,16 @@ import WebKit
         }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { errorText = ""; finishNavigation(.success(())); changed() }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { errorText = error.localizedDescription; finishNavigation(.failure(error)); changed() }
+    private func downloadPolicyError(_ error: Error) -> Bool {
+        let value = error as NSError
+        return downloadNavigation && (value.code == NSURLErrorCancelled || (value.domain == "WebKitErrorDomain" && value.code == 102))
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        if downloadPolicyError(error) { return }
+        errorText = error.localizedDescription; finishNavigation(.failure(error)); changed()
+    }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        if downloadNavigation && (error as NSError).code == NSURLErrorCancelled { return }
+        if downloadPolicyError(error) { return }
         errorText = error.localizedDescription; finishNavigation(.failure(error)); changed()
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -277,8 +284,14 @@ private struct BrowserDownloadRecord: Codable {
     }
     func start(_ download: WKDownload, source: BrowserWindow, owner: String) {
         // Keep the source web view alive even after its visible tab is closed.
-        let id = UUID().uuidString.lowercased()
-        items.append(BrowserDownloadRecord(id: id, owner: owner, name: "准备下载…", path: "", url: download.originalRequest?.url?.absoluteString ?? "", at: ISO8601DateFormatter().string(from: Date()), status: "running", error: ""))
+        let url = download.originalRequest?.url?.absoluteString ?? ""
+        var id = UUID().uuidString.lowercased()
+        if let prior = running.values.first(where: { $0.source === source && $0.download.originalRequest?.url?.absoluteString == url }) {
+            id = prior.id; running.removeValue(forKey: ObjectIdentifier(prior.download)); prior.download.delegate = nil; prior.download.cancel(nil)
+            if let index = items.firstIndex(where: { $0.id == id }) { items[index].received = 0; items[index].total = 0; items[index].path = "" }
+        } else {
+            items.append(BrowserDownloadRecord(id: id, owner: owner, name: "准备下载…", path: "", url: url, at: ISO8601DateFormatter().string(from: Date()), status: "running", error: ""))
+        }
         running[ObjectIdentifier(download)] = (id, download, source); download.delegate = self
     }
     private func index(_ download: WKDownload) -> Int? { guard let entry = running[ObjectIdentifier(download)] else { return nil }; return items.firstIndex { $0.id == entry.id } }
@@ -305,7 +318,7 @@ private struct BrowserDownloadRecord: Codable {
             let root: URL
             if let override = ProcessInfo.processInfo.environment["QQCLAW_DOWNLOADS_DIR"], !override.isEmpty { root = URL(fileURLWithPath: override, isDirectory: true) }
             else { root = try FileManager.default.url(for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("QQClaw", isDirectory: true) }
-            let folder = root.appendingPathComponent(items[i].id, isDirectory: true); try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let folder = root.appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true); try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let destination = folder.appendingPathComponent(filename)
             items[i].name = filename; items[i].path = destination.path; items[i].total = max(0, response.expectedContentLength)
             try save(); completionHandler(destination); publish()
