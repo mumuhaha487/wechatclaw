@@ -10,6 +10,7 @@ import { parseActionBlocksSafe } from "./wechat-actions.mjs";
 import { buildPrompt } from "./wechat-format.mjs";
 import { sameWorkspace, workspaceKey } from "../shared/workspace.mjs";
 import { BrowserViewer, officialBrowserStatus } from "./browser.mjs";
+import { DesktopAttachments, attachmentPreview } from "./desktop-attachments.mjs";
 
 export const EFFORTS = [
   "",
@@ -97,6 +98,7 @@ export class App {
   } = {}) {
     Object.assign(this, { directory, native, emit, clientFactory, runtimeResolver, log });
     this.store = store || new Store(directory, native);
+    this.desktopAttachments = new DesktopAttachments(directory || this.store.directory);
     this.clients = new Map();
     this.workspaces = new Map();
     this.sessionRuns = new Map();
@@ -247,7 +249,7 @@ export class App {
         return await this.finish(session, "任务已停止。", taskKey);
       session.runStats = { startedAt: Date.now(), tools: 0, actions: [], changes: [] };
       const progressSeen = new Set();
-      const reply = await client.answer(session, taskKey ? text : buildPrompt(text, [], "Web"), (event) => {
+      const reply = await client.answer(session, taskKey ? text : buildPrompt(text, options.attachments || [], "Web"), (event) => {
         const item = event.params?.item;
         if (
           event.method === "item/started" &&
@@ -287,7 +289,7 @@ export class App {
           }
         }
         if (UI_CODEX_METHODS.has(event.method)) this.emit("codex", { sessionId: id, ...event });
-      });
+      }, { images: taskKey ? [] : (options.attachments || []).filter(a => a.kind === "image").map(a => a.path) });
       await progressChain;
       session.runStats.durationMs = Date.now() - session.runStats.startedAt;
       return await this.finish(session, reply, taskKey);
@@ -499,6 +501,14 @@ export class App {
       }
       case "browser.officialStatus":
         return officialBrowserStatus();
+      case "attachment.import":
+        return this.desktopAttachments.import(p);
+      case "attachment.preview": {
+        const attachment = p.id ? await this.desktopAttachments.resolve(p.id) :
+          this.getSession(p.sessionId).messages[Number(p.message)]?.attachments?.[Number(p.attachment)];
+        if (!attachment) throw new Error("附件不存在，请重新打开会话。");
+        return attachmentPreview(attachment.path);
+      }
       case "attachment.reveal": {
         const session = this.getSession(p.sessionId);
         const message = session.messages[Number(p.message)];
@@ -700,8 +710,13 @@ export class App {
       }
       case "chat.send": {
         const session = this.getSession(p.sessionId);
+        const attachments = await this.desktopAttachments.resolveMany(p.attachments || []);
+        const text = String(p.text || "").trim();
+        if (text.length > 120000 || (!text && !attachments.length)) throw new Error("请输入任务或添加附件。");
         // Return promptly; completion and errors are delivered through state events.
-        this.enqueue(p.sessionId, p.text).catch((error) =>
+        this.enqueue(session.id, text || "请查看附件。", undefined, undefined, {
+          attachments, displayText: text || "请查看附件。",
+        }).catch((error) =>
           this.emit("task-error", {
             sessionId: p.sessionId,
             error: safeError(error),

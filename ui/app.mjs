@@ -10,6 +10,8 @@ import {
 import { ModelCatalog } from "./model-catalog.mjs";
 import { sameWorkspace, workspaceKey } from "../shared/workspace.mjs";
 import { contextSnapshot } from "../shared/context-usage.mjs";
+import { AttachmentPreviews } from "./attachments.mjs";
+import { NavigationHistory } from "./navigation.mjs";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -116,6 +118,8 @@ const ui = {
   detailStates: new Map(),
   expanded: new Set(),
   draft: "",
+  attachments: [],
+  drafts: new Map(),
   overlay: "",
   connectionDraft: null,
   editingAccount: "",
@@ -167,6 +171,60 @@ const pages = [
   { id: "about", label: "关于", icon: "info", group: "" },
 ];
 const session = () => state.sessions.find((s) => s.id === ui.active);
+const previews = new AttachmentPreviews(rpc);
+const navigation = new NavigationHistory();
+const draftKey = () => ui.active || `new:${workspaceKey(project()?.workspace || "")}`;
+function rememberDraft() {
+  const key = draftKey();
+  const entry = ui.drafts.get(key) || { pending: 0 };
+  Object.assign(entry, { text: ui.draft, attachments: ui.attachments });
+  ui.drafts.set(key, entry);
+  return entry;
+}
+function restoreDraft() {
+  const entry = ui.drafts.get(draftKey());
+  ui.draft = entry?.text || "";
+  ui.attachments = entry?.attachments || [];
+}
+function hydrateAttachments() {
+  previews.hydrate($("app"), img => img.dataset.uploadId ? { id: img.dataset.uploadId } : {
+    sessionId: img.dataset.sessionId, message: Number(img.dataset.message), attachment: Number(img.dataset.attachment),
+  }).catch(() => {});
+}
+async function addAttachments(files, local = false) {
+  const key = draftKey(), target = rememberDraft();
+  if (target.pending) return toast("请等待当前附件添加完成。");
+  target.pending++;
+  render();
+  const errors = [];
+  try {
+    for (const file of files) {
+      if (target.attachments.length >= 8) { errors.push("每条消息最多添加 8 个附件。"); break; }
+      try {
+        let params;
+        if (local) params = { path: file };
+        else {
+          if (!file.size || file.size > 20 * 1024 * 1024) throw new Error("附件为空或超过 20 MiB。");
+          const data = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(",")[1]);
+            reader.onerror = () => reject(new Error("无法读取附件。"));
+            reader.readAsDataURL(file);
+          });
+          params = { data, name: file.name || "粘贴的图片.png" };
+        }
+        const attachment = await rpc("attachment.import", params);
+        if (target.attachments.reduce((n, a) => n + a.size, 0) + attachment.size > 40 * 1024 * 1024)
+          throw new Error("每条消息的附件总大小不能超过 40 MiB。");
+        target.attachments.push(attachment);
+      } catch (error) { errors.push(error.message); }
+    }
+  } finally {
+    target.pending--;
+    if (key === draftKey()) { render(); $("composer-input")?.focus(); }
+    if (errors.length) toast([...new Set(errors)].join(" "));
+  }
+}
 const environmentReady = () => Boolean(ui.environmentChecked && ui.runtime?.nodeReady && ui.environment?.codexPath);
 let environmentRefresh = null;
 const project = () => {
@@ -329,7 +387,7 @@ function sidebar() {
     '<div class="session-row' +
     (nested ? " nested" : "") +
     (item.id === ui.active ? " active" : "") +
-    '" data-action="select-session" data-id="' +
+    '" role="button" tabindex="0" data-action="select-session" data-id="' +
     item.id +
     '" title="' +
     esc(item.title) +
@@ -390,7 +448,7 @@ function sidebar() {
             return (
               '<div class="project-row' +
               (open ? " open" : "") +
-              '" data-action="project-toggle" data-id="' +
+              '" role="button" tabindex="0" aria-expanded="' + open + '" data-action="project-toggle" data-id="' +
               p.id +
               '" title="' +
               esc(p.workspace) +
@@ -439,7 +497,7 @@ function sidebar() {
     ) +
     ib("history", "会话历史", "clock") +
     ib("notifications", "通知", "bell") +
-    '<button class="version" data-action="about">v0.3.11</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v0.3.12</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -455,13 +513,16 @@ function messages() {
     ${s.busy ? `<div class="activity-row"><span class="spinner"></span>${esc(ui.activities.get(s.id) || "Codex 正在处理…")}</div>${ui.logs.get(s.id)?.length ? `<details class="activity-detail"><summary>查看工具活动 · ${ui.logs.get(s.id).length}</summary>${esc(ui.logs.get(s.id).slice(-12).join("\n"))}</details>` : ""}${stream ? `<article class="message assistant"><div class="message-content">${renderMarkdown(stream)}</div></article>` : ""}` : ""}`;
 }
 function messageView(m, index, s) {
-  const attachments = (m.attachments || []).map((a, attachment) => `<button class="message-attachment" data-action="reveal-attachment" data-message="${index}" data-attachment="${attachment}" title="${esc(a.label || a.path)} · 在文件夹中显示">${icon("file")}<span><span class="attachment-name">${esc(a.label || a.path.split(/[\\/]/).pop())}</span><small>在文件夹中显示</small></span>${icon("external")}</button>`).join("");
+  const attachments = (m.attachments || []).map((a, attachment) => {
+    const image = a.type === "image";
+    return `<button class="message-attachment${image ? " image-attachment" : ""}" data-action="${image ? "preview-attachment" : "reveal-attachment"}" data-message="${index}" data-attachment="${attachment}" title="${esc(a.label || a.path)} · ${image ? "查看图片" : "在文件夹中显示"}">${image ? `<span class="attachment-thumb">${icon("file")}<img hidden alt="${esc(a.label || "图片附件")}" data-preview-key="${esc(`${s.id}:${index}:${attachment}:${a.path}`)}" data-session-id="${esc(s.id)}" data-message="${index}" data-attachment="${attachment}"></span>` : icon("file")}<span><span class="attachment-name">${esc(a.label || a.path.split(/[\\/]/).pop())}</span><small>${image ? "查看图片" : "在文件夹中显示"}</small></span>${icon("external")}</button>`;
+  }).join("");
   const assistant = m.role === "assistant" && m.kind !== "progress";
   const time = m.at && !Number.isNaN(Date.parse(m.at)) ? `<time datetime="${esc(m.at)}" title="${esc(new Date(m.at).toLocaleString())}">${esc(new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time>` : "";
   const changes = m.runStats?.changes || [];
   return `<article class="message ${m.role}${m.kind === "progress" ? " progress-message" : ""}">
     ${m.kind === "progress" ? '<div class="progress-label">过程进度</div>' : assistant && m.runStats ? runSummary(m.runStats, `${s.id}-${index}`) : ""}
-    <div class="message-content">${m.role === "assistant" ? markdown(m.text) : esc(m.text)}</div>${attachments}
+    ${m.role === "user" ? attachments : ""}<div class="message-content">${m.role === "assistant" ? markdown(m.text) : esc(m.text)}</div>${m.role === "user" ? "" : attachments}
     ${changes.length ? `<details class="change-card" data-detail-key="${s.id}-${index}-changes"><summary>${icon("review")}<strong>已修改 ${new Set(changes.map(c => c.path)).size} 个文件</strong>${icon("down")}</summary><div class="change-list">${changes.map((c, ci) => `<details class="changed-file" data-detail-key="${s.id}-${index}-change-${ci}"><summary><span class="ellipsis" title="${esc(c.path)}">${esc(c.path)}</span><span>${esc({ add: "新增", delete: "删除", update: "修改" }[c.kind] || "修改")}</span></summary><pre>${esc(c.diff || "本次事件未提供补丁内容。")}</pre></details>`).join("")}</div><button data-action="panel-review">查看工作区更改${icon("external")}</button></details>` : ""}
     ${assistant ? `<div class="message-actions">${ib("copy-message", "复制回复", "copy", `data-index="${index}"`)}${ib("message-menu", "回复菜单", "more", `data-id="${index}"`)}${time}<span class="message-model" title="${esc(s.model || "Codex")}">${esc(s.model || "Codex")}</span></div>` : ""}</article>`;
 }
@@ -475,7 +536,8 @@ function composer() {
     };
   const busy = s?.busy,
     blocked = busy || s?.queued ? "disabled" : "",
-    stopping = busy && !ui.draft.trim();
+    stopping = busy && !ui.draft.trim() && !ui.attachments.length;
+  const importing = Boolean(ui.drafts.get(draftKey())?.pending);
   const approval = [...ui.approvals.values()].find(
     (a) => a.sessionId === s?.id,
   );
@@ -516,7 +578,9 @@ function composer() {
         "</div></div>"
       : "") +
     (s?.queued ? '<div class="composer-queue">' + s.queued + ' 条消息等待处理</div>' : "") +
-    '<div class="composer"><textarea id="composer-input" aria-label="编程任务" placeholder="' +
+    '<div class="composer" aria-label="任务输入区">' +
+    (ui.attachments.length || importing ? `<div class="composer-attachments" aria-label="待发送附件">${ui.attachments.map(a => `<div class="composer-attachment">${a.kind === "image" ? `<button class="attachment-thumb" data-action="preview-upload" data-id="${esc(a.id)}" aria-label="预览 ${esc(a.label)}">${icon("file")}<img hidden alt="${esc(a.label)}" data-preview-key="upload:${esc(a.id)}" data-upload-id="${esc(a.id)}"></button>` : `<span class="attachment-thumb">${icon("file")}</span>`}<span class="attachment-label" title="${esc(a.label)}">${esc(a.label)}</span>${ib("remove-upload", `移除 ${a.label}`, "close", `data-id="${esc(a.id)}"`)}</div>`).join("")}${importing ? '<span class="attachment-loading" role="status">正在添加附件…</span>' : ""}</div>` : "") +
+    '<textarea id="composer-input" aria-label="编程任务" placeholder="' +
     (busy ? "可以继续输入，发送后将依次处理" : "描述任务，或说明需要修改的地方…") +
     '">' +
     esc(ui.draft) +
@@ -561,17 +625,20 @@ function composer() {
     ">" +
     effortOptions(config.providerId, config.model, config.effort) +
     '</select></span><button class="send-button' +
-    (!ui.draft.trim() && !busy ? " empty" : "") +
+    (!ui.draft.trim() && !ui.attachments.length && !busy ? " empty" : "") +
     '" data-action="' +
     (stopping ? "stop" : "send") +
     '" title="' +
     (stopping ? "停止任务" : "发送任务") +
     '" aria-label="' +
     (stopping ? "停止任务" : "发送任务") +
-    '">' +
+    '"' + (importing ? " disabled" : "") + '>' +
     icon(stopping ? "stop" : "arrow") +
     "</button></div></div></div></div>"
   );
+}
+function navigationButtons() {
+  return `<div class="workspace-navigation" aria-label="应用导航">${ib("navigate-back", isMac ? "后退（⌘[）" : "后退（Alt+←）", "back", navigation.canGo(-1) ? "" : "disabled")}${ib("navigate-forward", isMac ? "前进（⌘]）" : "前进（Alt+→）", "back", navigation.canGo(1) ? "" : "disabled", "navigation-forward")}</div>`;
 }
 function workspace() {
   const s = session(),
@@ -579,6 +646,7 @@ function workspace() {
     missing = ui.startupError || (ui.environment && !ui.environment.codexPath);
   return (
     '<div class="workspace"><header class="topbar" data-drag>' +
+    navigationButtons() +
     (!ui.sidebar ? ib("toggle-sidebar", "显示侧栏", "sidebar") : "") +
     '<div class="breadcrumb"><span class="project-crumb">' +
     icon("folder") +
@@ -848,11 +916,11 @@ function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.11 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.12 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
-    return `<div class="settings-shell"><aside class="settings-nav setup-nav"><h2>配置运行环境</h2><p>按顺序完成以下两步</p><div class="settings-nav-item ${ui.runtime?.nodeReady ? "" : "active"}">${icon("check")}安装 NodeJS</div><div class="settings-nav-item ${ui.runtime?.nodeReady ? "active" : ""}">${icon("monitor")}安装 Codex</div></aside><div class="settings-main"><div class="settings-titlebar" data-drag>${windowButtons()}</div><main class="settings-content"><div class="settings-inner">${runtimeSettings()}</div></main></div></div>`;
+    return `<div class="settings-shell"><aside class="settings-nav setup-nav"><h2>配置运行环境</h2><p>按顺序完成以下两步</p><div class="settings-nav-item ${ui.runtime?.nodeReady ? "" : "active"}">${icon("check")}安装 NodeJS</div><div class="settings-nav-item ${ui.runtime?.nodeReady ? "active" : ""}">${icon("monitor")}安装 Codex</div></aside><div class="settings-main"><div class="settings-titlebar" data-drag>${navigationButtons()}${windowButtons()}</div><main class="settings-content"><div class="settings-inner">${runtimeSettings()}</div></main></div></div>`;
   let group = "";
   return `<div class="settings-shell"><aside class="settings-nav"><div class="settings-search">${icon("search")}<input id="settings-search" placeholder="搜索设置…" value="${esc(ui.search)}" aria-label="搜索设置"></div>${pages
     .filter(
@@ -870,9 +938,13 @@ function settings() {
     })
     .join(
       "",
-    )}<button class="settings-back" data-action="return">${icon("back")}返回应用</button></aside><div class="settings-main"><div class="settings-titlebar" data-drag>${windowButtons()}</div><main class="settings-content"><div class="settings-inner">${({ general: generalSettings, models: modelSettings, projects: projectSettings, runtime: runtimeSettings, about: aboutSettings }[ui.page] || generalSettings)()}</div></main></div></div>`;
+    )}<button class="settings-back" data-action="return">${icon("back")}返回应用</button></aside><div class="settings-main"><div class="settings-titlebar" data-drag>${navigationButtons()}${windowButtons()}</div><main class="settings-content"><div class="settings-inner">${({ general: generalSettings, models: modelSettings, projects: projectSettings, runtime: runtimeSettings, about: aboutSettings }[ui.page] || generalSettings)()}</div></main></div></div>`;
 }
 function render() {
+  if (environmentReady()) {
+    navigation.prune(location => !location.active || state.sessions.some(s => s.id === location.active));
+    navigation.visit({ active: ui.active, project: ui.project, page: ui.page });
+  }
   for (const detail of document.querySelectorAll("details[data-detail-key]")) ui.detailStates.set(detail.dataset.detailKey, detail.open);
   const active = document.activeElement;
   const focusId = active?.id;
@@ -897,6 +969,7 @@ function render() {
   applyTheme();
   for (const detail of document.querySelectorAll("details[data-detail-key]")) detail.open = ui.detailStates.get(detail.dataset.detailKey) || false;
   enhancePickers($("app"));
+  if ($("composer-input")) $("composer-input").style.height = `${Math.min(180, Math.max(60, $("composer-input").scrollHeight))}px`;
   if (focusId && $(focusId)) {
     $(focusId).focus({ preventScroll: true });
     if (
@@ -914,6 +987,7 @@ function render() {
       : oldScroll;
   if (document.querySelector(".settings-content"))
     document.querySelector(".settings-content").scrollTop = settingsScroll;
+  hydrateAttachments();
 }
 function defaultConnection() {
   return {
@@ -954,6 +1028,11 @@ function renderOverlay() {
   closePicker();
   if (!ui.overlay || !environmentReady()) {
     $("overlay").innerHTML = "";
+    return;
+  }
+  if (ui.overlay === "attachment-preview") {
+    const p = ui.attachmentPreview;
+    $("overlay").innerHTML = `<div class="overlay-backdrop"><section class="modal image-preview-modal" role="dialog" aria-modal="true" aria-label="图片预览"><div class="modal-header"><h2 class="ellipsis" title="${esc(p.label)}">${esc(p.label)}</h2><span class="grow"></span>${ib("close-overlay", "关闭图片预览", "close")}</div><div class="image-preview-body">${p.src ? `<img src="${esc(p.src)}" alt="${esc(p.label)}">` : `<p role="status">${esc(p.error || "正在加载图片…")}</p>`}</div>${p.message !== undefined ? `<div class="image-preview-footer">${button("reveal-attachment", "在文件夹中显示", "folder", "outline", `data-message="${p.message}" data-attachment="${p.attachment}"`)}</div>` : ""}</section></div>`;
     return;
   }
   if (ui.overlay === "wechat-bind") {
@@ -1029,13 +1108,14 @@ function renderOverlay() {
 }
 function selectSession(id) {
   if (!state.sessions.some((s) => s.id === id)) return toast("该会话已不存在，请重新选择。");
+  rememberDraft();
   invalidatePanel();
   ui.active = id;
   viewStorage.setItem("active-session", id);
   ui.overlay = "";
   ui.page = "";
-  ui.draft = "";
   ui.project = session()?.workspace || "";
+  restoreDraft();
   const p = state.projects.find((p) => sameWorkspace(p.workspace, ui.project));
   if (p) ui.expanded.add(p.id);
   render();
@@ -1048,7 +1128,10 @@ async function addProject() {
   });
   if (!directory) return;
   state = await rpc("project.add", { workspace: directory });
+  rememberDraft();
+  ui.active = "";
   ui.project = directory;
+  restoreDraft();
   const p = state.projects.find((x) => sameWorkspace(x.workspace, directory));
   if (p) ui.expanded.add(p.id);
   render();
@@ -1120,19 +1203,28 @@ async function updateComposer(change) {
 }
 async function send() {
   const text = ui.draft.trim();
-  if (!text || !environmentReady()) return;
+  if ((!text && !ui.attachments.length) || !environmentReady() || ui.drafts.get(draftKey())?.pending) return;
+  const attachments = [...ui.attachments], sourceKey = draftKey();
   if (!session()) await newSession();
   if (!session()) return;
   ui.draft = "";
+  ui.attachments = [];
+  ui.drafts.delete(sourceKey);
+  rememberDraft();
+  const targetId = ui.active;
   if (!session()?.busy) {
     ui.streams.delete(ui.active);
     ui.logs.delete(ui.active);
   }
   render();
   try {
-    await rpc("chat.send", { sessionId: ui.active, text });
+    await rpc("chat.send", { sessionId: targetId, text, attachments: attachments.map(a => a.id) });
   } catch (e) {
-    ui.draft = text;
+    if (targetId === ui.active) {
+      ui.draft = text + (ui.draft ? "\n" + ui.draft : "");
+      ui.attachments = [...attachments, ...ui.attachments];
+      rememberDraft();
+    } else ui.drafts.set(targetId, { text, attachments, pending: 0 });
     render();
     throw e;
   }
@@ -1176,6 +1268,21 @@ async function action(name, element) {
   if (external[name]) return rpc("shell.open", { url: external[name] });
   if (name.startsWith("window.")) return rpc(name);
   switch (name) {
+    case "navigate-back":
+    case "navigate-forward": {
+      const location = navigation.go(name === "navigate-back" ? -1 : 1);
+      if (!location) return;
+      rememberDraft();
+      Object.assign(ui, location, { overlay: "" });
+      viewStorage.setItem("active-session", ui.active);
+      restoreDraft();
+      invalidatePanel();
+      const p = state.projects.find(p => sameWorkspace(p.workspace, session()?.workspace || ui.project));
+      if (p) ui.expanded.add(p.id);
+      render(); renderOverlay();
+      if (["files", "review"].includes(ui.panelPage)) loadPanel();
+      return;
+    }
     case "scroll-bottom":
       $("chat-scroll").scrollTo({
         top: $("chat-scroll").scrollHeight,
@@ -1193,13 +1300,16 @@ async function action(name, element) {
         { label: "添加项目", icon: "plus", action: "add-project" },
       ]);
     case "choose-project":
+      rememberDraft();
       ui.project = state.projects.find((p) => p.id === id).workspace;
       ui.active = "";
+      restoreDraft();
       return render();
     case "home":
+      rememberDraft();
       ui.active = "";
       ui.page = "";
-      ui.draft = "";
+      restoreDraft();
       return render();
     case "about":
       ui.page = "about";
@@ -1207,14 +1317,30 @@ async function action(name, element) {
     case "composer-add":
       return showContext(element, [
         { label: "选择工作目录", icon: "folder", action: "add-project" },
-        { label: "添加文件路径", icon: "file", action: "attach-file" },
+        { label: "添加文件或图片", icon: "file", action: "attach-file" },
       ]);
     case "attach-file": {
-      const file = await rpc("dialog.file", { title: "选择要引用的文件" });
-      if (file) {
-        ui.draft += (ui.draft ? "\n" : "") + "请查看文件：" + file;
-        render();
-      }
+      const files = await rpc("dialog.files");
+      if (files?.length) return addAttachments(files, true);
+      return;
+    }
+    case "remove-upload":
+      { const index = ui.attachments.findIndex(a => a.id === id); if (index >= 0) ui.attachments.splice(index, 1); }
+      rememberDraft();
+      return render();
+    case "preview-upload":
+    case "preview-attachment": {
+      const message = Number(element.dataset.message), attachment = Number(element.dataset.attachment);
+      const item = name === "preview-upload" ? ui.attachments.find(a => a.id === id) : session()?.messages[message]?.attachments?.[attachment];
+      if (!item) return toast("附件已不存在。");
+      const params = name === "preview-upload" ? { id } : { sessionId: ui.active, message, attachment };
+      const preview = ui.attachmentPreview = { label: item.label || "图片", ...(name === "preview-upload" ? {} : { message, attachment }) };
+      ui.overlay = "attachment-preview";
+      renderOverlay();
+      try { preview.src = await previews.get(name === "preview-upload" ? `upload:${id}` : `${ui.active}:${message}:${attachment}:${item.path}`, params); }
+      catch { preview.error = "文件已被移动、删除，或无法读取。"; }
+      if (!preview.src && !preview.error) preview.error = "图片超过 8 MiB 预览上限或格式不支持；仍可作为附件发送。";
+      if (ui.attachmentPreview === preview && ui.overlay === "attachment-preview") renderOverlay();
       return;
     }
     case "session-menu":
@@ -1399,8 +1525,10 @@ async function action(name, element) {
       const p = state.projects.find((p) => p.id === id);
       if (!p) return;
       const changed = !sameWorkspace(session()?.workspace || ui.project, p.workspace);
+      rememberDraft();
       ui.project = p.workspace;
       if (!sameWorkspace(session()?.workspace, p.workspace)) ui.active = "";
+      restoreDraft();
       if (changed) invalidatePanel();
       ui.expanded.has(id) ? ui.expanded.delete(id) : ui.expanded.add(id);
       render();
@@ -1770,14 +1898,15 @@ document.addEventListener("input", (event) => {
   if (el.id === "codex-path") ui.codexPathDraft = el.value;
   if (el.id === "composer-input") {
     ui.draft = el.value;
+    rememberDraft();
     el.style.height = "auto";
     el.style.height = `${Math.min(180, Math.max(60, el.scrollHeight))}px`;
     document
       .querySelector(".send-button")
-      ?.classList.toggle("empty", !el.value.trim() && !session()?.busy);
+      ?.classList.toggle("empty", !el.value.trim() && !ui.attachments.length && !session()?.busy);
     const sendButton = document.querySelector(".send-button");
     if (sendButton) {
-      const stopping = session()?.busy && !el.value.trim();
+      const stopping = session()?.busy && !el.value.trim() && !ui.attachments.length;
       sendButton.dataset.action = stopping ? "stop" : "send";
       sendButton.title = stopping ? "停止任务" : "发送任务";
       sendButton.setAttribute("aria-label", sendButton.title);
@@ -1802,6 +1931,32 @@ document.addEventListener("input", (event) => {
     $("session-search")?.focus();
     $("session-search")?.setSelectionRange(start, start);
   }
+});
+document.addEventListener("paste", event => {
+  if (event.target.id !== "composer-input" || !environmentReady()) return;
+  const files = [...(event.clipboardData?.items || [])].filter(item => item.kind === "file").map(item => item.getAsFile()).filter(Boolean);
+  if (!files.length) return;
+  event.preventDefault();
+  const text = event.clipboardData.getData("text/plain");
+  if (text) { event.target.setRangeText(text, event.target.selectionStart, event.target.selectionEnd, "end"); event.target.dispatchEvent(new Event("input", { bubbles: true })); }
+  addAttachments(files).catch(error => toast(error.message));
+});
+document.addEventListener("dragover", event => {
+  if (![...(event.dataTransfer?.types || [])].includes("Files")) return;
+  event.preventDefault();
+  const composer = document.querySelector(".composer");
+  if (composer && environmentReady()) { composer.classList.add("drag-over"); event.dataTransfer.dropEffect = "copy"; }
+});
+document.addEventListener("dragleave", event => {
+  if (!event.relatedTarget || event.target === document.documentElement) document.querySelector(".composer")?.classList.remove("drag-over");
+});
+document.addEventListener("drop", event => {
+  document.querySelector(".composer")?.classList.remove("drag-over");
+  const files = [...(event.dataTransfer?.files || [])];
+  if (!files.length) return;
+  event.preventDefault();
+  if (environmentReady() && $("composer-input") && !ui.overlay)
+    addAttachments(files).catch(error => toast(error.message));
 });
 document.addEventListener("change", (event) => {
   const el = event.target;
@@ -1883,6 +2038,18 @@ document.addEventListener("change", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (!environmentReady() && (event.ctrlKey || event.metaKey)) return;
+  if (["Enter", " "].includes(event.key) && event.target.matches(".session-row,.project-row")) {
+    event.preventDefault();
+    action(event.target.dataset.action, event.target).catch(error => toast(error.message));
+    return;
+  }
+  if (!ui.overlay && !document.querySelector(".picker-menu,.context-menu") &&
+      ((event.altKey && !event.ctrlKey && !event.metaKey && ["ArrowLeft", "ArrowRight"].includes(event.key)) ||
+       (isMac && event.metaKey && ["[", "]"].includes(event.key)))) {
+    event.preventDefault();
+    action(["ArrowLeft", "["].includes(event.key) ? "navigate-back" : "navigate-forward").catch(error => toast(error.message));
+    return;
+  }
   if (event.key === "Escape") {
     ui.overlay = "";
     renderOverlay();

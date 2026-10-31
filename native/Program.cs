@@ -96,7 +96,7 @@ internal static class Program {
                         using (var source = entry.Open()) using (var destination = File.Create(target)) source.CopyTo(destination);
                     }
                 }
-                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.11");
+                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.12");
             }
             CleanupOldRuntimes(hash);
             SetDllDirectory(RuntimeDirectory);
@@ -227,6 +227,9 @@ internal sealed class DesktopWindow : Form {
             } else if (method == "dialog.file") {
                 using (var dialog = new OpenFileDialog { Title = "选择要引用的文件", Filter = "所有文件|*.*" })
                     result = dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
+            } else if (method == "dialog.files") {
+                using (var dialog = new OpenFileDialog { Title = "添加文件或图片", Filter = "所有文件|*.*", Multiselect = true })
+                    result = dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileNames : new string[0];
             } else if (method == "dialog.executable") {
                 using (var dialog = new OpenFileDialog { Title = Get(p, "title", "选择可执行文件"), Filter = "程序文件|*.exe;*.cmd;*.js|全部文件|*.*" })
                     result = dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
@@ -299,7 +302,7 @@ internal sealed class DesktopWindow : Form {
                 }
             } catch (Exception failure) { error = failure.Message; }
         }
-        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.11", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
+        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.12", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
     }
     private Task<string> ReadNodeVersion(string node) { return ReadNodeVersion(node, 5); }
     private async Task<string> ReadNodeVersion(string node, int timeoutSeconds) {

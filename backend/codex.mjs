@@ -268,7 +268,7 @@ export class CodexClient extends EventEmitter {
     const { config = {} } = await this.request("config/read", { cwd: session.workspace, includeLayers: false });
     return { model: session.model || config.model, effort: session.effort || config.model_reasoning_effort, provider: config.model_provider };
   }
-  async answer(session, text, onEvent = () => {}) {
+  async answer(session, text, onEvent = () => {}, { images = [] } = {}) {
     await this.connect();
     if (this.active) throw new Error("这个会话已有运行中的任务。");
     const active = (this.active = {
@@ -335,7 +335,7 @@ export class CodexClient extends EventEmitter {
       this.on("closed", onClosed);
       this.request("turn/start", {
         threadId: session.threadId,
-        input: [{ type: "text", text }],
+        input: [{ type: "text", text }, ...images.map(path => ({ type: "localImage", path }))],
         // Application context refreshes old conversations as well as newly
         // started ones; resume alone may retain their original instructions.
         additionalContext: { qqclaw_browser_requirement: {

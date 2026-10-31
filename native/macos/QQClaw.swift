@@ -289,13 +289,14 @@ final class Backend: @unchecked Sendable {
             return try await browserHost!.handle(p)
         case "desktop.status": return DesktopIntegration.status()
         case "desktop.open": return try await DesktopIntegration.open(p)
-        case "dialog.folder", "dialog.file", "dialog.executable":
+        case "dialog.folder", "dialog.file", "dialog.files", "dialog.executable":
             let panel = NSOpenPanel(); panel.canChooseDirectories = method == "dialog.folder"; panel.canChooseFiles = !panel.canChooseDirectories
-            panel.allowsMultipleSelection = false; panel.canCreateDirectories = panel.canChooseDirectories
+            panel.allowsMultipleSelection = method == "dialog.files"; panel.canCreateDirectories = panel.canChooseDirectories
             panel.title = p["title"] as? String ?? (panel.canChooseDirectories ? "选择 Codex 的工作目录" : "选择文件")
             if !path.isEmpty { panel.directoryURL = URL(fileURLWithPath: path) }
             let selected: Any = await withCheckedContinuation { (continuation: CheckedContinuation<Any, Never>) in
                 panel.beginSheetModal(for: window) { response in
+                    if method == "dialog.files" { continuation.resume(returning: response == .OK ? panel.urls.map(\.path) : []); return }
                     continuation.resume(returning: response == .OK ? (panel.url?.path as Any? ?? NSNull()) : NSNull())
                 }
             }

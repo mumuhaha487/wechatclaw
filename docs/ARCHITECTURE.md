@@ -1,3 +1,5 @@
+0.3.12 补充：桌面附件由 backend/desktop-attachments.mjs 保存到用户数据目录；UI 附件预览与应用导航拆分为 ui/attachments.mjs、ui/navigation.mjs。草稿仅在当前进程内保留，已发送消息继续走加密状态和原生 Codex 历史。官方扩展限制未解除，详情见 result.md。
+
 # 两条核心链路与二次开发接口
 
 ## 从原项目提取了什么

@@ -114,6 +114,13 @@ jobs:
                       print("PASS: native backend startup and small pipe response")
                       let session = try await host.call(first, "session.create", params: ["workspace": host.data.path, "title": "native-persistence-check"]) as! [String: Any]
                       let id = session["id"] as! String
+                      let imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aNSEAAAAASUVORK5CYII="
+                      let attachment = try await host.call(first, "attachment.import", params: ["name": "native-image.png", "data": imageData]) as! [String: Any]
+                      let attachmentId = attachment["id"] as! String
+                      guard attachment["kind"] as? String == "image", (attachment["path"] as? String)?.hasPrefix(host.data.path) == true else { throw failure("Attachment import failed") }
+                      let preview = try await host.call(first, "attachment.preview", params: ["id": attachmentId]) as? String
+                      guard preview == "data:image/png;base64," + imageData else { throw failure("Attachment preview failed") }
+                      print("PASS: native attachment pipe import and raster preview")
                       try await host.shutdown()
                       print("PASS: native save and shutdown acknowledgement")
                       let file = host.data.appendingPathComponent("state.json")
@@ -126,6 +133,9 @@ jobs:
                       let second = try await host.startBackend()
                       let snapshot = try await host.call(second, "snapshot") as! [String: Any]
                       guard (snapshot["sessions"] as? [[String: Any]])?.contains(where: { $0["id"] as? String == id }) == true else { throw failure("Native restart lost session") }
+                      let restoredPreview = try await host.call(second, "attachment.preview", params: ["id": attachmentId]) as? String
+                      guard restoredPreview == preview else { throw failure("Restart lost imported attachment") }
+                      print("PASS: attachment copy and preview survive native backend restart")
                       try await host.shutdown()
                       SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.qqclaw.desktop.vault", kSecAttrAccount as String: host.vault.account] as CFDictionary)
                       print("PASS: native process launch, pipe RPC, Keychain encryption and restart persistence")
