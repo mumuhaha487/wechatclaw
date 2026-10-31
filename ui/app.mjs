@@ -1141,14 +1141,16 @@ async function runBrowserCommand(command, params = {}) {
   if (command === "newTab" && creatingBrowserTabs.has(target.id)) return;
   if (command === "newTab") creatingBrowserTabs.add(target.id);
   const owner = panelOwner(), activate = command === "open" || command === "newTab";
-  const intent = activate ? ++ui.panelIntent : ui.panelIntent;
+  const selected = panelTabs.selected(owner);
+  const tabId = ["open", "back", "forward", "reload", "stop"].includes(command) && selected?.kind === "browser" ? selected.id : "";
+  const intent = activate || ["back", "forward", "reload", "stop"].includes(command) ? ++ui.panelIntent : ui.panelIntent;
   if (activate) {
-    panelTabs.openBrowser(owner, browserStates.get(target.id));
+    if (command === "newTab" || selected?.kind !== "browser") panelTabs.openBrowser(owner, browserStates.get(target.id));
     applyPanelTab(); ui.panel = true; ui.browserHidden.delete(target.id); rememberPanel(); render();
   }
   let data;
   try {
-    data = await rpc(command === "open" ? "browser.open" : "browser.command", { sessionId: target.id, action: command, ...params });
+    data = await rpc(command === "open" ? "browser.open" : "browser.command", { sessionId: target.id, action: command, tabId, ...params });
   } catch (error) {
     // A close or a different panel supersedes the original request. Its native
     // error remains in the owning tab; don't toast a cancelled navigation here.

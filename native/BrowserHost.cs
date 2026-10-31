@@ -74,7 +74,9 @@ internal sealed class BrowserHost {
         if (!Guid.TryParseExact(owner, "D", out id)) throw new Exception("浏览器会话无效。");
         BrowserSession session;
         if (action == "stop") {
-            if (sessions.TryGetValue(owner, out session)) foreach (var tab in session.Tabs) if (Value(p, "tabId") == "" || Value(p, "tabId") == tab.Id) tab.Stop();
+            if (sessions.TryGetValue(owner, out session)) {
+                foreach (var page in session.Tabs) if (Value(p, "tabId") == "" || Value(p, "tabId") == page.Id) page.Stop();
+            }
             return new { stopped = true };
         }
         if (action == "find") {
@@ -86,14 +88,10 @@ internal sealed class BrowserHost {
         if (action == "dispose") {
             if (sessions.TryGetValue(owner, out session)) {
                 session.Disposed = true;
-                foreach (var tab in session.Tabs) tab.Stop();
-                await session.Serial.WaitAsync();
-                try {
-                    foreach (var tab in session.Tabs) tab.Close();
-                    session.Tabs.Clear(); session.Active = null; sessions.Remove(owner);
-                    if (visibleOwner == owner) { visibleOwner = ""; visible = false; }
-                    Layout();
-                } finally { session.Serial.Release(); }
+                foreach (var tab in session.Tabs) tab.Close();
+                session.Tabs.Clear(); session.Active = null; sessions.Remove(owner);
+                if (visibleOwner == owner) { visibleOwner = ""; visible = false; }
+                Layout();
             }
             return new { disposed = true };
         }
@@ -102,36 +100,41 @@ internal sealed class BrowserHost {
             if (!System.Text.RegularExpressions.Regex.IsMatch(profile, "^[0-9a-f]{32}$")) throw new Exception("浏览器用户目录无效。");
             session = new BrowserSession(owner, profile); sessions[owner] = session;
         }
-        await session.Serial.WaitAsync();
+        if (session.Disposed) throw new Exception("浏览器会话已关闭。");
+        if (action == "restoreTab") {
+            string url = Value(p, "url");
+            if (url != "" && !Allowed(url)) throw new Exception("浏览器仅支持 HTTP/HTTPS 网页。");
+            var previous = session.Active;
+            var restored = NewTab(session); session.Active = previous; Layout();
+            try {
+                if (url != "") await restored.Restore(url);
+                return new { tabId = restored.Id, state = State(session, false) };
+            } catch { CloseTab(session, restored); throw; }
+        }
+        if (action == "newTab") NewTab(session);
+        else if (action == "selectTab" || action == "closeTab") {
+            var tab = session.Tabs.Find(t => t.Id == Value(p, "tabId"));
+            if (tab == null) throw new Exception("浏览器标签页已关闭。");
+            if (action == "selectTab") session.Active = tab;
+            else CloseTab(session, tab);
+        }
+        if (new [] { "state", "newTab", "selectTab", "closeTab" }.Contains(action)) { Layout(); Publish(session, action == "newTab"); return State(session, false); }
+        string targetId = Value(p, "tabId");
+        var target = targetId == "" ? session.Active : session.Tabs.Find(t => t.Id == targetId);
+        if (targetId != "" && target == null) throw new Exception("浏览器标签页已关闭。");
+        if (action == "open" && !Allowed(Value(p, "url"))) throw new Exception("浏览器仅支持 HTTP/HTTPS 网页。");
+        // Capture the actual target before any await. Later selection cannot
+        // redirect queued work into a different page.
+        if (target == null && action == "open") target = NewTab(session);
+        if (target == null) throw new Exception("没有打开的标签页，请先打开网页。");
+        int revision = new [] { "open", "back", "forward", "reload" }.Contains(action) ? target.BeginNavigation() : target.OperationRevision;
+        Task interrupted = target.OperationInterruption;
+        Layout(); Publish(session, action == "open" && session.Active == target);
+        await target.Serial.WaitAsync();
         try {
-            if (session.Disposed) throw new Exception("浏览器会话已关闭。");
-            if (action == "restoreTab") {
-                string url = Value(p, "url");
-                if (url != "" && !Allowed(url)) throw new Exception("浏览器仅支持 HTTP/HTTPS 网页。");
-                var previous = session.Active;
-                var restored = NewTab(session); session.Active = previous; Layout();
-                try {
-                    if (url != "") await restored.Restore(url);
-                    return new { tabId = restored.Id, state = State(session, false) };
-                } catch { CloseTab(session, restored); throw; }
-            }
-            if (action == "newTab") NewTab(session);
-            else if (action == "selectTab" || action == "closeTab") {
-                var tab = session.Tabs.Find(t => t.Id == Value(p, "tabId"));
-                if (tab == null) throw new Exception("浏览器标签页已关闭。");
-                if (action == "selectTab") session.Active = tab;
-                else {
-                    CloseTab(session, tab);
-                }
-            }
-            // Empty sessions stay empty after the last tab closes. Only an
-            // explicit new tab or navigation creates a replacement page.
-            if (session.Active == null && action == "open") NewTab(session);
-            Layout(); Publish(session, action == "open" || action == "newTab");
-            if (new [] { "state", "newTab", "selectTab", "closeTab" }.Contains(action)) return State(session, false);
-            if (session.Active == null) throw new Exception("没有打开的标签页，请先打开网页。");
-            return await session.Active.Run(p);
-        } finally { Publish(session, false); session.Serial.Release(); }
+            if (session.Disposed || !session.Tabs.Contains(target)) throw new Exception("浏览器标签页已关闭。");
+            return await target.Run(p, revision, interrupted);
+        } finally { target.Serial.Release(); Publish(session, false); }
     }
     private BrowserTab NewTab(BrowserSession session) {
         if (session.Tabs.Count >= 12) throw new Exception("最多打开 12 个标签页，请先关闭不用的页面。");
@@ -144,7 +147,7 @@ internal sealed class BrowserHost {
         int index = session.Tabs.IndexOf(tab); if (index < 0 || session.Disposed) return;
         session.Tabs.RemoveAt(index);
         if (session.Active == tab) session.Active = session.Tabs.Count == 0 ? null : session.Tabs[Math.Min(index, session.Tabs.Count - 1)];
-        tab.Stop(); tab.Close(); Layout(); Publish(session, false);
+        tab.Close(); Layout(); Publish(session, false);
     }
     private async Task<BrowserTab> OpenWindow(BrowserSession session, BrowserTab opener) {
         if (session.Disposed || !session.Tabs.Contains(opener)) throw new Exception("来源标签页已关闭。");
@@ -268,10 +271,14 @@ internal sealed class BrowserSession {
     internal string Owner, Profile;
     internal readonly List<BrowserTab> Tabs = new List<BrowserTab>();
     internal BrowserTab Active;
-    internal readonly SemaphoreSlim Serial = new SemaphoreSlim(1, 1);
     internal BrowserSession(string owner, string profile) { Owner = owner; Profile = profile; }
 }
 internal sealed class BrowserTab {
+    internal readonly SemaphoreSlim Serial = new SemaphoreSlim(1, 1);
+    internal int OperationRevision;
+    private TaskCompletionSource<bool> operationInterrupted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<bool> closedSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal Task OperationInterruption { get { return operationInterrupted.Task; } }
     internal readonly string Id = Guid.NewGuid().ToString("D");
     internal readonly WebView2 Web = new WebView2 { DefaultBackgroundColor = Color.White, Visible = false };
     internal bool Loading;
@@ -331,7 +338,8 @@ internal sealed class BrowserTab {
     }
     internal async Task EnsureReady(CoreWebView2Environment environment = null) {
         if (closed) throw new Exception("浏览器标签页已关闭。");
-        ready = ready ?? Initialize(environment); await ready;
+        ready = ready ?? Initialize(environment);
+        if (!await AwaitCompletion(ready, closedSignal.Task)) throw new Exception("浏览器标签页已关闭。");
         if (closed || Web.IsDisposed) throw new Exception("浏览器标签页已关闭。");
     }
     private async Task Initialize(CoreWebView2Environment environment) {
@@ -389,14 +397,18 @@ internal sealed class BrowserTab {
             Loading = false; changed();
         };
     }
-    internal void Close() { closed = true; findRevision++; findOpen = false; findInterrupted.TrySetResult(true); Web.Visible = false; Web.Bounds = new Rectangle(-2000, 0, 1000, 760); ReleaseDownloadView(); }
+    internal void Close() { if (closed) return; Stop(); closed = true; closedSignal.TrySetResult(true); findRevision++; findOpen = false; findInterrupted.TrySetResult(true); Web.Visible = false; Web.Bounds = new Rectangle(-2000, 0, 1000, 760); ReleaseDownloadView(); }
     internal void ReleaseDownloadView() { if (closed && !downloads.Active(Id) && !Web.IsDisposed) Web.Dispose(); }
-    internal void Stop() { stopping = true; if (Web.CoreWebView2 != null) Web.CoreWebView2.Stop(); Loading = false; changed(); }
-    private async Task<bool> Navigate(Action action) {
+    internal void Stop() { stopping = true; OperationRevision++; operationInterrupted.TrySetResult(true); if (!Web.IsDisposed && Web.CoreWebView2 != null) Web.CoreWebView2.Stop(); Loading = false; changed(); }
+    internal int BeginNavigation() { Stop(); operationInterrupted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously); return OperationRevision; }
+    private async Task<bool> Navigate(Action action, Task interrupted) {
         var result = new TaskCompletionSource<bool>();
         navigation = result; downloadNavigation = false;
+        ulong expectedNavigation = 0;
+        EventHandler<CoreWebView2NavigationStartingEventArgs> starting = delegate(object sender, CoreWebView2NavigationStartingEventArgs e) { if (expectedNavigation == 0) expectedNavigation = e.NavigationId; };
         EventHandler<CoreWebView2NavigationCompletedEventArgs> completed = null;
         completed = async delegate(object sender, CoreWebView2NavigationCompletedEventArgs e) {
+            if (expectedNavigation == 0 || e.NavigationId != expectedNavigation) return;
             if (e.IsSuccess) result.TrySetResult(true);
             else {
                 if (!stopping) await Task.Delay(200);
@@ -404,12 +416,15 @@ internal sealed class BrowserTab {
                 else result.TrySetException(new Exception(stopping ? "浏览器操作已停止。" : "网页未能加载：" + e.WebErrorStatus));
             }
         };
+        Web.CoreWebView2.NavigationStarting += starting;
         Web.CoreWebView2.NavigationCompleted += completed;
         try {
             action();
-            if (await Task.WhenAny(result.Task, Task.Delay(25000)) != result.Task) { Web.CoreWebView2.Stop(); throw new Exception("网页加载超时，请重试或检查网络。"); }
+            var finished = await Task.WhenAny(result.Task, interrupted, Task.Delay(25000));
+            if (finished == interrupted) throw new Exception("浏览器操作已停止或被新的导航替代。");
+            if (finished != result.Task) { Web.CoreWebView2.Stop(); throw new Exception("网页加载超时，请重试或检查网络。"); }
             return await result.Task;
-        } finally { navigation = null; if (!Web.IsDisposed) Web.CoreWebView2.NavigationCompleted -= completed; }
+        } finally { navigation = null; if (!Web.IsDisposed) { Web.CoreWebView2.NavigationStarting -= starting; Web.CoreWebView2.NavigationCompleted -= completed; } }
     }
     private async Task<object> Page(Dictionary<string, object> p) {
         string script = File.ReadAllText(Path.Combine(Program.RuntimeDirectory, "browser-page.js"));
@@ -419,6 +434,12 @@ internal sealed class BrowserTab {
         if (!(bool)response["ok"]) throw new Exception(Convert.ToString(response["error"]));
         return response["value"];
     }
+    private async Task<object> ReadPage(Dictionary<string, object> p, int revision, Task interrupted) {
+        if (closed || revision != OperationRevision) throw new Exception("网页已变化或标签页已关闭。");
+        var result = Page(p);
+        if (!await AwaitCompletion(result, interrupted) || closed || revision != OperationRevision) throw new Exception("网页已变化或标签页已关闭。");
+        return await result;
+    }
     internal async Task Restore(string url) {
         stopping = false;
         await EnsureReady();
@@ -426,7 +447,7 @@ internal sealed class BrowserTab {
         // A closed page is reopened by URL. Never replay an old POST body.
         Web.CoreWebView2.Navigate(url);
     }
-    private static async Task<bool> AwaitFind(Task operation, Task interrupted) {
+    private static async Task<bool> AwaitCompletion(Task operation, Task interrupted) {
         if (await Task.WhenAny(operation, interrupted) == operation) { await operation; return true; }
         // A disposed WebView can leave StartAsync without a completion callback.
         // Settle our RPC immediately and observe any later native failure.
@@ -450,7 +471,7 @@ internal sealed class BrowserTab {
                 if (findSession != null) findSession.Stop();
                 findQuery = ""; return new { cleared = true, found = false };
             }
-            if (!await AwaitFind(EnsureReady(), interrupted)) return new { stale = true };
+            if (!await AwaitCompletion(EnsureReady(), interrupted)) return new { stale = true };
             if (closed || revision != findRevision) return new { stale = true };
             findSession = Web.CoreWebView2.Find;
             if (operation == "search" || query != findQuery) {
@@ -458,7 +479,7 @@ internal sealed class BrowserTab {
                 options.FindTerm = query; options.IsCaseSensitive = false;
                 options.ShouldHighlightAllMatches = true; options.SuppressDefaultFindDialog = true;
                 findSession.Stop();
-                if (!await AwaitFind(findSession.StartAsync(options), interrupted)) return new { stale = true };
+                if (!await AwaitCompletion(findSession.StartAsync(options), interrupted)) return new { stale = true };
                 if (revision == findRevision) findQuery = query;
             } else {
                 var changedIndex = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -483,22 +504,26 @@ internal sealed class BrowserTab {
             throw;
         } finally { findSerial.Release(); }
     }
-    internal async Task<object> Run(Dictionary<string, object> p) {
+    internal async Task<object> Run(Dictionary<string, object> p, int revision, Task interrupted) {
         try {
-            stopping = false; await EnsureReady();
-            if (stopping) throw new Exception("浏览器操作已停止。");
+            if (revision != OperationRevision || closed) throw new Exception("浏览器操作已停止或标签页已关闭。");
+            stopping = false;
+            if (!await AwaitCompletion(EnsureReady(), interrupted) || revision != OperationRevision || closed) throw new Exception("浏览器操作已停止或标签页已关闭。");
             string action = BrowserHost.Value(p, "action");
             if (action == "open") {
                 string url = BrowserHost.Value(p, "url"); if (!BrowserHost.Allowed(url)) throw new Exception("浏览器仅支持 HTTP/HTTPS 网页。");
-                if (!await Navigate(() => Web.CoreWebView2.Navigate(url))) return new { downloadStarted = true };
-            } else if (action == "back" && CanGoBack) { if (!await Navigate(() => Web.CoreWebView2.GoBack())) return new { downloadStarted = true }; }
-            else if (action == "forward" && CanGoForward) { if (!await Navigate(() => Web.CoreWebView2.GoForward())) return new { downloadStarted = true }; }
-            else if (action == "reload") { if (!await Navigate(() => Web.CoreWebView2.Reload())) return new { downloadStarted = true }; }
+                if (!await Navigate(() => Web.CoreWebView2.Navigate(url), interrupted)) return new { downloadStarted = true };
+            } else if (action == "back" && CanGoBack) { if (!await Navigate(() => Web.CoreWebView2.GoBack(), interrupted)) return new { downloadStarted = true }; }
+            else if (action == "forward" && CanGoForward) { if (!await Navigate(() => Web.CoreWebView2.GoForward(), interrupted)) return new { downloadStarted = true }; }
+            else if (action == "reload") { if (!await Navigate(() => Web.CoreWebView2.Reload(), interrupted)) return new { downloadStarted = true }; }
             else if (action == "screenshot") {
-                using (var stream = new MemoryStream()) { await Web.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream); return new { url = Url, imageBase64 = Convert.ToBase64String(stream.ToArray()) }; }
-            } else if (action != "back" && action != "forward") return await Page(p);
-            return await Page(new Dictionary<string, object> { { "action", "snapshot" } });
-        } catch (Exception e) { Error = e.Message; throw; }
+                using (var stream = new MemoryStream()) {
+                    if (!await AwaitCompletion(Web.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream), interrupted) || closed || revision != OperationRevision) throw new Exception("网页已变化或标签页已关闭。");
+                    return new { url = Url, imageBase64 = Convert.ToBase64String(stream.ToArray()) };
+                }
+            } else if (action != "back" && action != "forward") return await ReadPage(p, revision, interrupted);
+            return await ReadPage(new Dictionary<string, object> { { "action", "snapshot" } }, revision, interrupted);
+        } catch (Exception e) { if (!closed && revision == OperationRevision) Error = e.Message; throw; }
     }
 }
 

@@ -168,7 +168,7 @@ private struct BrowserHistoryRecord: Codable {
         guard !session.disposed, let index = session.tabs.firstIndex(where: { $0 === tab }) else { return }
         session.tabs.remove(at: index)
         if session.active === tab { session.active = session.tabs.isEmpty ? nil : session.tabs[min(index, session.tabs.count - 1)] }
-        tab.stop(); tab.close(); layout(); publish(session)
+        tab.close(); operations.removeValue(forKey: tab.id); layout(); publish(session)
     }
     func handle(_ p: [String: Any]) async throws -> Any {
         let owner = p["owner"] as? String ?? "", action = p["action"] as? String ?? ""
@@ -186,11 +186,9 @@ private struct BrowserHistoryRecord: Codable {
         if action == "dispose" {
             if let session = sessions[owner] {
                 session.disposed = true
-                session.tabs.forEach { $0.stop() }
-                _ = await operations[owner]?.result
-                session.tabs.forEach { $0.close() }
+                session.tabs.forEach { $0.close(); operations.removeValue(forKey: $0.id) }
                 session.tabs.removeAll(); session.active = nil
-                sessions.removeValue(forKey: owner); operations.removeValue(forKey: owner)
+                sessions.removeValue(forKey: owner)
                 if visibleOwner == owner { visibleOwner = ""; visible = false }
                 layout()
             }
@@ -201,40 +199,49 @@ private struct BrowserHistoryRecord: Codable {
             guard profile.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else { throw failure("浏览器用户目录无效。") }
             let session = BrowserSession(owner: owner, profile: profile); sessions[owner] = session
         }
-        let previous = operations[owner], session = sessions[owner]!
+        let session = sessions[owner]!
+        guard !session.disposed else { throw failure("浏览器会话已关闭。") }
+        if action == "restoreTab" {
+            let url = p["url"] as? String ?? ""
+            guard url.isEmpty || Self.allowed(url) else { throw failure("浏览器仅支持 HTTP/HTTPS 网页。") }
+            let previous = session.active
+            let restored = try newTab(session)
+            session.active = previous; layout()
+            if !url.isEmpty { restored.web.load(URLRequest(url: URL(string: url)!)) }
+            return ["tabId": restored.id, "state": state(session)] as [String: Any]
+        }
+        switch action {
+        case "newTab": try newTab(session)
+        case "selectTab", "closeTab":
+            guard let tab = session.tabs.first(where: { $0.id == p["tabId"] as? String }) else { throw failure("浏览器标签页已关闭。") }
+            if action == "selectTab" { session.active = tab } else { closeTab(session, tab) }
+        default: break
+        }
+        if ["state", "newTab", "selectTab", "closeTab"].contains(action) {
+            layout(); publish(session, reveal: action == "newTab"); return state(session)
+        }
+        let targetId = p["tabId"] as? String ?? ""
+        var target = targetId.isEmpty ? session.active : session.tabs.first(where: { $0.id == targetId })
+        if !targetId.isEmpty && target == nil { throw failure("浏览器标签页已关闭。") }
+        if action == "open" && !Self.allowed(p["url"] as? String ?? "") { throw failure("浏览器仅支持 HTTP/HTTPS 网页。") }
+        if target == nil && action == "open" { target = try newTab(session) }
+        guard let tab = target else { throw failure("没有打开的标签页，请先打开网页。") }
+        let revision = ["open", "back", "forward", "reload"].contains(action) ? tab.beginNavigation() : tab.operationRevision
+        let previous = operations[tab.id]
+        tab.queueRevision += 1
+        let queueRevision = tab.queueRevision
+        layout(); publish(session, reveal: action == "open" && session.active === tab)
         let operation = Task { @MainActor () throws -> Any in
             _ = await previous?.result
-            guard !session.disposed else { throw failure("浏览器会话已关闭。") }
-            defer { self.publish(session) }
-            if action == "restoreTab" {
-                let url = p["url"] as? String ?? ""
-                guard url.isEmpty || Self.allowed(url) else { throw failure("浏览器仅支持 HTTP/HTTPS 网页。") }
-                let previous = session.active
-                let restored = try self.newTab(session)
-                session.active = previous
-                self.layout()
-                if !url.isEmpty { restored.web.load(URLRequest(url: URL(string: url)!)) }
-                return ["tabId": restored.id, "state": self.state(session)] as [String: Any]
+            defer {
+                self.publish(session)
+                if tab.queueRevision == queueRevision { self.operations.removeValue(forKey: tab.id) }
             }
-            switch action {
-            case "newTab": try self.newTab(session)
-            case "selectTab", "closeTab":
-                guard let index = session.tabs.firstIndex(where: { $0.id == p["tabId"] as? String }) else { throw failure("浏览器标签页已关闭。") }
-                let tab = session.tabs[index]
-                if action == "selectTab" { session.active = tab }
-                else {
-                    self.closeTab(session, tab)
-                }
-            default: break
-            }
-            if session.active == nil && action == "open" { try self.newTab(session) }
-            self.layout(); self.publish(session, reveal: action == "open" || action == "newTab")
-            if ["state", "newTab", "selectTab", "closeTab"].contains(action) { return self.state(session) }
-            guard let tab = session.active else { throw failure("没有打开的标签页，请先打开网页。") }
-            do { return try await tab.run(p) }
-            catch { tab.errorText = error.localizedDescription; throw error }
+            guard !session.disposed, !tab.closed, session.tabs.contains(where: { $0 === tab }) else { throw failure("浏览器标签页已关闭。") }
+            do { return try await tab.run(p, revision: revision) }
+            catch { if !tab.closed && revision == tab.operationRevision { tab.errorText = error.localizedDescription }; throw error }
         }
-        operations[owner] = operation
+        operations[tab.id] = operation
         return try await operation.value
     }
     static func allowed(_ value: String) -> Bool {
@@ -256,6 +263,10 @@ private struct BrowserHistoryRecord: Codable {
     var url: String { web.url?.absoluteString == "about:blank" ? "" : web.url?.absoluteString ?? "" }
     var observations: [NSKeyValueObservation] = []
     var navigation: CheckedContinuation<Void, Error>?, navigationToken: UUID?
+    var currentNavigation: WKNavigation?, awaitedNavigation: WKNavigation?
+    private var retiredNavigations: [WKNavigation] = []
+    private var operationCompletion: (() -> Void)?
+    var operationRevision = 0, queueRevision = 0
     var findRevision = 0
     var findOpen = false, findCanStep = false
     var findOperation: Task<[String: Any], Never>?
@@ -283,25 +294,39 @@ private struct BrowserHistoryRecord: Codable {
                         web.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in self?.changed() },
                         web.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in self?.changed() }]
     }
-    func stop() { web.stopLoading(); finishNavigation(.failure(failure("浏览器操作已停止。"))); changed() }
-    func close() { closed = true; findRevision += 1; findOpen = false; findCanStep = false; findCompletion?(); web.isHidden = true; releaseDownloadView() }
+    func stop() {
+        operationRevision += 1
+        for request in [currentNavigation, awaitedNavigation].compactMap({ $0 }) where !retiredNavigations.contains(where: { $0 === request }) { retiredNavigations.append(request) }
+        if retiredNavigations.count > 64 { retiredNavigations.removeFirst(retiredNavigations.count - 64) }
+        currentNavigation = nil; finishNavigation(.failure(failure("浏览器操作已停止。")))
+        operationCompletion?(); web.stopLoading(); changed()
+    }
+    func beginNavigation() -> Int { stop(); return operationRevision }
+    func close() { guard !closed else { return }; stop(); closed = true; retiredNavigations.removeAll(); findRevision += 1; findOpen = false; findCanStep = false; findCompletion?(); web.isHidden = true; releaseDownloadView() }
     func releaseDownloadView() {
         if closed && !downloads.active(id) { observations.removeAll(); web.navigationDelegate = nil; web.uiDelegate = nil; web.removeFromSuperview() }
     }
     func finishNavigation(_ result: Result<Void, Error>) {
-        let continuation = navigation; navigation = nil; navigationToken = nil; continuation?.resume(with: result)
+        let continuation = navigation; navigation = nil; navigationToken = nil; awaitedNavigation = nil; continuation?.resume(with: result)
     }
     func navigate(_ action: () -> WKNavigation?) async throws {
         guard navigation == nil else { throw failure("浏览器正在加载网页，请稍后重试。") }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let token = UUID(); navigation = continuation; navigationToken = token; downloadNavigation = false
-            guard action() != nil else { finishNavigation(.failure(failure("无法打开网页。"))); return }
+            guard let request = action() else { finishNavigation(.failure(failure("无法打开网页。"))); return }
+            currentNavigation = request; awaitedNavigation = request
             DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in
                 guard let self, self.navigationToken == token else { return }; self.web.stopLoading(); self.finishNavigation(.failure(failure("网页加载超时，请检查网络后重试。")))
             }
         }
     }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard !closed, let navigation, !retiredNavigations.contains(where: { $0 === navigation }) else { return }
+        if let awaitedNavigation, awaitedNavigation !== navigation { finishNavigation(.failure(failure("网页已被新的导航替代。"))) }
+        currentNavigation = navigation
+    }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard !closed, let navigation, currentNavigation === navigation else { return }
         if !closed && !downloadNavigation { history.visit(url, title: web.title ?? "") }
         errorText = ""; finishNavigation(.success(())); changed()
     }
@@ -310,10 +335,12 @@ private struct BrowserHistoryRecord: Codable {
         return downloadNavigation && (value.code == NSURLErrorCancelled || (value.domain == "WebKitErrorDomain" && value.code == 102))
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard !closed, let navigation, currentNavigation === navigation else { return }
         if downloadPolicyError(error) { return }
         errorText = error.localizedDescription; finishNavigation(.failure(error)); changed()
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard !closed, let navigation, currentNavigation === navigation else { return }
         if downloadPolicyError(error) { return }
         errorText = error.localizedDescription; finishNavigation(.failure(error)); changed()
     }
@@ -348,11 +375,17 @@ private struct BrowserHistoryRecord: Codable {
         let script = try String(contentsOf: resources.appendingPathComponent("browser-page.js"), encoding: .utf8)
         let code = "(() => { try { \(script)\nreturn { ok:true, value:qqclawBrowserPage(\(try jsonText(p))) }; } catch(e) { return {ok:false,error:String(e.message || e)}; } })()"
         return try await withCheckedThrowingContinuation { continuation in
+            var completed = false
+            let finish: (Result<Any, Error>) -> Void = { [weak self] result in
+                guard !completed else { return }; completed = true; self?.operationCompletion = nil
+                continuation.resume(with: result)
+            }
+            operationCompletion = { finish(.failure(failure("网页操作已停止或标签页已关闭。"))) }
             web.evaluateJavaScript(code) { value, error in
-                if let error { continuation.resume(throwing: error); return }
-                guard let result = value as? [String: Any], let ok = result["ok"] as? Bool else { continuation.resume(throwing: failure("无法读取网页，请重试快照。")); return }
-                if ok { continuation.resume(returning: result["value"] ?? NSNull()) }
-                else { continuation.resume(throwing: failure(result["error"] as? String ?? "网页操作失败。")) }
+                if let error { finish(.failure(error)); return }
+                guard let result = value as? [String: Any], let ok = result["ok"] as? Bool else { finish(.failure(failure("无法读取网页，请重试快照。"))); return }
+                if ok { finish(.success(result["value"] ?? NSNull())) }
+                else { finish(.failure(failure(result["error"] as? String ?? "网页操作失败。"))) }
             }
         }
     }
@@ -386,7 +419,8 @@ private struct BrowserHistoryRecord: Codable {
         findOperation = task
         return await task.value
     }
-    func run(_ p: [String: Any]) async throws -> Any {
+    func run(_ p: [String: Any], revision: Int) async throws -> Any {
+        guard !closed, revision == operationRevision else { throw failure("浏览器操作已停止或标签页已关闭。") }
         let action = p["action"] as? String ?? ""
         let result: Any
         switch action {
@@ -403,14 +437,21 @@ private struct BrowserHistoryRecord: Codable {
             try await navigate { web.reload() }; result = try await page(["action": "snapshot"])
         case "screenshot":
             result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Any, Error>) in
+                var completed = false
+                let finish: (Result<Any, Error>) -> Void = { [weak self] result in
+                    guard !completed else { return }; completed = true; self?.operationCompletion = nil
+                    continuation.resume(with: result)
+                }
+                operationCompletion = { finish(.failure(failure("网页操作已停止或标签页已关闭。"))) }
                 web.takeSnapshot(with: nil) { image, error in
-                    if let error { continuation.resume(throwing: error); return }
-                    guard let data = image?.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data), let png = bitmap.representation(using: .png, properties: [:]) else { continuation.resume(throwing: failure("无法获取浏览器截图。")); return }
-                    continuation.resume(returning: ["url": self.web.url?.absoluteString ?? "", "imageBase64": png.base64EncodedString()])
+                    if let error { finish(.failure(error)); return }
+                    guard let data = image?.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data), let png = bitmap.representation(using: .png, properties: [:]) else { finish(.failure(failure("无法获取浏览器截图。"))); return }
+                    finish(.success(["url": self.web.url?.absoluteString ?? "", "imageBase64": png.base64EncodedString()]))
                 }
             }
         default: result = try await page(p)
         }
+        guard !closed, revision == operationRevision else { throw failure("网页已变化或标签页已关闭。") }
         return result
     }
 }

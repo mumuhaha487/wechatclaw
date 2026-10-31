@@ -159,15 +159,17 @@ export class App {
     return session;
   }
   browserCommand(session, action, args = {}) {
-    const previous = this.browserOperations.get(session.id);
-    const operation = Promise.resolve(previous).catch(() => {}).then(() => {
+    const operations = this.browserOperations.get(session.id) || new Set();
+    this.browserOperations.set(session.id, operations);
+    const operation = Promise.resolve().then(() => {
       if (this.getSession(session.id) !== session) throw new Error("会话已变化，请重新打开网页。");
       this.browserOwners.add(session.id);
       return new BrowserViewer({ native: this.native, session }).call(action, args);
     });
-    this.browserOperations.set(session.id, operation);
+    operations.add(operation);
     operation.finally(() => {
-      if (this.browserOperations.get(session.id) === operation) this.browserOperations.delete(session.id);
+      operations.delete(operation);
+      if (!operations.size && this.browserOperations.get(session.id) === operations) this.browserOperations.delete(session.id);
     }).catch(() => {});
     return operation;
   }
@@ -614,18 +616,13 @@ export class App {
         return this.continueDesktop(p);
       case "browser.open": {
         const session = this.getSession(p.sessionId);
-        return this.browserCommand(session, "open", { url: p.url || "https://www.google.com/" });
+        return this.browserCommand(session, "open", { url: p.url || "https://www.google.com/", tabId: String(p.tabId || "") });
       }
       case "browser.command": {
         if (!["back", "forward", "reload", "stop", "newTab", "selectTab", "closeTab", "restoreTab", "state"].includes(p.action)) throw new Error("不支持的浏览器操作。");
         const session = this.getSession(p.sessionId);
-        // Stop must bypass the navigation queue so it can interrupt a load.
-        if (p.action === "stop") return new BrowserViewer({ native: this.native, session }).call("stop");
-        if (p.action === "closeTab") {
-          const stopped = new BrowserViewer({ native: this.native, session }).call("stop", { tabId: String(p.tabId || "") });
-          const closed = this.browserCommand(session, "closeTab", { tabId: String(p.tabId || "") });
-          return Promise.all([stopped, closed]).then(([, result]) => result);
-        }
+        // Native hosts serialize work within its target page. A slow page must
+        // not hold selection, closing, or navigation in another page.
         return this.browserCommand(session, p.action, p.action === "restoreTab" ? { url: String(p.url || "") } : { tabId: String(p.tabId || "") });
       }
       case "browser.find": {
@@ -845,12 +842,11 @@ export class App {
           this.removingSessions.add(p.id);
           try {
             const browser = new BrowserViewer({ native: this.native, session });
-            if (this.browserOwners.has(p.id)) await browser.call("stop");
-            await this.browserOperations.get(p.id)?.catch(() => {});
             if (this.browserOwners.has(p.id)) {
               await browser.call("dispose");
               this.browserOwners.delete(p.id);
             }
+            await Promise.allSettled([...(this.browserOperations.get(p.id) || [])]);
             this.clients.get(p.id)?.client.close();
             this.clients.delete(p.id);
             state.sessions = state.sessions.filter((s) => s.id !== p.id);

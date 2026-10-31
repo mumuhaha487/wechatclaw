@@ -561,13 +561,73 @@ jobs:
                             reopenedRevision > currentRevision else { throw failure("Reopened browser state revision did not increase") }
                       let removedView = browser.sessions[owner]!.tabs[0]
                       _ = try await control("dispose")
-                      guard browser.sessions[owner] == nil, browser.operations[owner] == nil,
+                      guard browser.sessions[owner] == nil, browser.operations.isEmpty,
                             removedView.web.superview == nil, removedView.observations.isEmpty else { throw failure("Disposal retained native page resources") }
                       _ = try await control("dispose")
                       let recreated = try await control("newTab") as! [String: Any]
                       guard (recreated["tabs"] as? [[String: Any]])?.count == 1 else { throw failure("Restored conversation could not open a fresh browser") }
                       _ = try await control("dispose")
                       print("PASS: native browser disposal releases pages and observations, is idempotent, and permits reopening")
+                      func releaseSlowPages() async throws {
+                          _ = try await URLSession.shared.data(from: URL(string: fixture + "release-pages")!)
+                      }
+                      func awaitSlowPages(_ count: Int) async throws {
+                          for _ in 0..<100 {
+                              let (data, _) = try await URLSession.shared.data(from: URL(string: fixture + "slow-page-status")!)
+                              if let status = try JSONSerialization.jsonObject(with: data) as? [String: Any], (status["started"] as? Int ?? 0) >= count { return }
+                              try await Task.sleep(nanoseconds: 20_000_000)
+                          }
+                          throw failure("Held native page request did not arrive")
+                      }
+                      _ = try await control("newTab"); let concurrentA = browser.sessions[owner]!.active!
+                      _ = try await control("open", ["tabId": concurrentA.id,"url":fixture])
+                      _ = try await control("newTab"); let concurrentB = browser.sessions[owner]!.active!
+                      _ = try await control("open", ["tabId": concurrentB.id,"url":fixture])
+                      _ = try await control("selectTab", ["tabId":concurrentA.id])
+                      let heldA = Task { @MainActor in try await control("open", ["tabId":concurrentA.id,"url":fixture + "slow-page?a"]) }
+                      try await awaitSlowPages(1)
+                      let selectStart = Date()
+                      let selectedB = try await control("selectTab", ["tabId":concurrentB.id]) as! [String: Any]
+                      guard Date().timeIntervalSince(selectStart) < 0.7, selectedB["activeTab"] as? String == concurrentB.id, concurrentA.web.isLoading else { throw failure("Slow page blocked native tab selection") }
+                      print("PASS: native WKWebView tab selection settles while another actual HTTP response is still held")
+                      let otherLoadStart = Date()
+                      let independentB = try await control("open", ["tabId":concurrentB.id,"url":fixture + "?q=independent-b"]) as! [String: Any]
+                      guard Date().timeIntervalSince(otherLoadStart) < 2, (independentB["url"] as? String)?.hasSuffix("q=independent-b") == true, concurrentA.web.isLoading else { throw failure("Slow page blocked a different page navigation") }
+                      _ = try await control("newTab"); let concurrentC = browser.sessions[owner]!.active!
+                      let independentRestore = try await control("restoreTab", ["url":fixture]) as! [String: Any]
+                      let restoreState = independentRestore["state"] as! [String: Any]
+                      guard restoreState["activeTab"] as? String == concurrentC.id, concurrentA.web.isLoading else { throw failure("Background restore stole selection or stopped unrelated load") }
+                      print("PASS: independent WKWebView navigation/new-tab/background-restore do not wait for another page")
+                      let closeLoadStart = Date()
+                      _ = try await control("closeTab", ["tabId":concurrentA.id])
+                      let heldAResult = await heldA.result
+                      guard Date().timeIntervalSince(closeLoadStart) < 2, concurrentA.closed else { throw failure("Closing pending page did not settle promptly") }
+                      if case .success = heldAResult { throw failure("Closed page navigation unexpectedly succeeded") }
+                      try await releaseSlowPages()
+                      let heldB = Task { @MainActor in try await control("open", ["tabId":concurrentB.id,"url":fixture + "slow-page?b"]) }
+                      let heldC = Task { @MainActor in try await control("open", ["tabId":concurrentC.id,"url":fixture + "slow-page?c"]) }
+                      try await awaitSlowPages(2)
+                      _ = try await control("stop", ["tabId":concurrentB.id]); _ = await heldB.result
+                      guard concurrentC.web.isLoading else { throw failure("Stopping one page cancelled a different page") }
+                      _ = try await control("closeTab", ["tabId":concurrentC.id]); _ = await heldC.result
+                      try await releaseSlowPages()
+                      print("PASS: native WKWebView stop/close settle only their target while preserving other actual pending requests")
+                      let replacedB = Task { @MainActor in try await control("open", ["tabId":concurrentB.id,"url":fixture + "slow-page?replace"]) }
+                      try await awaitSlowPages(1)
+                      let replaceStart = Date()
+                      let latestB = try await control("open", ["tabId":concurrentB.id,"url":fixture + "?q=latest-b"]) as! [String: Any]
+                      let replacedResult = await replacedB.result
+                      guard Date().timeIntervalSince(replaceStart) < 2, (latestB["url"] as? String)?.hasSuffix("q=latest-b") == true, concurrentB.errorText.isEmpty else { throw failure("Old navigation callback corrupted replacement navigation") }
+                      if case .success = replacedResult { throw failure("Superseded navigation unexpectedly succeeded") }
+                      try await releaseSlowPages()
+                      print("PASS: native WKNavigation identity isolates cancelled callbacks and the latest URL replaces a held navigation")
+                      let disposingB = Task { @MainActor in try await control("open", ["tabId":concurrentB.id,"url":fixture + "slow-page?dispose"]) }
+                      try await awaitSlowPages(1)
+                      let disposeStart = Date()
+                      _ = try await control("dispose"); _ = await disposingB.result
+                      guard Date().timeIntervalSince(disposeStart) < 2, browser.sessions[owner] == nil, browser.operations.isEmpty else { throw failure("Disposed owner retained pending page operations") }
+                      try await releaseSlowPages()
+                      print("PASS: native browser disposal cancels pending page operations without a navigation-queue deadlock")
                       browser.setView(["visible": false]); browserWindow.orderOut(nil)
                       print("PASS: manual WKWebView preview, navigation, input, screenshot, last-tab close and empty-session state (not official extension automation)")
                       let first = try await host.startBackend()
@@ -628,7 +688,11 @@ jobs:
           run('/usr/bin/xcrun',['swiftc','-swift-version','5','-parse-as-library','-O','-sdk',sdk,'-framework','AppKit','-framework','WebKit','-framework','Security','-framework','CryptoKit',verifier,path.join(root,'native/macos/BrowserHost.swift'),'-o',executable]);
           const fixture = spawn(process.execPath,['-e',String.raw`
             const http=require('node:http');
+            const slowPages=[];
             const server=http.createServer(async(req,res)=>{
+              if(req.url.startsWith('/slow-page?')) { slowPages.push(res);res.setHeader('Content-Type','text/html; charset=utf-8');return; }
+              if(req.url==='/slow-page-status') { res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({started:slowPages.length})); }
+              if(req.url==='/release-pages') { for(const response of slowPages.splice(0))if(!response.destroyed)response.end('<title>Released</title><p>Released held response</p>');return res.end('released'); }
               if(req.url==='/popup-origin') {
                 res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Set-Cookie':'popup_profile=mac; SameSite=Lax; Path=/'});
                 return res.end('<title>Popup origin</title><form method="POST" action="/popup-post" target="_blank"><input name="message" value="body must survive"></form><script>setTimeout(()=>{window.open("/popup-child?kind=blocked","_blank");window.autoPopupAttempted=true},150)</script>');
