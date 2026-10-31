@@ -17,6 +17,46 @@ using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
+internal static class DesktopIntegration {
+    [DllImport("Shlwapi.dll", CharSet = CharSet.Unicode)]
+    private static extern uint AssocQueryString(uint flags, uint value, string association, string extra, StringBuilder output, ref uint length);
+    private static string Association(uint value) {
+        uint length = 0;
+        AssocQueryString(0x1000, value, "codex", null, null, ref length);
+        if (length == 0 || length > 32768) return "";
+        var output = new StringBuilder((int)length);
+        return AssocQueryString(0x1000, value, "codex", null, output, ref length) == 0 ? output.ToString() : "";
+    }
+    internal static Dictionary<string, object> Status() {
+        // Store apps register an AppUserModelID instead of an executable command.
+        string appId = Association(21);
+        bool installed = File.Exists(Association(2)) || appId.StartsWith("OpenAI.Codex_", StringComparison.OrdinalIgnoreCase);
+        string home = Environment.GetEnvironmentVariable("CODEX_HOME", EnvironmentVariableTarget.User);
+        if (String.IsNullOrWhiteSpace(home)) home = Environment.GetEnvironmentVariable("CODEX_HOME", EnvironmentVariableTarget.Machine);
+        if (String.IsNullOrWhiteSpace(home)) home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
+        return new Dictionary<string, object> { { "installed", installed }, { "codexHome", Path.GetFullPath(Environment.ExpandEnvironmentVariables(home)) } };
+    }
+    internal static string BuildUrl(Dictionary<string, object> p) {
+        object value; string threadId = p.TryGetValue("threadId", out value) ? Convert.ToString(value) : "";
+        if (!String.IsNullOrEmpty(threadId)) {
+            Guid id;
+            if (!Guid.TryParseExact(threadId, "D", out id)) throw new Exception("Codex 会话 ID 无效。");
+            return "codex://threads/" + id.ToString("D");
+        }
+        string workspace = p.TryGetValue("workspace", out value) ? Convert.ToString(value) : "";
+        if (String.IsNullOrWhiteSpace(workspace)) return "codex://threads/new";
+        workspace = Path.GetFullPath(workspace);
+        if (!Directory.Exists(workspace)) throw new Exception("工作目录不存在。");
+        return "codex://threads/new?path=" + Uri.EscapeDataString(workspace);
+    }
+    internal static bool Open(Dictionary<string, object> p) {
+        var url = BuildUrl(p);
+        if (!(bool)Status()["installed"]) throw new Exception("未检测到 Codex Desktop，请先完成安装。");
+        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        return true;
+    }
+}
+
 internal static class Program {
     internal static string RuntimeDirectory;
     internal static string DataDirectory;
@@ -56,7 +96,7 @@ internal static class Program {
                         using (var source = entry.Open()) using (var destination = File.Create(target)) source.CopyTo(destination);
                     }
                 }
-                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.6");
+                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.7");
             }
             CleanupOldRuntimes(hash);
             SetDllDirectory(RuntimeDirectory);
@@ -187,7 +227,9 @@ internal sealed class DesktopWindow : Form {
             } else if (method == "dialog.executable") {
                 using (var dialog = new OpenFileDialog { Title = Get(p, "title", "选择可执行文件"), Filter = "程序文件|*.exe;*.cmd;*.js|全部文件|*.*" })
                     result = dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
-            } else if (method == "shell.open") { OpenUrl(Get(p, "url")); result = true; }
+            } else if (method == "desktop.status") { result = DesktopIntegration.Status(); }
+            else if (method == "desktop.open") { result = DesktopIntegration.Open(p); }
+            else if (method == "shell.open") { OpenUrl(Get(p, "url")); result = true; }
             else if (method == "shell.folder") {
                 var directory = Path.GetFullPath(Get(p, "path")); if (!Directory.Exists(directory)) throw new Exception("目录不存在。");
                 Process.Start(new ProcessStartInfo("explorer.exe", Quote(directory)) { UseShellExecute = true }); result = true;
@@ -251,7 +293,7 @@ internal sealed class DesktopWindow : Form {
                 }
             } catch (Exception failure) { error = failure.Message; }
         }
-        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.6", webview = view.CoreWebView2.Environment.BrowserVersionString };
+        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.7", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
     }
     private Task<string> ReadNodeVersion(string node) { return ReadNodeVersion(node, 5); }
     private async Task<string> ReadNodeVersion(string node, int timeoutSeconds) {
@@ -356,6 +398,13 @@ internal sealed class DesktopWindow : Form {
                     var p = Params(message); var value = Get(p, "value"); var method = Get(message, "method");
                     if (method == "vault.encrypt") result = Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(value), Encoding.UTF8.GetBytes("QQClaw/v1"), DataProtectionScope.CurrentUser));
                     else if (method == "vault.decrypt") result = Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(value), Encoding.UTF8.GetBytes("QQClaw/v1"), DataProtectionScope.CurrentUser));
+                    else if (method == "desktop.status") result = DesktopIntegration.Status();
+                    else if (method == "desktop.open") result = DesktopIntegration.Open(p);
+                    else if (method == "shell.folder") {
+                        var directory = Path.GetFullPath(Get(p, "path"));
+                        if (!Directory.Exists(directory)) throw new Exception("目录不存在。");
+                        Process.Start(new ProcessStartInfo("explorer.exe", Quote(directory)) { UseShellExecute = true }); result = true;
+                    }
                     else if (method == "shell.reveal") {
                         var file = Path.GetFullPath(Get(p, "path"));
                         if (!File.Exists(file)) throw new Exception("附件文件已不存在。");

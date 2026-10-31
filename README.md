@@ -1,6 +1,6 @@
 # QQClaw
 
-当前源码为 **0.3.6**：新增 macOS 原生宿主和通用构建配置，并补充独立对话备份/恢复。Mac 使用 `release/macos/QQClaw.dmg` 安装包，兼容 Apple Silicon 和 Intel；完整 GUI 和微信实机验证仍待完成。Windows 正式 EXE 仍为 0.3.5，未强制退出或覆盖。
+当前源码为 **0.3.7**：增加 Codex Desktop 接续、Desktop / CLI 自动检测与手动切换。Windows 候选已通过编译和验证，当前正式运行实例未强制退出；Mac 通用安装包正在云端更新。
 
 轻量 Windows / macOS Codex 工作台。在桌面上编程，也可以通过腾讯 iLink / ClawBot 从微信操作各自的项目目录。
 
@@ -27,6 +27,18 @@ Mac：把 **`release/macos/QQClaw.dmg`** 传到 Mac，双击打开，将 QQClaw 
 空闲会话的 Codex 连接在 15 分钟无任务、排队和审批时自动回收，下次输入会恢复会话；不会中断运行中的长任务。主题、字体、字号与状态显示偏好可在任务运行期间保存，默认模型/权限及 Codex 路径仍需等待任务结束。
 
 微信需要本机和应用保持运行；关闭窗口会停止接收，下一次启动会恢复已保存的账户。支持文字、语音转写、图片、视频、文件，以及未转写语音的原始音频附件。附件下载并解密后交给 Codex 读取；生成的图片、视频和文件通过腾讯 CDN 加密上传，以微信原生卡片发送。单附件上限 100 MiB。不处理群聊。
+
+## 在 Codex Desktop 中继续
+
+1. 在 QQClaw 会话右上角点击 **Desktop 中继续**，或从会话菜单选择 **在 Codex Desktop 中继续**。
+2. 已有原生历史会保存为独立的 Codex 对话副本，并通过官方深链接打开 Desktop；空会话直接打开当前工作目录。草稿保留在 QQClaw，请在 Desktop 中发送下一条任务。
+3. 在 Desktop 使用其内置浏览器及可用工具。Desktop 副本的后续消息不会自动同步回 QQClaw 或微信；原会话仍可继续使用。
+
+副本使用本机 Codex 配置和动态默认模型，避免继续依赖 QQClaw 的临时第三方 API 转发进程。Desktop 的模型、登录和工具需在 Desktop 中配置。同一历史重复点击会复用已有副本；QQClaw 有新历史后会创建新副本。目录中有运行或排队任务时，先等待任务结束。两端编辑同一目录时请协调操作。
+
+「设置 → 运行环境 → Codex 来源」提供自动检测、Desktop 附带程序、独立 CLI 和手动指定四个选项。自动模式优先采用通过版本检测的 Desktop 程序，不可用时回退 CLI；明确指定的来源不可用时会提示重新配置。选择后点击「保存来源」，模型目录随之刷新。Desktop 安装入口和一键安装 CLI 仍在运行环境页。
+
+接续原生历史要求两端使用相同的 Codex 用户目录。Windows 检查系统/用户环境中配置的 Desktop 目录；macOS 按 Launch Services 启动时的标准 `~/.codex` 检查，QQClaw 使用其他 `CODEX_HOME` 时拒绝生成可能无法读取的会话链接。功能通过官方 [Desktop 深链接](https://learn.chatgpt.com/docs/reference/commands) 和 [App Server](https://learn.chatgpt.com/docs/app-server) 实现。
 
 ## 自定义 API 与模型
 
@@ -87,6 +99,7 @@ Windows 构建始终只输出 `release/QQClaw.exe`。构建前请关闭程序；
 | `backend/wechat-results.mjs` | 最终结果整合、完整总结与多附件 ZIP 打包、100 MiB 分包 |
 | `backend/wechat-*.mjs` | codex-weixin 的媒体加解密、消息解析、发送动作、提示词、合并缓冲与微信命令 |
 | `backend/codex.mjs` | Codex App Server JSON-RPC、模型列表、流式事件与权限 |
+| `backend/codex-runtime.mjs` | Desktop / CLI 来源发现、真实版本验证、自动回退与环境隔离 |
 | `backend/adapter.mjs` | 第三方 Chat Completions 与 Responses 兼容层 |
 | `backend/app.mjs` | 项目、会话、模型服务、目录任务队列和操作路由 |
 | `backend/store.mjs` | 合并尾随保存、快照时序保证、原子替换、凭证过滤与 DPAPI 桥接 |

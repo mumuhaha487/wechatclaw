@@ -20,6 +20,54 @@ func jsonData(_ value: Any) throws -> Data { try JSONSerialization.data(withJSON
 func jsonText(_ value: Any) throws -> String { String(decoding: try jsonData(value), as: UTF8.self) }
 func quoteShell(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'" }
 
+@MainActor enum DesktopIntegration {
+    static func application() -> URL? {
+        if let app = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "codex://threads/new")!), FileManager.default.fileExists(atPath: app.path) { return app }
+        for root in ["/Applications", NSHomeDirectory() + "/Applications"] {
+            for name in ["Codex.app", "ChatGPT.app"] {
+                let app = URL(fileURLWithPath: root).appendingPathComponent(name)
+                let types = Bundle(url: app)?.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]] ?? []
+                if types.contains(where: { ($0["CFBundleURLSchemes"] as? [String])?.contains("codex") == true }) { return app }
+            }
+        }
+        return nil
+    }
+    static func status() -> [String: Any] {
+        // Launch Services does not forward this process's CODEX_HOME to Desktop.
+        let home = NSHomeDirectory() + "/.codex"
+        return ["installed": application() != nil, "codexHome": URL(fileURLWithPath: home).standardizedFileURL.path]
+    }
+    static func url(_ p: [String: Any]) throws -> URL {
+        var parts = URLComponents(); parts.scheme = "codex"; parts.host = "threads"
+        let id = p["threadId"] as? String ?? ""
+        if !id.isEmpty {
+            guard let uuid = UUID(uuidString: id), uuid.uuidString.count == id.count else { throw failure("Codex 会话 ID 无效。") }
+            parts.path = "/" + uuid.uuidString.lowercased()
+        } else {
+            parts.path = "/new"
+            if let workspace = p["workspace"] as? String, !workspace.isEmpty {
+                var directory: ObjCBool = false
+                guard workspace.hasPrefix("/"), FileManager.default.fileExists(atPath: workspace, isDirectory: &directory), directory.boolValue else { throw failure("工作目录不存在。") }
+                let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+                parts.percentEncodedQuery = "path=" + (workspace.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")
+            }
+        }
+        guard let url = parts.url else { throw failure("无法生成 Desktop 链接。") }
+        return url
+    }
+    static func open(_ p: [String: Any]) async throws -> Bool {
+        let link = try url(p)
+        guard let app = application() else { throw failure("未检测到 Codex Desktop，请先完成安装。") }
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
+            NSWorkspace.shared.open([link], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { application, error in
+                if let error { continuation.resume(throwing: error) }
+                else if application != nil { continuation.resume(returning: true) }
+                else { continuation.resume(throwing: failure("无法打开 Codex Desktop。")) }
+            }
+        }
+    }
+}
+
 // Foundation's fixed-length reads can wait for the requested byte count on a
 // pipe. A JSON line must be delivered as soon as read(2) returns any bytes.
 func readPipe(_ handle: FileHandle, limit: Int = 65536) throws -> Data {
@@ -234,6 +282,8 @@ final class Backend: @unchecked Sendable {
         case "window.maximize": window.zoom(nil); return true
         case "window.close": NSApp.terminate(nil); return true
         case "window.drag", "window.resize": return true // Native titlebar and resize handles.
+        case "desktop.status": return DesktopIntegration.status()
+        case "desktop.open": return try await DesktopIntegration.open(p)
         case "dialog.folder", "dialog.file", "dialog.executable":
             let panel = NSOpenPanel(); panel.canChooseDirectories = method == "dialog.folder"; panel.canChooseFiles = !panel.canChooseDirectories
             panel.allowsMultipleSelection = false; panel.canCreateDirectories = panel.canChooseDirectories
@@ -258,7 +308,7 @@ final class Backend: @unchecked Sendable {
             let node = Runtime.node(data) ?? ""; var version = "", error = ""
             if !node.isEmpty { do { version = try await Runtime.version(node) } catch let e { error = e.localizedDescription } }
             else { error = "未检测到 Node.js，请安装 22.13 或更新版本。" }
-            return ["nodeReady": !version.isEmpty, "nodePath": node, "nodeVersion": version, "nodeError": error, "dataDir": data.path, "platform": "darwin", "webview": "系统 WebKit"] as [String: Any]
+            return ["nodeReady": !version.isEmpty, "nodePath": node, "nodeVersion": version, "nodeError": error, "dataDir": data.path, "platform": "darwin", "desktop": DesktopIntegration.status(), "webview": "系统 WebKit"] as [String: Any]
         case "system.nodePath":
             _ = try await Runtime.version(path); try path.write(to: data.appendingPathComponent("node-path.txt"), atomically: true, encoding: .utf8); return true
         case "system.reload":
@@ -330,7 +380,7 @@ final class Backend: @unchecked Sendable {
         guard backend === child else { return }
         let kind = message["kind"] as? String ?? "", id = message["id"] as? String ?? ""
         if kind == "native" {
-            guard let method = message["method"] as? String, ["vault.encrypt", "vault.decrypt", "shell.reveal", "shell.folder"].contains(method) else { try? child.send(["kind": "nativeResponse", "id": id, "error": "不支持的内部请求。"]); return }
+            guard let method = message["method"] as? String, ["vault.encrypt", "vault.decrypt", "shell.reveal", "shell.folder", "desktop.status", "desktop.open"].contains(method) else { try? child.send(["kind": "nativeResponse", "id": id, "error": "不支持的内部请求。"]); return }
             let p = message["params"] as? [String: Any] ?? [:]
             if method.hasPrefix("vault.") {
                 let vault = self.vault!

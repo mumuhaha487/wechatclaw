@@ -161,3 +161,12 @@ Codex 新线程显式非临时保存，保留服务返回的真实 thread.path�
 数据目录、构建步骤和验证边界见 [MACOS-AND-DATA.md](MACOS-AND-DATA.md)。
 
 Mac 分发改为单一 `release/macos/QQClaw.dmg`：只读压缩磁盘映像包含通用应用、指向 `/Applications` 的安装入口和中文说明。构建使用系统 `hdiutil` 创建并校验；开发启动和 CI 从磁盘映像复制应用后执行。可选 Developer ID 签名及公证针对完整 DMG，未配置证书时应用仍使用 ad hoc 签名。
+
+
+## Desktop 接续
+
+`codex-runtime.mjs` 负责验证并选择实际执行的 Desktop / CLI 程序。`app.mjs` 的 `desktop.continue` 保存源会话，使用独立本机客户端调用原生 `thread/fork`，保存 `desktopCopy`，再交由宿主生成并打开 `codex://threads/<id>`。空会话用 `codex://threads/new?path=...`。复制持有工作目录锁，运行/排队任务完成前拒绝接续；同一历史重复点击复用副本。
+
+副本模型/Provider 使用本机 Codex 配置，未指定模型时动态查询默认项；不使用 QQClaw 临时 Provider 或转发层。Desktop 与 QQClaw/微信后续对话独立，不自动回传。此入口使用真实 Desktop 的工具，不声称直接从 QQClaw 控制其内置浏览器。
+
+原生 `desktop.status` / `desktop.open` 只检测处理器和打开验证过的本地会话/目录链接。Windows 支持 Store AppUserModelID；Mac 使用 Launch Services。Codex 用户目录不一致时拒绝历史接续。

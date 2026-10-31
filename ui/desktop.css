@@ -317,6 +317,18 @@ select:focus-visible {
   padding-left: 4px;
   flex-shrink: 0;
 }
+.desktop-continue {
+  min-height: 28px;
+  padding: 4px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.desktop-handoff-note {
+  margin: 8px 20px 0;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
 .top-capsule {
   display: flex;
   align-items: center;

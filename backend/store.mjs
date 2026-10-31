@@ -16,6 +16,7 @@ export const defaults = () => ({
     showTime: false,
     showStatus: true,
     codexPath: "",
+    codexSource: "auto",
     defaultProvider: "local",
     defaultModel: "",
     defaultEffort: "",
@@ -50,6 +51,7 @@ export class Store {
         ...data,
         settings: { ...defaults().settings, ...data.settings },
       };
+      if (!data.settings?.codexSource && this.state.settings.codexPath) this.state.settings.codexSource = "custom";
     } catch (error) {
       if (error.code !== "ENOENT")
         throw new Error(

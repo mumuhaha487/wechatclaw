@@ -63,6 +63,13 @@ jobs:
                       let status = try await host.handle("system.status", [:]) as! [String: Any]
                       guard status["nodeReady"] as? Bool == true else { throw failure("Node discovery failed") }
                       print("PASS: macOS Node discovery")
+                      let link = try DesktopIntegration.url(["workspace": host.data.path])
+                      guard URLComponents(url: link, resolvingAgainstBaseURL: false)?.queryItems?.first?.value == host.data.path else { throw failure("Desktop workspace URL encoding failed") }
+                      let threadId = UUID().uuidString.lowercased()
+                      guard try DesktopIntegration.url(["threadId": threadId]).absoluteString == "codex://threads/" + threadId else { throw failure("Desktop thread URL failed") }
+                      do { _ = try DesktopIntegration.url(["threadId": "https://invalid"]); throw failure("Invalid thread accepted") }
+                      catch let error as NSError { guard error.localizedDescription.contains("会话 ID 无效") else { throw error } }
+                      print("PASS: Desktop URL encoding and invalid thread rejection")
                       let first = try await host.startBackend()
                       _ = try await host.call(first, "snapshot")
                       print("PASS: native backend startup and small pipe response")

@@ -1,10 +1,6 @@
-import { spawn, execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
-import fs from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
 import {
   createChatAdapter,
   createResponsesAdapter,
@@ -12,117 +8,8 @@ import {
 } from "./adapter.mjs";
 import { safeError } from "./store.mjs";
 
-export async function findCodex(configured = "", env = process.env) {
-  if (process.platform !== "win32") {
-    const directories = [...new Set([path.dirname(process.execPath), ...String(env.PATH || "").split(path.delimiter), "/opt/homebrew/bin", "/usr/local/bin", path.join(os.homedir(), ".npm-global/bin"), path.join(os.homedir(), ".volta/bin")].filter(Boolean))];
-    for (const candidate of configured ? [configured] : [env.CODEX_APP_RUNTIME_CLI_PATH, ...directories.map((dir) => path.join(dir, "codex")), "/Applications/Codex.app/Contents/Resources/codex"]) {
-      if (!candidate) continue;
-      try { const real = await fs.realpath(candidate); if ((await fs.stat(real)).isFile()) { if (!/\.[cm]?js$/i.test(real)) await fs.access(real, 1); return real; } } catch {}
-    }
-    throw new Error("未找到 Codex CLI，请到「设置 → 运行环境」安装，或手动选择 Codex 程序。");
-  }
-  const runtimeRoot = path.join(
-    env.LOCALAPPDATA || "",
-    "OpenAI",
-    "Codex",
-    "bin",
-  );
-  const runtimeCandidates = [];
-  if (!configured) {
-    try {
-      for (const entry of await fs.readdir(runtimeRoot, {
-        withFileTypes: true,
-      })) {
-        const file = path.join(runtimeRoot, entry.name, "codex.exe");
-        if (entry.isDirectory()) {
-          try {
-            runtimeCandidates.push({
-              file,
-              time: (await fs.stat(file)).mtimeMs,
-            });
-          } catch {}
-        }
-      }
-      runtimeCandidates.sort((a, b) => b.time - a.time);
-    } catch {}
-  }
-  const candidates = configured
-    ? [configured]
-    : [
-        env.CODEX_APP_RUNTIME_CLI_PATH,
-        ...runtimeCandidates.map((entry) => entry.file),
-        path.join(runtimeRoot, "codex.exe"),
-        ...String(env.PATH || "")
-          .split(path.delimiter)
-          .filter(Boolean)
-          .flatMap((dir) => [
-            path.join(dir, "codex.exe"),
-            path.join(dir, "codex.cmd"),
-            path.join(dir, "codex"),
-          ]),
-        path.join(
-          env.LOCALAPPDATA || "",
-          "Programs",
-          "OpenAI",
-          "Codex",
-          "bin",
-          "codex.exe",
-        ),
-        path.join(
-          env.APPDATA || "",
-          "npm",
-          "node_modules",
-          "@openai",
-          "codex",
-          "bin",
-          "codex.js",
-        ),
-        path.join(
-          path.dirname(process.execPath),
-          "node_modules",
-          "@openai",
-          "codex",
-          "bin",
-          "codex.js",
-        ),
-        path.join(
-          os.homedir(),
-          ".npm-global",
-          "lib",
-          "node_modules",
-          "@openai",
-          "codex",
-          "bin",
-          "codex.js",
-        ),
-      ];
-  for (let candidate of candidates) {
-    if (!candidate) continue;
-    if (/\.(cmd|ps1)$/i.test(candidate))
-      candidate = path.join(
-        path.dirname(candidate),
-        "node_modules",
-        "@openai",
-        "codex",
-        "bin",
-        "codex.js",
-      );
-    try {
-      if ((await fs.stat(candidate)).isFile()) return candidate;
-    } catch {}
-  }
-  if (!configured) {
-    try {
-      const npm = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
-      const result = await promisify(execFile)(process.execPath, [npm, "root", "--global"], { windowsHide: true, timeout: 6000, env });
-      const candidate = path.join(result.stdout.trim(), "@openai", "codex", "bin", "codex.js");
-      if ((await fs.stat(candidate)).isFile()) return candidate;
-    } catch {}
-  }
-  throw new Error(
-    "未找到 Codex CLI，请到「设置 → 运行环境」安装，或选择 codex.exe 的路径。",
-  );
-}
+import { findCodex, codexEnvironment } from "./codex-runtime.mjs";
+export { findCodex, resolveCodex, codexEnvironment } from "./codex-runtime.mjs";
 
 export function providerArguments(profile, endpoint) {
   if (profile.type === "local") return [];
@@ -134,19 +21,6 @@ export function providerArguments(profile, endpoint) {
     "-c",
     `model_providers.qqclaw=${config}`,
   ];
-}
-
-export function codexEnvironment(source = process.env) {
-  // A desktop launched by another Codex process must not inherit that chat's
-  // tools pipe, permission profile, session identity or sandbox overrides.
-  const env = Object.fromEntries(
-    Object.entries(source).filter(
-      ([key]) =>
-        !key.startsWith("CODEX_") ||
-        ["CODEX_HOME", "CODEX_API_KEY"].includes(key),
-    ),
-  );
-  return { ...env, QQCLAW_REMOTE: "1", CODEX_WECHAT_REMOTE: "1" };
 }
 
 export class CodexClient extends EventEmitter {
@@ -295,7 +169,7 @@ export class CodexClient extends EventEmitter {
     });
     try {
       await this.request("initialize", {
-        clientInfo: { name: "qqclaw_desktop", title: "QQClaw", version: "0.3.6" },
+        clientInfo: { name: "qqclaw_desktop", title: "QQClaw", version: "0.3.7" },
         capabilities: { experimentalApi: false },
       }, this.initializeTimeoutMs);
       this.send({ method: "initialized", params: {} });

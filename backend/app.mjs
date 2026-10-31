@@ -1,10 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { Store, safeError, workspacePath } from "./store.mjs";
-import { CodexClient, findCodex, codexEnvironment } from "./codex.mjs";
+import { CodexClient } from "./codex.mjs";
+import { resolveCodex, CODEX_SOURCES } from "./codex-runtime.mjs";
 import { WeChatBridge } from "./bridge.mjs";
 import { validateBaseUrl } from "./adapter.mjs";
 import { parseActionBlocksSafe } from "./wechat-actions.mjs";
@@ -90,17 +89,19 @@ export class App {
     emit = () => {},
     store,
     clientFactory = (options) => new CodexClient(options),
+    runtimeResolver = resolveCodex,
     wechatApi,
     log = () => {},
     idleTimeoutMs = 15 * 60 * 1000,
   } = {}) {
-    Object.assign(this, { directory, native, emit, clientFactory, log });
+    Object.assign(this, { directory, native, emit, clientFactory, runtimeResolver, log });
     this.store = store || new Store(directory, native);
     this.clients = new Map();
     this.workspaces = new Map();
     this.sessionRuns = new Map();
     this.cancelled = new Set();
     this.modelRequests = new Map();
+    this.desktopHandoffs = new Map();
     this.closing = false;
     this.idleTimeoutMs = idleTimeoutMs;
     this.idleTimer = setInterval(() => this.reapIdleClients(), Math.min(60000, idleTimeoutMs));
@@ -145,15 +146,21 @@ export class App {
     this.store.state.sessions.unshift(session);
     return session;
   }
+  codexRuntime(refresh = false) {
+    const { codexPath, codexSource } = this.store.state.settings;
+    return this.runtimeResolver({ configured: codexPath, source: codexSource || (codexPath ? "custom" : "auto"), refresh });
+  }
   async client(session) {
     const profile = this.store.state.providers.find(
       (p) => p.id === session.providerId,
     );
     if (!profile) throw new Error("模型服务已被移除，请重新选择。");
-    const executable = await findCodex(this.store.state.settings.codexPath);
+    const runtime = await this.codexRuntime();
+    const executable = runtime.path;
     const signature = JSON.stringify([
       profile,
       this.store.state.settings.codexPath,
+      this.store.state.settings.codexSource,
       executable,
     ]);
     let entry = this.clients.get(session.id);
@@ -341,8 +348,82 @@ export class App {
     this.cancelled.add(id);
     return (await this.clients.get(id)?.client.interrupt()) || { stopped: true };
   }
+  continueDesktop(params = {}) {
+    const key = params.sessionId || `new:${workspaceKey(params.workspace || "")}`;
+    if (this.desktopHandoffs.has(key)) return this.desktopHandoffs.get(key);
+    const operation = this.openDesktopSession(params).finally(() => this.desktopHandoffs.delete(key));
+    this.desktopHandoffs.set(key, operation);
+    return operation;
+  }
+  async openDesktopSession({ sessionId, workspace }) {
+    if (this.closing) throw new Error("应用正在退出。");
+    const session = sessionId ? this.getSession(sessionId) : null;
+    const fingerprint = session ? `${session.threadId}:${session.messages.length}:${session.updatedAt || ""}` : "";
+    workspace = session?.workspace || workspace;
+    if (!workspace) throw new Error("请先选择工作目录。");
+    const key = workspaceKey(workspace);
+    if (this.workspaces.has(key) || this.store.state.sessions.some((s) => sameWorkspace(s.workspace, workspace) && (s.busy || s.queued)))
+      throw new Error("请等待该工作目录中的任务完成，再在 Desktop 中继续。");
+    let unlock;
+    const lock = new Promise((resolve) => { unlock = resolve; });
+    this.workspaces.set(key, lock);
+    let client;
+    try {
+      workspace = await workspacePath(workspace);
+      const desktop = await this.native("desktop.status", {});
+      if (!desktop?.installed) throw new Error("未检测到 Codex Desktop，请到「设置 → 运行环境」安装。QQClaw 仍可使用 CLI。");
+      // A deep link has no CODEX_HOME parameter. Never claim an unreadable fork opened.
+      const codexHome = this.store.archive.info().codexHome;
+      if (session?.threadId && desktop.codexHome && !sameWorkspace(codexHome, desktop.codexHome))
+        throw new Error("QQClaw 与 Desktop 的 Codex 用户目录不同，请先使用相同的 CODEX_HOME，再接续历史会话。");
+      await this.store.save();
+      if (!session?.threadId) {
+        if (this.closing) throw new Error("应用正在退出。");
+        await this.native("desktop.open", { workspace });
+        return { opened: true, copied: false, message: "已请求在 Desktop 中打开此工作目录。请在 Desktop 中发送任务并使用内置浏览器；QQClaw 的草稿仍保留。" };
+      }
+      const runtime = await this.codexRuntime();
+      client = this.clientFactory({ executable: runtime.path, profile: { type: "local" } });
+      client.on?.("unexpected-close", (error) => this.log("ERROR", error));
+      await client.connect();
+      let threadId = session.desktopCopy?.fingerprint === fingerprint ? session.desktopCopy.threadId : null;
+      if (threadId) {
+        try { await client.request("thread/read", { threadId }); }
+        catch (error) {
+          if (!/no rollout found|thread.*not found/i.test(error.message)) throw error;
+          threadId = null;
+        }
+      }
+      if (!threadId) {
+        const { config = {} } = await client.request("config/read", { cwd: workspace, includeLayers: false });
+        const defaults = config.model ? null : (await client.models()).find((model) => model.isDefault);
+        const model = config.model || defaults?.model || defaults?.id;
+        if (!model) throw new Error("无法确定 Desktop 的默认模型，请先在 Desktop 中配置模型，再重试接续。");
+        const effort = config.model_reasoning_effort || defaults?.defaultReasoningEffort;
+        const result = await client.request("thread/fork", {
+          threadId: session.threadId, cwd: workspace, ephemeral: false, excludeTurns: true,
+          modelProvider: config.model_provider || "openai",
+          model,
+          ...(effort ? { config: { model_reasoning_effort: effort } } : {}),
+          approvalPolicy: "on-request", sandbox: "workspace-write",
+          developerInstructions: "这是从 QQClaw 接续到 Codex Desktop 的独立对话副本。请保留已有对话上下文，按用户在 Desktop 中的新指令继续。浏览器与其他桌面工具由 Desktop 提供。QQClaw 与微信不会自动收到此副本的后续回复；无需自行向微信发送消息。",
+        });
+        threadId = result.thread.id;
+        session.desktopCopy = { threadId, fingerprint, createdAt: new Date().toISOString() };
+        await this.store.save();
+        this.changed();
+      }
+      if (this.closing) throw new Error("应用正在退出，对话副本已保存，重新打开后可继续。");
+      await this.native("desktop.open", { threadId });
+      return { opened: true, copied: true, threadId, message: "已请求在 Desktop 中打开对话副本。请在那里继续发送任务；Desktop 后续回复不会同步回 QQClaw 或微信。" };
+    } finally {
+      client?.close();
+      unlock();
+      if (this.workspaces.get(key) === lock) this.workspaces.delete(key);
+    }
+  }
   readModels(profile) {
-    const key = profile.type === "local" ? profile.id || profile : `${profile.id || ""}:${createHash("sha256")
+    const key = profile.type === "local" ? JSON.stringify([profile.id || "local", this.store.state.settings.codexSource, this.store.state.settings.codexPath]) : `${profile.id || ""}:${createHash("sha256")
       .update(JSON.stringify([profile.baseUrl || "", profile.apiKey || ""]))
       .digest("hex").slice(0, 8)}`;
     if (this.modelRequests.has(key)) return this.modelRequests.get(key);
@@ -355,7 +436,7 @@ export class App {
   async loadModels(profile) {
     if (profile.type === "local") {
       const client = this.clientFactory({
-        executable: await findCodex(this.store.state.settings.codexPath),
+        executable: (await this.codexRuntime()).path,
         profile,
       });
       client.on?.("unexpected-close", (error) => this.log("ERROR", error));
@@ -395,6 +476,8 @@ export class App {
       }
       case "snapshot":
         return { ...this.store.snapshot(), wechat: this.bridge.status() };
+      case "desktop.continue":
+        return this.continueDesktop(p);
       case "attachment.reveal": {
         const session = this.getSession(p.sessionId);
         const message = session.messages[Number(p.message)];
@@ -473,12 +556,10 @@ export class App {
         let codexPath = "",
           codexVersion = "",
           error = "";
+        let codexSource = "";
         try {
-          codexPath = await findCodex(state.settings.codexPath);
-          const script = /\.[cm]?js$/i.test(codexPath);
-          const command = script ? process.execPath : codexPath;
-          const args = script ? [codexPath, "--version"] : ["--version"];
-          codexVersion = (await promisify(execFile)(command, args, { windowsHide: true, timeout: 10000, env: codexEnvironment() })).stdout.trim();
+          const runtime = await this.codexRuntime(p.refresh === true);
+          codexPath = runtime.path; codexVersion = runtime.version; codexSource = runtime.source;
         } catch (e) {
           codexPath = "";
           error = safeError(e);
@@ -488,6 +569,8 @@ export class App {
           nodePath: process.execPath,
           codexPath,
           codexVersion,
+          codexSource,
+          desktop: await this.native("desktop.status", {}).catch(() => ({ installed: false })),
           error,
           dataDir: this.directory,
           platform: process.platform,
@@ -565,7 +648,7 @@ export class App {
       }
       case "session.update": {
         const session = this.getSession(p.id);
-        if (session.busy || session.queued) throw new Error("任务运行或排队时不能修改会话配置。");
+        if (session.busy || session.queued || this.desktopHandoffs.has(p.id)) throw new Error("任务运行、排队或正在接续 Desktop 时不能修改会话配置。");
         const title = p.title === undefined ? undefined : String(p.title).trim();
         if (title !== undefined && !title) throw new Error("会话名称不能为空。");
         const next = connectionOptions(state, { ...session, ...p });
@@ -584,7 +667,7 @@ export class App {
       }
       case "session.remove": {
         const session = this.getSession(p.id);
-        if (session.busy || session.queued) throw new Error("请先等待任务完成。");
+        if (session.busy || session.queued || this.desktopHandoffs.has(p.id)) throw new Error("请先等待任务或 Desktop 接续完成。");
         if (state.accounts.some((a) => this.bridge.accountSessionIds(a).has(p.id)))
           throw new Error("该会话正在供微信账户使用，请先断开账户。");
         this.clients.get(p.id)?.client.close();
@@ -608,9 +691,9 @@ export class App {
       case "chat.stop":
         return this.stop(p.sessionId);
       case "settings.save": {
-        const connectionChange = ["defaultProvider", "defaultModel", "defaultEffort", "defaultPermission", "codexPath"]
+        const connectionChange = ["defaultProvider", "defaultModel", "defaultEffort", "defaultPermission", "codexPath", "codexSource"]
           .some((key) => Object.hasOwn(p, key));
-        if (connectionChange && state.sessions.some((s) => s.busy || s.queued))
+        if (connectionChange && (this.desktopHandoffs.size || state.sessions.some((s) => s.busy || s.queued)))
           throw new Error("请在当前任务完成后保存全局设置。");
         const changes = {};
         if (p.theme !== undefined) {
@@ -636,12 +719,20 @@ export class App {
             throw new Error("字体无效。");
           changes.fontFamily = p.fontFamily;
         }
-        if (p.codexPath !== undefined) {
-          if (p.codexPath) await findCodex(p.codexPath);
-          changes.codexPath = p.codexPath;
+        if (p.codexSource !== undefined) {
+          if (!CODEX_SOURCES.includes(p.codexSource)) throw new Error("Codex 来源无效。");
+          changes.codexSource = p.codexSource;
+          if (p.codexSource !== "custom") changes.codexPath = "";
+        }
+        if (p.codexPath !== undefined || p.codexSource === "custom") {
+          const configured = String(p.codexPath ?? state.settings.codexPath).trim();
+          const source = p.codexSource || (configured ? "custom" : "auto");
+          if (source === "custom") await this.runtimeResolver({ configured, source, refresh: true });
+          changes.codexPath = source === "custom" ? configured : "";
+          changes.codexSource = source;
         }
         if (connectionChange) {
-          if (state.sessions.some((s) => s.busy || s.queued))
+          if (this.desktopHandoffs.size || state.sessions.some((s) => s.busy || s.queued))
             throw new Error("请在当前任务完成后保存全局设置。");
           const options = connectionOptions(state, {
             providerId: p.defaultProvider ?? state.settings.defaultProvider,
@@ -656,7 +747,12 @@ export class App {
             defaultPermission: options.permission,
           });
         }
+        const runtimeChanged = ["codexSource", "codexPath"].some((key) => Object.hasOwn(changes, key) && changes[key] !== state.settings[key]);
         Object.assign(state.settings, changes);
+        if (runtimeChanged) {
+          for (const { client } of this.clients.values()) client.close();
+          this.clients.clear();
+        }
         await this.store.save();
         this.changed();
         return this.store.snapshot();
@@ -761,6 +857,7 @@ export class App {
     this.closing = true;
     clearInterval(this.idleTimer);
     await this.bridge.close();
+    await Promise.allSettled([...this.desktopHandoffs.values()]);
     for (const { client } of this.clients.values()) {
       await client.interrupt().catch(() => {});
       client.close();
