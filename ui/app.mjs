@@ -896,7 +896,15 @@ async function runBrowserCommand(command, params = {}) {
     panelTabs.openBrowser(owner, browserStates.get(target.id));
     applyPanelTab(); ui.panel = true; ui.browserHidden.delete(target.id); rememberPanel(); render();
   }
-  const data = await rpc(command === "open" ? "browser.open" : "browser.command", { sessionId: target.id, action: command, ...params });
+  let data;
+  try {
+    data = await rpc(command === "open" ? "browser.open" : "browser.command", { sessionId: target.id, action: command, ...params });
+  } catch (error) {
+    // A close or a different panel supersedes the original request. Its native
+    // error remains in the owning tab; don't toast a cancelled navigation here.
+    if (owner !== panelOwner() || intent !== ui.panelIntent) return;
+    throw error;
+  }
   updateBrowserState(data);
   if (activate && owner === panelOwner() && intent === ui.panelIntent && ui.panel && !ui.page) {
     panelTabs.openBrowser(owner, browserStates.get(target.id)); applyPanelTab(); rememberPanel(); render();
