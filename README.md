@@ -1,6 +1,6 @@
 # QQClaw
 
-当前源码为 **0.3.6**：新增 macOS 原生宿主和通用构建配置，并补充独立对话备份/恢复。Mac 已通过 GitHub macOS 云编译与原生后台/数据持久化自检，通用包位于 `release/macos/QQClaw.zip`；完整 GUI 和微信实机验证仍待完成。当前运行中的 Windows 正式 EXE 仍为 0.3.5，未强制退出或覆盖。
+当前源码为 **0.3.6**：新增 macOS 原生宿主和通用构建配置，并补充独立对话备份/恢复。Mac 使用 `release/macos/QQClaw.dmg` 安装包，兼容 Apple Silicon 和 Intel；完整 GUI 和微信实机验证仍待完成。Windows 正式 EXE 仍为 0.3.5，未强制退出或覆盖。
 
 轻量 Windows / macOS Codex 工作台。在桌面上编程，也可以通过腾讯 iLink / ClawBot 从微信操作各自的项目目录。
 
@@ -8,7 +8,9 @@
 
 ## 直接使用
 
-双击 **`release/QQClaw.exe`** 即可打开。成品目录只保留这一个程序，后续更新直接替换同名文件。Windows x64 便携版，无需安装本应用。EXE 小于 1 MB，不携带 Node.js、Codex CLI 或浏览器运行时。更新时先退出程序，账户和设置会继续沿用。
+Windows：双击 **`release/QQClaw.exe`** 即可打开。只保留这一个 Windows 程序，后续更新直接替换同名文件。Windows x64 便携版，无需安装本应用。EXE 小于 1 MB，不携带 Node.js、Codex CLI 或浏览器运行时。更新时先退出程序，账户和设置会继续沿用。
+
+Mac：把 **`release/macos/QQClaw.dmg`** 传到 Mac，双击打开，将 QQClaw 拖到旁边的 Applications（应用程序）。以后直接在「应用程序」中双击 QQClaw 即可启动，不需要自行编译或运行终端命令。支持 macOS 13.3+。首次若被系统拦截，先尝试打开一次，再到「系统设置 → 隐私与安全性 → 仍要打开」确认；当前版本尚未 Apple 公证。首次使用仍需按软件内引导安装 Node.js 和 Codex。
 
 1. 在「设置 → 运行环境」检测环境。需要 Node.js **22.13+**、Codex CLI，以及系统 WebView2 Runtime。界面提供 Node.js/WebView2 官方安装入口和 Codex CLI 安装按钮，也能手动选择程序路径。
 2. 使用本机配置时，可沿用现有 Codex 登录与 Provider；尚未登录可点击「登录 Codex」。使用自定义 API 时不需要另行登录 ChatGPT。
@@ -94,7 +96,7 @@ Windows 构建始终只输出 `release/QQClaw.exe`。构建前请关闭程序；
 | `shared/workspace.mjs` | Windows 与 POSIX 路径身份比较，保留大小写敏感卷中的不同目录 |
 | `scripts/build.mjs` | 按本机平台选择构建流程 |
 | `scripts/build-windows.mjs` | Windows 前后端打包、SDK 获取、单 EXE 编译与许可证收集 |
-| `native/macos/` / `scripts/build-macos.mjs` | Mac 原生宿主、两种架构编译/合并、签名和唯一 ZIP |
+| `native/macos/` / `scripts/build-macos.mjs` | Mac 原生宿主、两种架构编译/合并、签名和唯一 DMG 安装包 |
 | `backend/conversations.mjs` | 独立对话备份、Codex 历史关联和恢复格式校验 |
 
 两条链路的提取过程、接口与复用示例见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
@@ -103,7 +105,7 @@ Windows 构建始终只输出 `release/QQClaw.exe`。构建前请关闭程序；
 
 Mac 适配面向 macOS 13.3+，使用 AppKit + 系统 WebKit，支持 Intel / Apple Silicon 通用构建。界面使用原生标题栏、Cmd 快捷键和系统剪贴板，安装页识别 Mac 的 Node/Codex 路径。
 
-在 Mac 安装 Xcode 15+ 的 Command Line Tools 和 Node.js 22.13+，执行 `npm ci`、`npm run build:mac`。产物为 `release/macos/QQClaw.zip`，内含一个 `QQClaw.app`。源码已保存到 [mumuhaha487/wechatclaw](https://github.com/mumuhaha487/wechatclaw)。Windows 可在该仓库的 [Mac 构建工作流](https://github.com/mumuhaha487/wechatclaw/actions/workflows/macos.yml) 点击 Run workflow，由 macOS 云端机器完成编译并下载产物；本轮已实际成功执行。
+在 Mac 安装 Xcode 15+ 的 Command Line Tools 和 Node.js 22.13+，执行 `npm ci`、`npm run build:mac`。产物为 `release/macos/QQClaw.dmg`，内含一个 `QQClaw.app`、Applications 快捷入口和中文安装说明。源码已保存到 [mumuhaha487/wechatclaw](https://github.com/mumuhaha487/wechatclaw)。Windows 可在该仓库的 [Mac 构建工作流](https://github.com/mumuhaha487/wechatclaw/actions/workflows/macos.yml) 点击 Run workflow，由 macOS 云端机器完成编译并下载产物。
 
 Mac 应用数据位于 `~/Library/Application Support/QQClaw`，加密密钥存放在系统钥匙串。删除 EXE 或 .app 不会主动删除账户数据、Codex 原生历史或独立对话备份。**独立备份是可读的 JSON/Markdown，附件只保存原路径；个人备份时还需保留 Codex 用户目录、项目和附件本体。**
 

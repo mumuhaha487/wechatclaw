@@ -11,7 +11,15 @@ npm ci
 npm run build:mac
 ```
 
-唯一 Mac 分发包为 `release/macos/QQClaw.zip`，解压得到 `QQClaw.app`，可移入「应用程序」。包含 Apple Silicon 和 Intel 两种架构；使用系统 AppKit、WebKit、Security 和 CryptoKit，不内置 Node.js、Codex CLI 或浏览器运行时。前端最低目标为 Safari 16.4，对应 macOS 13.3。
+唯一 Mac 分发包为 `release/macos/QQClaw.dmg`，包含 Apple Silicon 和 Intel 两种架构。用户无需编译：
+
+1. 将 `QQClaw.dmg` 传到 Mac，双击打开。
+2. 将 QQClaw 拖入旁边的 Applications（应用程序）文件夹。
+3. 从 Mac「应用程序」双击 QQClaw，以后直接点击启动；安装完成可推出磁盘映像。
+4. 当前版本尚未 Apple 公证。首次若被系统拦截，先尝试打开一次，再到「系统设置 → 隐私与安全性 → 仍要打开」确认。
+5. 按软件内「前往配置」的引导安装 Node.js 22.13+ 和 Codex。首次配置好后无需重复安装。
+
+DMG 中附中文安装说明。应用使用系统 AppKit、WebKit、Security 和 CryptoKit，不内置 Node.js、Codex CLI 或浏览器运行时。前端最低目标为 Safari 16.4，对应 macOS 13.3。
 
 `npm run build` 自动选择 Windows 或 Mac；`npm run dev` 构建后启动本机应用。当前 Swift/AppKit 构建脚本在 macOS 上运行；Windows 可以提交代码到 GitHub Actions，由 macOS 云端机器编译，再下载真正的 Mac 应用。`npm run build:mac` 本身不在 Windows 上交叉运行 Xcode 工具链。
 
@@ -22,11 +30,11 @@ npm run build:mac
 1. 将代码更新推送到该仓库的 `main` 分支。
 2. 打开 [Mac 构建工作流](https://github.com/mumuhaha487/wechatclaw/actions/workflows/macos.yml)，点击 **Run workflow**。
 3. 等待构建和原生数据保存自检通过，再在该次运行的 **Artifacts** 下载 `QQClaw-macOS-Universal`。
-4. GitHub 下载的是产物容器 ZIP，里面还有最终分发包 `QQClaw.zip`；后者解压才是 `.app`。成品保留在本项目的 `release/macos/QQClaw.zip`，不需要解压在 Windows 上。
+4. GitHub 下载的是产物容器 ZIP，解压一次得到最终安装包 `QQClaw.dmg`。本项目直接提供 `release/macos/QQClaw.dmg`，传到 Mac 双击，不需要再解压应用。
 
 云端产物保留 7 天，源码长期保存在仓库，可随时重新构建。工作流只手动触发，不自动发布 Release。
 
-默认使用本地 ad hoc 签名，未公证，首次运行可能受到 Gatekeeper 限制；不能当作已正式签名的发行版。公开分发可设置 `MACOS_SIGN_IDENTITY` 为已安装的 Developer ID Application 身份。若还设置 `MACOS_NOTARY_PROFILE`，构建会通过该钥匙串配置执行公证，检查 Accepted、装订票据并重新打包；公证失败不产出正式包。证书和 Apple 凭证不放进源码。
+默认应用使用本地 ad hoc 签名，未公证，首次运行可能受到 Gatekeeper 限制；不能当作已正式签名的发行版。公开分发可设置 `MACOS_SIGN_IDENTITY` 为已安装的 Developer ID Application 身份，构建会签名应用和 DMG。若还设置 `MACOS_NOTARY_PROFILE`，会提交完整 DMG 公证，检查 Accepted，并为 DMG 装订和验证票据；公证失败不产出正式包。证书和 Apple 凭证不放进源码。
 
 ## 兼容性实现与待验边界
 
@@ -34,7 +42,7 @@ npm run build:mac
 | --- | --- |
 | `native/macos/QQClaw.swift` | AppKit 窗口、WKWebView、本地资源协议、IPC、目录/文件选择、Finder、剪贴板、安装登录、关闭与后台进程组清理 |
 | `native/macos/Info.plist` | Bundle 身份、版本、图标与最低系统 |
-| `scripts/build-macos.mjs` | Safari 打包、双架构 Swift 编译、lipo 验证、签名、可选公证、唯一 ZIP |
+| `scripts/build-macos.mjs` | Safari 打包、双架构 Swift 编译、lipo 验证、签名、可选公证、唯一 DMG 安装包 |
 | `scripts/macos-icon.mjs` | 构建时生成原创代码图标，无图像依赖 |
 | `scripts/build-windows.mjs` | 原有 Windows 构建实现，固定 SDK 校验和单 EXE 路径继续保留 |
 | `ui/app.mjs` | 统一桥接、Cmd+N/K、原生剪贴板、平台设置说明与安全的界面偏好缓存 |
@@ -78,9 +86,18 @@ Codex 通过 `thread/start { ephemeral:false }` 创建原生持久会话，通�
 
 浏览器模拟 Mac 桥接已检查复制、设置中的 Mac 路径与保留说明、恢复对话提示与侧栏、动态模型菜单，无控制台错误；Safari 目标的前后端资源打包通过。Windows 0.3.6 候选在项目外编译成功。正式 Windows 实例仍在运行，未替换现有 0.3.5 EXE。
 
-## 当前 Mac 成品与构建证据
+## 当前 DMG 安装包与构建证据
 
-- 文件：`release/macos/QQClaw.zip`，481,604 字节，内含唯一 `QQClaw.app`。
+- 文件：`release/macos/QQClaw.dmg`，556,351 字节，项目中只保留这一个 Mac 成品，不再保留旧 ZIP。
+- SHA-256：`94064e42a606641fa62d5d979bfaf3080180d52ddec983e5ce4add741475cba5`。
+- 成功构建：[GitHub Actions 41167706059](https://github.com/mumuhaha487/wechatclaw/actions/runs/41167706059)，源码提交 `0c9491378284d80788a2ac0f25247408aca447b5`。
+- 云端真实验证：DMG 校验和有效、只读挂载成功、Applications 入口和中文安装说明存在、从安装映像复制应用成功；复制出的应用通过 Universal 双架构及签名检查。同源原生后台的启动、小消息 RPC、钥匙串加密、正常关闭和重开恢复自检通过。
+- 下载后核对 GitHub Artifact SHA-256、外层 ZIP CRC 和 DMG UDIF 文件尾。测试代码、依赖及旧 ZIP 均在项目外，Windows EXE 未替换。
+- 这次只改变分发和开发启动方式，应用版本仍为 0.3.6；完整图形界面、真实微信 Mac 链路与 Intel 实机等验收边界仍按上文保留。
+
+## 首次 ZIP 构建证据（现已改为 DMG）
+
+- 首次文件：`QQClaw.zip`，481,604 字节，内含唯一 `QQClaw.app`。该包由 DMG 安装包替代，不在项目中另留旧包。
 - 最低 macOS：13.3；Mach-O 内含 `x86_64` 和 `arm64`。ZIP CRC 与可执行权限核对通过，无 Node/Codex 本体和用户数据。
 - SHA-256：`387FDEAE759870D571B37CC54C933C9665E4553B9C5F0282CA10F1BA39AEF92C`。
 - 成功构建：[GitHub Actions 41166453120](https://github.com/mumuhaha487/wechatclaw/actions/runs/41166453120)，构建源码提交 `b6a269bf99fa873cbf0e644ba9b83f4648487f86`。后续文档和仓库元数据更新不影响该原生代码。

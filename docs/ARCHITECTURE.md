@@ -159,3 +159,5 @@ Windows Job Object 在窗口退出时结束该应用启动的子进程。应用�
 Codex 新线程显式非临时保存，保留服务返回的真实 thread.path。Store 除加密快照外，同步 `ConversationArchive` 的 JSON/Markdown 文件；原生 JSONL 仍由 Codex 管理。恢复不重发微信队列、不给原来的自动权限、不覆盖已有会话，缺少 Provider 时提示重新配置。Windows 快照使用 DPAPI，Mac 使用钥匙串密钥和 AES-GCM；对话备份供可读导出和跨系统恢复，不复制 API/微信配置及附件本体。
 
 数据目录、构建步骤和验证边界见 [MACOS-AND-DATA.md](MACOS-AND-DATA.md)。
+
+Mac 分发改为单一 `release/macos/QQClaw.dmg`：只读压缩磁盘映像包含通用应用、指向 `/Applications` 的安装入口和中文说明。构建使用系统 `hdiutil` 创建并校验；开发启动和 CI 从磁盘映像复制应用后执行。可选 Developer ID 签名及公证针对完整 DMG，未配置证书时应用仍使用 ad hoc 签名。
