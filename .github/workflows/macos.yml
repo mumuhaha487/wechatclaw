@@ -155,7 +155,7 @@ jobs:
                       guard !host.validateMenuItem(newChat), host.validateMenuItem(runtimeMenu) else { throw failure("Native setup menu gate failed") }
                       _ = try await host.handle("window.menuState",["ready":true,"sidebar":true,"panel":false,"fontSize":20])
                       guard host.validateMenuItem(newChat), host.validateMenuItem(sidebarMenu), sidebarMenu.state == .on, host.validateMenuItem(panelMenu), panelMenu.state == .off, !host.validateMenuItem(increaseMenu) else { throw failure("Native menu enabled/check state failed") }
-                      _ = try await host.web.evaluateJavaScript("window.__menuEvents=[];window.__qqclawReceive=value=>window.__menuEvents.push(value)")
+                      _ = try await host.web.evaluateJavaScript("window.__menuEvents=[];window.__qqclawReceive=value=>window.__menuEvents.push(value);true")
                       host.menuCommand(newChat)
                       let dispatched = try await host.web.evaluateJavaScript("JSON.stringify(window.__menuEvents)") as? String ?? ""
                       guard dispatched.contains("menu-action"), dispatched.contains("new-session") else { throw failure("Native menu action did not reach WebKit bridge") }
