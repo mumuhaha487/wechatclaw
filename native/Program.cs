@@ -102,7 +102,7 @@ internal static class Program {
                         using (var source = entry.Open()) using (var destination = File.Create(target)) source.CopyTo(destination);
                     }
                 }
-                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.25");
+                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.26");
             }
             CleanupOldRuntimes(hash);
             SetDllDirectory(RuntimeDirectory);
@@ -231,7 +231,8 @@ internal sealed class DesktopWindow : Form {
             var request = json.Deserialize<Dictionary<string, object>>(args.WebMessageAsJson);
             id = request["id"]; var method = Get(request, "method"); var p = Params(request);
             object result;
-            if (method.StartsWith("window.")) {
+            if (method == "window.focusBrowser") result = browserHost != null && browserHost.Focus(Get(p, "owner"), Get(p, "tabId"));
+            else if (method.StartsWith("window.")) {
                 if (method == "window.theme") {
                     bool dark = Get(p, "theme") == "dark";
                     BackColor = dark ? Color.FromArgb(17, 17, 17) : Color.White;
@@ -316,7 +317,10 @@ internal sealed class DesktopWindow : Form {
     }
     private static string Quote(string text) { return "\"" + text.Replace("\"", "") + "\""; }
     private BrowserHost GetBrowserHost() {
-        return browserHost ?? (browserHost = new BrowserHost(this, value => Post(new { kind = "event", @event = "browser-state", data = value }), value => Post(new { kind = "event", @event = "browser-downloads", data = value }), value => Post(new { kind = "event", @event = "browser-history", data = value })));
+        return browserHost ?? (browserHost = new BrowserHost(this, value => Post(new { kind = "event", @event = "browser-state", data = value }), value => Post(new { kind = "event", @event = "browser-downloads", data = value }), value => Post(new { kind = "event", @event = "browser-history", data = value }), value => {
+            if (exiting || view == null || view.IsDisposed) return;
+            view.Focus(); Post(new { kind = "event", @event = "browser-shortcut", data = value });
+        }));
     }
     private void OpenUrl(string url) {
         Uri uri; if (!Uri.TryCreate(url, UriKind.Absolute, out uri) || (uri.Scheme != "https" && uri.Scheme != "http")) throw new Exception("只能打开 HTTP 或 HTTPS 链接。");
@@ -348,7 +352,7 @@ internal sealed class DesktopWindow : Form {
                 }
             } catch (Exception failure) { error = failure.Message; }
         }
-        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.25", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
+        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.26", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
     }
     private Task<string> ReadNodeVersion(string node) { return ReadNodeVersion(node, 5); }
     private async Task<string> ReadNodeVersion(string node, int timeoutSeconds) {

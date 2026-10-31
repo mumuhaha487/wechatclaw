@@ -203,7 +203,7 @@ const sessionSearch = new SessionSearch({ sessions: () => state.sessions, select
 const draftKey = () => ui.active || `new:${workspaceKey(project()?.workspace || "")}`;
 const applicationMenu = new ApplicationMenu({
   state: () => ({ ready: environmentReady(), workspace: project()?.workspace, fontSize: state.settings.fontSize,
-    sidebar: ui.sidebar, panel: ui.panel, isMac, hasSession: Boolean(session()), draftKey: draftKey() }),
+    sidebar: ui.sidebar, panel: ui.panel, workspaceAvailable: workspaceKeyboardAvailable(), browser: ui.panel && ui.panelPage === "browser", tabNavigation: ui.panel && ["file", "browser"].includes(ui.panelPage) && panelTabs.group(panelOwner()).tabs.length > 1, isMac, hasSession: Boolean(session()), draftKey: draftKey() }),
   dispatch: name => action(name), readClipboard: () => rpc("clipboard.read"), copy: copyText, error: error => toast(error.message),
   pasteAttachments: async value => {
     if (value.files) return addAttachments(value.files, true);
@@ -211,6 +211,15 @@ const applicationMenu = new ApplicationMenu({
     return addAttachments([new File([bytes], "粘贴的图片.png", { type: "image/png" })]);
   },
 });
+function workspaceKeyboardAvailable() { return !ui.page && !ui.overlay && !document.querySelector(".overlay-backdrop"); }
+function syncNativeMenuState() {
+  if (!isMac) return;
+  const menuState = JSON.stringify({ ready: environmentReady(), workspaceAvailable: workspaceKeyboardAvailable(), sidebar: ui.sidebar, panel: ui.panel, browser: ui.panel && ui.panelPage === "browser", tabNavigation: ui.panel && ["file", "browser"].includes(ui.panelPage) && panelTabs.group(panelOwner()).tabs.length > 1, fontSize: state.settings.fontSize, hasSession: Boolean(session()) });
+  if (menuState !== ui.nativeMenuState) {
+    ui.nativeMenuState = menuState;
+    rpc("window.menuState", JSON.parse(menuState)).catch(() => { ui.nativeMenuState = undefined; });
+  }
+}
 function rememberDraft() {
   const key = draftKey();
   const entry = ui.drafts.get(key) || { pending: 0 };
@@ -905,6 +914,7 @@ function scheduleBrowserView() {
   if (browserViewFrame) return;
   browserViewFrame = requestAnimationFrame(() => {
     browserViewFrame = 0;
+    syncNativeMenuState();
     syncPanelDimensions();
     const viewport = $("browser-viewport");
     if (viewport !== observedBrowserViewport) {
@@ -974,6 +984,27 @@ function updateBrowserState(data) {
   }
   panelTabActions.refresh();
 }
+async function focusPanelSelection(owner) {
+  const intent = ui.panelIntent;
+  // render() schedules the viewport update before this frame. Focus only after
+  // that update, and only if this user action still owns the visible selection.
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  if (owner !== panelOwner() || intent !== ui.panelIntent || !workspaceKeyboardAvailable()) return;
+  if (!ui.panel) { $("composer-input")?.focus(); return; }
+  const tab = panelTabs.selected(owner);
+  if (ui.panelPage === "browser" && tab?.kind === "browser") {
+    if (!browserStates.get(session()?.id)?.url) { $("browser-address")?.focus(); $("browser-address")?.select(); }
+    else {
+      browserHistory.dismissSuggestions();
+      if (document.activeElement?.id === "browser-address") document.activeElement.blur();
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      if (owner !== panelOwner() || intent !== ui.panelIntent || !ui.panel || !workspaceKeyboardAvailable() || panelTabs.selected(owner) !== tab) return;
+      await rpc("window.focusBrowser", { owner: session().id, tabId: tab.id });
+    }
+  } else {
+    for (const button of document.querySelectorAll('.work-tabs-bar [data-action="panel-select-tab"]')) if (button.dataset.key === tab?.key) button.focus({ preventScroll: true });
+  }
+}
 async function runBrowserCommand(command, params = {}) {
   if (!session()) await newSession();
   const target = session(); if (!target) return;
@@ -1009,7 +1040,7 @@ function refreshBrowserPanel() {
   const panel = document.querySelector(".browser-panel");
   if (panel) {
     rememberPanelTabScroll();
-    const input = $("browser-address"), focus = document.activeElement === input;
+    const input = $("browser-address"), focus = document.hasFocus() && document.activeElement === input;
     const identity = focus ? JSON.stringify([input.dataset.owner, input.dataset.key]) : "";
     const start = focus ? $("browser-address").selectionStart : 0;
     panel.outerHTML = browserPanel();
@@ -1215,7 +1246,7 @@ function render() {
     navigation.visit({ active: ui.active, project: ui.project, page: ui.page });
   }
   for (const detail of document.querySelectorAll("details[data-detail-key]")) ui.detailStates.set(detail.dataset.detailKey, detail.open);
-  const active = document.activeElement;
+  const active = document.hasFocus() ? document.activeElement : null;
   const focusId = active?.id;
   const start = active?.selectionStart,
     end = active?.selectionEnd;
@@ -1234,13 +1265,7 @@ function render() {
     rememberDraft();
   }
   applicationMenu.afterRender();
-  if (isMac) {
-    const menuState = JSON.stringify({ ready: environmentReady(), sidebar: ui.sidebar, panel: ui.panel, fontSize: state.settings.fontSize, hasSession: Boolean(session()) });
-    if (menuState !== ui.nativeMenuState) {
-      ui.nativeMenuState = menuState;
-      rpc("window.menuState", JSON.parse(menuState)).catch(() => { ui.nativeMenuState = undefined; });
-    }
-  }
+  syncNativeMenuState();
   applyTheme();
   conversationView.refresh();
   for (const detail of document.querySelectorAll("details[data-detail-key]")) detail.open = ui.detailStates.get(detail.dataset.detailKey) || false;
@@ -1837,6 +1862,20 @@ async function action(name, element) {
       if (tab?.kind === "browser" && tab.id) return runBrowserCommand("selectTab", { tabId: tab.id });
       return;
     }
+    case "panel-close-active": {
+      if (!workspaceKeyboardAvailable() || !ui.panel) return;
+      const owner = panelOwner(), tab = ["file", "browser"].includes(ui.panelPage) ? panelTabs.selected(owner) : null;
+      await action(tab ? "panel-close-tab" : ui.panelPage ? "panel-close-tool" : "close-panel", tab ? { dataset: { key: tab.key } } : undefined);
+      return focusPanelSelection(owner);
+    }
+    case "panel-next-tab": case "panel-previous-tab": {
+      if (!workspaceKeyboardAvailable() || !ui.panel || !["file", "browser"].includes(ui.panelPage)) return;
+      const owner = panelOwner(), group = panelTabs.group(owner);
+      if (group.tabs.length < 2) return focusPanelSelection(owner);
+      const index = group.tabs.findIndex(tab => tab.key === group.selected), offset = name === "panel-previous-tab" ? group.tabs.length - 1 : 1;
+      await action("panel-select-tab", { dataset: { key: group.tabs[(index + offset) % group.tabs.length].key } });
+      return focusPanelSelection(owner);
+    }
     case "panel-close-tab": {
       const owner = panelOwner(), tab = panelTabs.group(owner).tabs.find(tab => tab.key === element.dataset.key);
       if (tab) return closePanelTabs(owner, [tab]);
@@ -1903,6 +1942,16 @@ async function action(name, element) {
       applyPanelTab(); ui.panel = true; ui.browserHidden.delete(session().id); rememberPanel(); render();
       return runBrowserCommand("state");
     }
+    case "browser-new-tab": {
+      if (!workspaceKeyboardAvailable()) return;
+      await action("open-browser-window");
+      const owner = panelOwner();
+      await action("browser-newTab");
+      return focusPanelSelection(owner);
+    }
+    case "browser-focus-address":
+      if (workspaceKeyboardAvailable() && ui.panel && ui.panelPage === "browser") { $("browser-address")?.focus(); $("browser-address")?.select(); }
+      return;
     case "browser-google":
       return runBrowserCommand("open", { url: "https://www.google.com/" });
     case "browser-external": {
@@ -2563,6 +2612,12 @@ document.addEventListener("keydown", (event) => {
 function onEvent(event, data) {
   if (event === "menu-action") {
     action(data.action).catch(error => toast(error.message));
+  } else if (event === "browser-shortcut") {
+    const tab = panelTabs.selected(panelOwner());
+    if (!workspaceKeyboardAvailable() || !ui.panel || ui.panelPage !== "browser" || data.owner !== session()?.id || data.tabId !== tab?.id ||
+        !["browser-new-tab", "panel-close-active", "browser-focus-address", "panel-next-tab", "panel-previous-tab", "toggle-sidebar", "toggle-panel", "new-session", "search", "settings"].includes(data.command)) return;
+    const owner = panelOwner();
+    action(data.command).then(() => { if (["toggle-sidebar", "toggle-panel"].includes(data.command)) return focusPanelSelection(owner); }).catch(error => toast(error.message));
   } else if (event === "browser-state") {
     updateBrowserState(data);
   } else if (event === "browser-downloads") {
@@ -2913,22 +2968,18 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   const panelTabShortcut = event.ctrlKey && event.key === "Tab";
-  if (!(panelTabShortcut || (isMac ? event.metaKey : event.ctrlKey)) || ui.page || ui.overlay) return;
+  if (!(panelTabShortcut || (isMac ? event.metaKey : event.ctrlKey)) || !workspaceKeyboardAvailable()) return;
   const key = event.key.toLowerCase();
   if (key === "b") { event.preventDefault(); action(event.shiftKey ? "toggle-panel" : "toggle-sidebar").catch(e => toast(e.message)); }
-  if (key === "t") { event.preventDefault(); action("open-browser-window").then(() => action("browser-newTab")).catch(e => toast(e.message)); }
+  if (key === "t" && !event.shiftKey) { event.preventDefault(); action("browser-new-tab").catch(e => toast(e.message)); }
+  if (key === "l" && !event.shiftKey && ui.panel && ui.panelPage === "browser") { event.preventDefault(); action("browser-focus-address").catch(e => toast(e.message)); }
   if (key === "w" && ui.panel) {
     event.preventDefault();
-    const tab = ["file", "browser"].includes(ui.panelPage) ? panelTabs.selected(panelOwner()) : null;
-    action(tab ? "panel-close-tab" : ui.panelPage ? "panel-close-tool" : "close-panel", tab ? { dataset: { key: tab.key } } : undefined).catch(e => toast(e.message));
+    action("panel-close-active").catch(e => toast(e.message));
   }
   if (key === "tab" && panelTabShortcut && ui.panel && !["files", "review"].includes(ui.panelPage)) {
-    const group = panelTabs.group(panelOwner());
-    if (!group.tabs.length) return;
     event.preventDefault();
-    const index = group.tabs.findIndex(tab => tab.key === group.selected);
-    const next = group.tabs[(index + (event.shiftKey ? group.tabs.length - 1 : 1)) % group.tabs.length];
-    action("panel-select-tab", { dataset: { key: next.key } }).catch(e => toast(e.message));
+    action(event.shiftKey ? "panel-previous-tab" : "panel-next-tab").catch(e => toast(e.message));
   }
 });
 window.addEventListener("focus", () => {

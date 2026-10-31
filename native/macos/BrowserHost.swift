@@ -122,6 +122,11 @@ private struct BrowserHistoryRecord: Codable {
             if show { parent.addSubview(tab.web, positioned: .above, relativeTo: nil) }
         } }
     }
+    func focus(owner: String, tabId: String) -> Bool {
+        guard visible, visibleOwner == owner, let session = sessions[owner], !session.disposed, let tab = session.active,
+              tab.id == tabId, !tab.web.isHidden, let window = tab.web.window else { return false }
+        return window.makeFirstResponder(tab.web)
+    }
     func state(_ session: BrowserSession, reveal: Bool = false) -> [String: Any] {
         let tab = session.active
         session.revision += 1

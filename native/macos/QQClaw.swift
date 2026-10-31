@@ -222,6 +222,7 @@ final class Backend: @unchecked Sendable {
     var browserHost: BrowserHost?
     var menuAvailable = false, menuReady = false, menuSidebar = true, menuPanel = false, menuHasSession = false
     var menuFont = 14
+    var menuBrowser = false, menuTabNavigation = false, menuWorkspaceAvailable = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             let env = ProcessInfo.processInfo.environment
@@ -257,8 +258,9 @@ final class Backend: @unchecked Sendable {
     }
     func makeMenu() {
         let menu = NSMenu(), app = NSMenu(), file = NSMenu(), edit = NSMenu(), view = NSMenu(), windows = NSMenu(), help = NSMenu()
-        func command(_ parent: NSMenu, _ title: String, _ name: String, _ key: String = "") {
+        func command(_ parent: NSMenu, _ title: String, _ name: String, _ key: String = "", modifiers: NSEvent.ModifierFlags = [.command]) {
             let item = NSMenuItem(title: title, action: #selector(menuCommand(_:)), keyEquivalent: key)
+            item.keyEquivalentModifierMask = modifiers
             item.target = self; item.representedObject = name; parent.addItem(item)
         }
         func section(_ title: String, _ submenu: NSMenu) {
@@ -271,6 +273,7 @@ final class Backend: @unchecked Sendable {
         app.addItem(withTitle: "退出 QQClaw", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         section("文件", file)
         command(file, "新聊天", "new-session", "n"); command(file, "打开项目…", "add-project", "o")
+        command(file, "新网页标签", "browser-new-tab", "t"); command(file, "关闭工作标签", "panel-close-active", "w")
         command(file, "打开工作目录", "open-folder"); file.addItem(.separator()); command(file, "配置运行环境…", "runtime")
         section("编辑", edit)
         for (name, action, key) in [("撤销", "undo:", "z"), ("重做", "redo:", "Z"), ("剪切", "cut:", "x"), ("复制", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] { edit.addItem(withTitle: name, action: Selector(action), keyEquivalent: key) }
@@ -278,6 +281,10 @@ final class Backend: @unchecked Sendable {
         section("视图", view)
         command(view, "侧栏", "toggle-sidebar", "b"); command(view, "工作面板", "toggle-panel", "B")
         command(view, "展开工作面板", "maximize-panel"); command(view, "网页预览", "open-browser-window"); view.addItem(.separator())
+        command(view, "网页地址栏", "browser-focus-address", "l")
+        command(view, "下一个工作标签", "panel-next-tab", "\t", modifiers: [.control])
+        command(view, "上一个工作标签", "panel-previous-tab", "\t", modifiers: [.control, .shift])
+        view.addItem(.separator())
         command(view, "增大字号", "font-increase", "="); command(view, "减小字号", "font-decrease", "-"); command(view, "默认字号", "font-reset", "0")
         section("窗口", windows)
         windows.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
@@ -287,6 +294,7 @@ final class Backend: @unchecked Sendable {
     }
     @objc func menuCommand(_ sender: NSMenuItem) {
         guard validateMenuItem(sender), let name = sender.representedObject as? String else { return }
+        window?.makeFirstResponder(web)
         event("menu-action", ["action": name])
     }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
@@ -298,6 +306,10 @@ final class Backend: @unchecked Sendable {
         if name == "font-decrease" { return menuReady && menuFont > 12 }
         if name == "font-reset" { return menuReady && menuFont != 14 }
         if name == "find-message" { return menuReady && menuHasSession }
+        if name == "browser-new-tab" { return menuReady && menuWorkspaceAvailable }
+        if name == "browser-focus-address" { return menuReady && menuWorkspaceAvailable && menuPanel && menuBrowser }
+        if ["panel-next-tab", "panel-previous-tab"].contains(name) { return menuReady && menuWorkspaceAvailable && menuPanel && menuTabNavigation }
+        if name == "panel-close-active" { return menuReady && menuWorkspaceAvailable && menuPanel }
         return menuReady
     }
     func alert(_ text: String) { let alert = NSAlert(); alert.messageText = "QQClaw"; alert.informativeText = text; alert.runModal() }
@@ -323,6 +335,8 @@ final class Backend: @unchecked Sendable {
             menuSidebar = p["sidebar"] as? Bool == true; menuPanel = p["panel"] as? Bool == true
             menuFont = p["fontSize"] as? Int ?? 14
             menuHasSession = p["hasSession"] as? Bool == true
+            menuBrowser = p["browser"] as? Bool == true; menuTabNavigation = p["tabNavigation"] as? Bool == true
+            menuWorkspaceAvailable = p["workspaceAvailable"] as? Bool == true
             return true
         case "window.theme":
             let dark = p["theme"] as? String == "dark"
@@ -332,6 +346,7 @@ final class Backend: @unchecked Sendable {
             window?.backgroundColor = background; web?.underPageBackgroundColor = background
             return true
         case "window.minimize": window.miniaturize(nil); return true
+        case "window.focusBrowser": return browserHost?.focus(owner: p["owner"] as? String ?? "", tabId: p["tabId"] as? String ?? "") ?? false
         case "window.maximize": window.zoom(nil); return true
         case "window.close": NSApp.terminate(nil); return true
         case "window.drag", "window.resize": return true // Native titlebar and resize handles.

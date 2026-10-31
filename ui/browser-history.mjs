@@ -29,6 +29,8 @@ export class BrowserHistory {
     document.addEventListener("submit", event => { if (event.target.id === "browser-form") this.dismissSuggestions(); }, true);
     document.addEventListener("keydown", event => this.key(event), true);
     window.addEventListener("resize", () => this.refreshSuggestions());
+    window.addEventListener("blur", () => this.dismissSuggestions(false));
+    window.addEventListener("focus", () => this.refreshSuggestions());
   }
   async load() {
     try { this.update(await this.rpc("browser.history", { action: "state" })); }
@@ -46,7 +48,7 @@ export class BrowserHistory {
   }
   refreshSuggestions() {
     const input = document.getElementById("browser-address");
-    if (!input || input.disabled || document.activeElement !== input || this.suppressed || this.root || !this.ready()) {
+    if (!input || input.disabled || !document.hasFocus() || document.activeElement !== input || this.suppressed || this.root || !this.ready()) {
       if (this.suggestions) this.dismissSuggestions(this.suppressed); return;
     }
     const items = this.value.items.filter(item => match(item, input.value)).slice(0, 6);

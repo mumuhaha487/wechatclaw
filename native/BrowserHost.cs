@@ -18,14 +18,16 @@ using Microsoft.Web.WebView2.WinForms;
 internal sealed class BrowserHost {
     private readonly Form parent;
     private readonly Action<object> notify;
+    private readonly Action<object> shortcutNotify;
     private readonly Dictionary<string, BrowserSession> sessions = new Dictionary<string, BrowserSession>();
     private string visibleOwner = "";
     private Rectangle bounds = new Rectangle(-2000, 0, 1000, 760);
     private bool visible;
     internal readonly BrowserDownloads Downloads;
     internal readonly BrowserHistory History;
-    internal BrowserHost(Form parent, Action<object> notify, Action<object> downloadNotify = null, Action<object> historyNotify = null) {
+    internal BrowserHost(Form parent, Action<object> notify, Action<object> downloadNotify = null, Action<object> historyNotify = null, Action<object> shortcutNotify = null) {
         this.parent = parent; this.notify = notify; Downloads = new BrowserDownloads(downloadNotify ?? delegate { });
+        this.shortcutNotify = shortcutNotify ?? delegate { };
         History = new BrowserHistory(historyNotify ?? delegate { });
     }
     internal void SetView(Dictionary<string, object> p) {
@@ -50,6 +52,22 @@ internal sealed class BrowserHost {
             tab.Web.Visible = show;
             if (show) tab.Web.BringToFront();
         }
+    }
+    internal bool Focus(string owner, string tabId) {
+        BrowserSession session;
+        if (!visible || owner != visibleOwner || !sessions.TryGetValue(owner, out session) || session.Disposed || session.Active == null || session.Active.Id != tabId || !session.Active.Web.Visible) return false;
+        return session.Active.Web.Focus();
+    }
+    private void Shortcut(BrowserSession session, BrowserTab tab, string command) {
+        if (!visible || session.Owner != visibleOwner || session.Disposed || session.Active != tab || !tab.Web.ContainsFocus || parent.IsDisposed || !parent.IsHandleCreated) return;
+        // Native keyboard notifications are synchronous. Dispatch on the next UI
+        // turn before focusing the application view or posting across WebViews.
+        try {
+            parent.BeginInvoke(new Action(delegate {
+                if (parent.IsDisposed || session.Disposed || !visible || visibleOwner != session.Owner || session.Active != tab) return;
+                shortcutNotify(new { owner = session.Owner, tabId = tab.Id, command = command });
+            }));
+        } catch (InvalidOperationException) { /* The window has already closed. */ }
     }
     internal async Task<object> Handle(Dictionary<string, object> p) {
         string owner = Value(p, "owner"), action = Value(p, "action"); Guid id;
@@ -102,7 +120,7 @@ internal sealed class BrowserHost {
     private BrowserTab NewTab(BrowserSession session) {
         if (session.Tabs.Count >= 12) throw new Exception("最多打开 12 个标签页，请先关闭不用的页面。");
         var tab = new BrowserTab(parent, session.Profile, () => Publish(session, false), Downloads, session.Owner, History,
-            opener => OpenWindow(session, opener), page => CloseTab(session, page));
+            opener => OpenWindow(session, opener), page => CloseTab(session, page), (page, command) => Shortcut(session, page, command));
         session.Tabs.Add(tab); session.Active = tab;
         return tab;
     }
@@ -261,10 +279,28 @@ internal sealed class BrowserTab {
     private readonly Func<BrowserTab, Task<BrowserTab>> openWindow;
     private readonly Action<BrowserTab> closeWindow;
     internal BrowserTab(Form parent, string profile, Action changed, BrowserDownloads downloads, string owner, BrowserHistory history,
-        Func<BrowserTab, Task<BrowserTab>> openWindow, Action<BrowserTab> closeWindow) {
+        Func<BrowserTab, Task<BrowserTab>> openWindow, Action<BrowserTab> closeWindow, Action<BrowserTab, string> shortcut) {
         this.profile = profile; this.changed = changed;
         this.downloads = downloads; this.owner = owner; this.history = history;
         this.openWindow = openWindow; this.closeWindow = closeWindow;
+        Web.KeyDown += delegate(object sender, KeyEventArgs e) {
+            if (closed || !e.Control || e.Alt) return;
+            string command = "";
+            if (e.KeyCode == Keys.Tab) command = e.Shift ? "panel-previous-tab" : "panel-next-tab";
+            else if (e.KeyCode == Keys.B) command = e.Shift ? "toggle-panel" : "toggle-sidebar";
+            else if (!e.Shift) {
+                switch (e.KeyCode) {
+                    case Keys.T: command = "browser-new-tab"; break;
+                    case Keys.W: command = "panel-close-active"; break;
+                    case Keys.L: command = "browser-focus-address"; break;
+                    case Keys.N: command = "new-session"; break;
+                    case Keys.K: command = "search"; break;
+                    case Keys.Oemcomma: command = "settings"; break;
+                }
+            }
+            if (command == "") return;
+            e.Handled = true; e.SuppressKeyPress = true; shortcut(this, command);
+        };
         Web.Bounds = new Rectangle(-2000, 0, 1000, 760); parent.Controls.Add(Web);
     }
     internal async Task EnsureReady(CoreWebView2Environment environment = null) {

@@ -35,6 +35,7 @@ export class ApplicationMenu {
     const s = this.state(), e = this.editor || {}, item = (label, command, shortcut = "", enabled = true, checked = null) => ({ label, command, shortcut, enabled, checked });
     if (group === "file") return [
       item("新聊天", "new-session", "Ctrl+N", s.ready), item("打开项目…", "add-project", "Ctrl+O", s.ready),
+      item("新网页标签", "browser-new-tab", "Ctrl+T", s.ready && s.workspaceAvailable), item("关闭工作标签", "panel-close-active", "Ctrl+W", s.ready && s.workspaceAvailable && s.panel),
       item("打开工作目录", "open-folder", "", s.ready && s.workspace), null,
       item("设置…", "settings", "Ctrl+,", s.ready), item("配置运行环境…", "runtime"), null, item("退出", "window.close", "Alt+F4"),
     ];
@@ -47,6 +48,8 @@ export class ApplicationMenu {
     if (group === "view") return [
       item("侧栏", "toggle-sidebar", "Ctrl+B", s.ready, s.sidebar), item("工作面板", "toggle-panel", "Ctrl+Shift+B", s.ready, s.panel),
       item("展开工作面板", "maximize-panel", "", s.ready), item("网页预览", "open-browser-window", "", s.ready), null,
+      item("网页地址栏", "browser-focus-address", "Ctrl+L", s.ready && s.workspaceAvailable && s.browser),
+      item("下一个工作标签", "panel-next-tab", "Ctrl+Tab", s.ready && s.workspaceAvailable && s.tabNavigation), item("上一个工作标签", "panel-previous-tab", "Ctrl+Shift+Tab", s.ready && s.workspaceAvailable && s.tabNavigation), null,
       item("增大字号", "font-increase", "Ctrl++", s.ready && s.fontSize < 20), item("减小字号", "font-decrease", "Ctrl+−", s.ready && s.fontSize > 12),
       item("默认字号", "font-reset", "Ctrl+0", s.ready && s.fontSize !== 14),
     ];

@@ -190,6 +190,21 @@ jobs:
                       guard searchEvents.contains("search"), searchEvents.contains("find-message") else { throw failure("Native search/find actions did not reach WebKit bridge") }
                       print("PASS: AppKit global search/current-chat find shortcuts, session gate and command dispatch")
                       print("PASS: AppKit file/view/help menus, setup gating, checked state, font limits and WebKit command dispatch")
+                      guard let newTabMenu = menuCommand("browser-new-tab"), let closeTabMenu = menuCommand("panel-close-active"), let addressMenu = menuCommand("browser-focus-address"), let nextTabMenu = menuCommand("panel-next-tab"), let previousTabMenu = menuCommand("panel-previous-tab"),
+                            newTabMenu.keyEquivalent == "t", closeTabMenu.keyEquivalent == "w", addressMenu.keyEquivalent == "l",
+                            nextTabMenu.keyEquivalent == "\t", nextTabMenu.keyEquivalentModifierMask == [.control], previousTabMenu.keyEquivalentModifierMask == [.control, .shift] else { throw failure("Native browser shortcut equivalents missing") }
+                      _ = try await host.handle("window.menuState",["ready":true,"workspaceAvailable":true,"hasSession":true,"panel":false,"fontSize":14])
+                      guard host.validateMenuItem(newTabMenu), !host.validateMenuItem(closeTabMenu), !host.validateMenuItem(addressMenu), !host.validateMenuItem(nextTabMenu) else { throw failure("Closed panel shortcut gate failed") }
+                      _ = try await host.handle("window.menuState",["ready":true,"workspaceAvailable":true,"hasSession":true,"panel":true,"browser":false,"tabNavigation":false,"fontSize":14])
+                      guard host.validateMenuItem(closeTabMenu), !host.validateMenuItem(addressMenu), !host.validateMenuItem(nextTabMenu) else { throw failure("File tool shortcut gate failed") }
+                      _ = try await host.handle("window.menuState",["ready":true,"workspaceAvailable":true,"hasSession":true,"panel":true,"browser":true,"tabNavigation":true,"fontSize":14])
+                      guard host.validateMenuItem(addressMenu), host.validateMenuItem(nextTabMenu), host.validateMenuItem(previousTabMenu) else { throw failure("Browser shortcut gate failed") }
+                      for item in [newTabMenu, closeTabMenu, addressMenu, nextTabMenu, previousTabMenu] { host.menuCommand(item) }
+                      let browserMenuEvents = try await host.web.evaluateJavaScript("JSON.stringify(window.__menuEvents)") as? String ?? ""
+                      for name in ["browser-new-tab", "panel-close-active", "browser-focus-address", "panel-next-tab", "panel-previous-tab"] {
+                          guard browserMenuEvents.contains(name) else { throw failure("Native browser shortcut did not reach app: " + name) }
+                      }
+                      print("PASS: AppKit browser shortcut menu equivalents, closed/file/browser gates and command dispatch (component verification, not full native-focus keyboard GUI)")
                       host.web.loadHTMLString(String(decoding: Data(base64Encoded: "${tabHTML64}")!, as: UTF8.self), baseURL: nil)
                       var tabActionsResult = ""
                       for _ in 0..<100 {
@@ -215,6 +230,13 @@ jobs:
                           try await browser.handle(values.merging(["action": action, "owner": owner, "profile": String(repeating: "a", count: 32)]) { _, value in value })
                       }
                       let page = try await control("open", ["url": fixture]) as! [String: Any]
+                      let focusTab = browser.sessions[owner]!.active!
+                      guard browser.focus(owner: owner, tabId: focusTab.id), let focusedPage = browserWindow.firstResponder as? NSView,
+                            focusedPage === focusTab.web || focusedPage.isDescendant(of: focusTab.web) else { throw failure("Native page did not receive window focus") }
+                      guard !browser.focus(owner: UUID().uuidString, tabId: focusTab.id), !browser.focus(owner: owner, tabId: UUID().uuidString) else { throw failure("Focus accepted wrong owner or tab") }
+                      browser.setView(["visible":false]); guard !browser.focus(owner: owner, tabId: focusTab.id) else { throw failure("Hidden page accepted focus") }
+                      browser.setView(["owner": owner, "visible": true, "x": 0, "y": 0, "width": 1000, "height": 760, "viewportWidth": 1000, "viewportHeight": 760])
+                      print("PASS: real WKWebView first-responder focus with owner, tab and visibility validation")
                       guard page["title"] as? String == "QQClaw Browser Check", let elements = page["elements"] as? [[String: Any]], let ref = elements.first(where: { $0["role"] as? String == "input" })?["ref"] as? String else { throw failure("Native browser snapshot failed") }
                       _ = try await control("fill", ["ref": ref, "text": "native-mac-search"])
                       _ = try await control("press", ["ref": ref, "key": "Enter"])
