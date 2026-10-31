@@ -1,3 +1,9 @@
+0.3.24 当前补充：白色为主、黑色为辅。`content-area` 内部拆成独立 conversation-pane 与工作面板，标题/提示条不再压低右侧网页，面板从主体顶部到底。默认宽度为窗口的 28.7%（受最小值/最大值及聊天剩余空间约束）；保存的主动宽度优先，双击分隔线清掉 panel-width 恢复比例。调宽、关闭/收起/展开和窄窗口覆盖仍走原生 viewport 同步，检查使用真实手动网页及全窗口截图，没有开放模型自动化接口。
+
+新 `ui/browser-history.mjs` 处理最多 6 项地址联想、全局记录管理、50 行分批、搜索/键盘/焦点及带确认的时间范围清除。`ui/app.mjs` 在成功历史导航前清空当前标签地址草稿，连接原生 browser.history RPC 与 browser-history revision 事件。Windows BrowserHistory 在顶层成功 NavigationCompleted 写访问，DocumentTitleChanged 更新现存记录；Mac 在 didFinish 写访问，以 title KVO 更新现存记录。只接受无凭据 HTTP(S)、移除 fragment、同 URL 最近一次、全局最多 500 URL。标题更新保留 ID/时间，不能复活已删除记录。
+
+历史不经微信/Codex后台，文件 browser-history.json 独立于 state.json/browser-downloads.json，Windows 独立 entropy DPAPI，Mac Vault/Keychain/AES-GCM，原子写入且失败保留原文件及旧内存、提示原因。记录属于本机系统用户，在本软件内跨会话共用；不会自动发送给模型、导入 Chrome 或按微信身份隔离。删除/清除不删 Cookie、下载或聊天。所有 SPA 导航、Cookie/站点权限/模型授权访问尚未完整实现。两端原生/UI/构建版本为 0.3.24，后台主逻辑未改，实测与未完成项以 result.md 最新章节为准。
+
 0.3.22：文件/网页标签支持拖动排序、鼠标中键关闭和右键菜单（关闭、关闭其他、关闭右侧、复制路径/地址、文件夹显示或系统浏览器打开）。Shift+F10打开菜单，方向键/Home/End选项，Escape/Tab关闭并恢复焦点。关闭其他会包含当前文件管理器/审阅工具页；异步关闭始终绑定原会话和实际标签对象，不会误关另一会话。
 
 0.3.23：ui/browser-downloads.mjs 以独立弹窗管理全局下载，原生事件只更新下载行而不刷新对话DOM；50条一批，保持键盘焦点并受可用窗口高度约束。Program/QQClaw Host 路由 browser.downloads 给各自 BrowserDownloads；WebView2 DownloadStarting 和 WebKit action/response didBecome 接管真实下载。标签关闭后在途下载保留源视图，终态再释放；元数据按系统加密且原子写入用户数据，实际文件保留在系统下载目录。状态 revision 与主网页标签 revision 独立，不通过微信/Codex后台。ui/app.mjs 构建导入 package.json 的版本，侧栏和关于页自动一致。详细失败边界及验证见result.md。

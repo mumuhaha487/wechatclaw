@@ -1,6 +1,6 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-11-01。此文件供后续开发与独立审核使用。**当前源码、正式 Windows 程序与 Mac 安装包均为 0.3.23，唯一同名成品已替换，Windows 已正常重启，原3会话/134消息及Provider保留；当前1个连接账户、1条已断开身份记录，变化说明见文末。最新直接消息要求白色为主、黑色为辅、整体亮色，覆盖此前黑色为主的偏好。官方扩展仍未接通，未达到全部目标，不能写成整体通过。** 下文保留历史交付记录，最新状态见文末。
+更新时间：2026-11-01。此文件供后续开发与独立审核使用。**当前源码、正式 Windows 程序与 Mac 安装包均为 0.3.24，已替换唯一同名成品，Windows 正常重启。最新网页框反馈已修正顶部对齐和默认比例，新增加密浏览记录/地址联想。最终 298 条 Windows UI/原生集成、本轮 119 项核心回归及 Mac 24 条检查通过；现有 1 个连接账户、1 条断开身份、3 会话/134 消息与 Provider 比较保留。白色为主、黑色为辅、整体亮色。官方扩展仍未接通，未达到全部目标，不能写成整体通过。** 下文历史交付记录不覆盖最新状态，成品/失败/限制见文末 0.3.24。
 
 ## 用户目标与不可替换的要求
 
@@ -607,3 +607,47 @@ artifact ZIP SHA-256 `8917656B09D7DA36BF8D220E82BE361419C424A77E1149E43F6CA947E3
 | release/macos/QQClaw.dmg | 776,223 bytes | A900EC41E8759A45C472B967B1A50B31A4FE0F0EA9DCF13E1ABDDF50657DED52 |
 
 本轮有实际两端交付，整体目标仍未完成：官方ChatGPT扩展宿主授权/自动调用尚未接通，网页批注、网站权限/完整历史及全部参考主页操作1:1仍有差异。Windows某些首次下载可能较久等待原生完成；复杂网站和Mac完整产品GUI/输入法/线上微信未验收。不把手动网页下载、组件夹具或其他远控当作官方扩展成功。
+
+## 0.3.24 网页框比例、顶部对齐与浏览记录
+
+用户新截图显示：参考网页框从工作区顶部开始，旧 QQClaw 的面板却被整个会话标题和 Desktop 提示条下推，导致高度、宽度占比都不同。本版将 `content-area` 改成并列的 `conversation-pane` 和右侧工作面板，标题、环境/Desktop 提示只占左侧。默认面板取窗口宽度 28.7%，受 280～560px 及聊天剩余空间约束；主动拖动后的像素宽度跨重启保留。双击分隔线清除旧 panel-width，恢复随窗口变化的默认比例。继续支持键盘调整、收起、真正关闭和展开还原；窄窗口是可关闭覆盖面板。白底、浅灰、黑色文字及图标不变。
+
+新增手动网页地址栏历史联想和浏览记录管理：Windows 成功顶层 NavigationCompleted、Mac didFinish 记录最终页面，不记空白页、错误加载或下载导航；仅接受无凭据 HTTP(S)，去 fragment，同 URL 保留最近一次，全局最多 500 个不同 URL。加载后的标题更新保留记录 ID/访问时间，不重建已经删除的记录。当前系统用户在 QQClaw 内跨会话共用，不按微信账户隔离，不导入 Chrome 历史，不自动发送给模型。
+
+网页工具栏及运行环境设置提供历史入口；地址建议最多 6 条，按标题/URL 字面搜索，方向键/Enter/Escape 操作并保留输入焦点。管理弹窗每批 50 条，搜索覆盖全部记录；支持重开、单条删除和确认清除最近一小时/一天/全部。清除不删除网页登录状态、下载文件或聊天。记录单独保存至用户数据 browser-history.json：Windows 用 entropy QQClaw/browser-history/v1 的 DPAPI，Mac 用 Vault/Keychain/AES-GCM，均原子写入；失败保留原文件/旧内存并显示原因，普通浏览可继续使用。未承诺所有 SPA pushState/hash 导航、完整 Cookie/缓存/网站权限管理或模型申请访问历史。
+
+代码索引：新 `ui/browser-history.mjs`；`ui/app.mjs` 的布局、defaultPanelWidth/applyPanelWidth/resetPanelWidth/syncPanelDimensions、历史事件与导航清地址草稿；`ui/desktop.css` 的比例/对话独立列/记录弹窗；Windows `native/BrowserHost.cs` / `native/Program.cs`；Mac `native/macos/BrowserHost.swift` / `native/macos/QQClaw.swift`；验证构建 `.github/workflows/macos.yml`。原生 browser.history 为桌面 UI 提供 state/remove/clear，browser-history 事件带全局单调 revision。没有向模型开放原生浏览自动化；微信/Codex 后台及主 Store/对话归档源码本轮未改，backend.cjs 与 0.3.23 相同。
+
+全部材料在项目外 `C:\Users\admin\AppData\Local\Temp\qqclaw-v0324-20261101`：
+
+| 证据 | 最终候选实际范围与结果 |
+| --- | --- |
+| panel-proportion-ui.json/.mjs/.log | 27 条：真实原生网页；1950/1800/1600/1366/1100/960 窗口顶部/高度/默认比例/覆盖边界、键盘、双击恢复、自适应、主动宽度跨重启、展开还原及关闭后主对话恢复 |
+| history-ui.json/.mjs/.log | 47 条：真实导航/最终 URL/标题/重访/重定向、错误/下载排除、建议键盘与真实导航、管理搜索/HTML 安全/焦点、窗口/20 号字边界、DPAPI 加密/整应用重启、单条/范围删除确认/取消、延迟标题/删除不重建、真实写入冲突/损坏保留、500 URL/50 行分批及不改会话/触发任务 |
+| download-storage-ui.json / downloads-ui.json / download-edge-*.json | 7+32+4+3+3 条原生下载与异常保存回归 |
+| appearance-ui.json / tab-actions-ui.json / search-ui.json / conversation-ui.json / layout-ui.json | 26+44+60+32+13 条亮色/图片/标签/搜索/长消息/持久布局回归 |
+| regression.tap | 本轮 119 项核心回归通过；之后仅修改 UI/原生，未冒充每次候选重跑后台 |
+| candidate-source-match.json / cloud-source-match.json | 最终 Windows 候选与 62 份当前代码/样式/资源/构建文件逐字节一致；Mac 成功 head 的同 62 份文件按换行规范化后匹配，文档后续单独更新 |
+| QQClaw-0.3.24-light-proportions.png / light-history.png / light-history-suggestions.png | 已查看真实隔离 EXE 截图：右侧从主体顶部开始且宽度按参考比例；实际原生本地网页、亮色记录弹窗和建议菜单 |
+| failure-notes.md / earlier-candidate / 失败 PNG / logs-*.zip | 保存本轮失败原因和现存材料；部分早期完整堆栈仅在工具输出，不称全部有独立完整日志 |
+
+最终 12 份 Windows 检查 JSON 的修改时间均晚于最终 build.json，合计 **298 条**，未捕获前端错误列表均为空。检查全部用隔离 DPAPI 数据和本地 HTTP 页面，没有向原微信账户/原会话发测试消息，没有运行模型。比例检查使用原生 state 的真实标题、产品 UI 操作及全窗口截图，没有执行独立 WebView 像素截图断言，也没有开放原来禁止的自动化命令。截图中的页面是隔离本地夹具，不是官方自动浏览或线上网站验收。
+
+真实失败及修正保留：选择历史建议后原地址草稿遮住真实 URL，已在导航前清草稿；测试直接 RPC 建首标签跳过选中步骤、异步历史未加载即数行、隐藏页固定 300ms 读标题，均修正为实际 UI 导航及等待真实状态，没有放宽 ID/时间要求。覆盖面板内部框与含边框外框的 2px 差改为明确计算，不允许页面实际越界。比例检查曾请求被禁止的 snapshot/screenshot，返回不支持；最终没有新增自动化入口。一次编译因隔离测试占用候选而拒绝，等正常退出后重编，未停止正式程序。同步的换行噪声已按各文件基线修正，无关 license 修改未覆盖。
+
+Windows 替换前再次确认 busy/queued/pending 均为 0；只执行一次初始备份，正常 CloseMainWindow 后替换同名 EXE 并正常重启。当前 1 个连接账户、1 条断开身份、3 会话/134 消息，账户身份/工作目录绑定、断开身份、原 threadId/逐条正文/时间以及 Provider URL/Key 比较均保留。0.3.21 已断开的身份未擅自恢复，仍不推断调用者/发生时间。安全比较见 replacement-v0324/before.json、after.json，凭据不打印；旧 EXE/DMG 与初始加密状态在同一项目外备份目录。此数据比较只验证替换保留，不能替代线上模型/微信端到端验收。
+
+正式 Windows PID `135484`，运行资源目录 `C:\Users\admin\AppData\Local\QQClaw\app\FEFC96FA24933968`，`.complete=0.3.24`；runtime-audit.json 确认实际后台及全部 UI/CSS/HTML 与 EXE 内嵌资源一致，样式/HTML 与源码匹配，后台实际从该目录运行。后台 SHA-256 `25AE1A12BA8B268FA94E4A0190518E9E70EA345127C1EBD42D9C6200A4213A09`，检查时运行/排队/待回复为 0。
+
+[Mac 云构建 41223051740](https://github.com/mumuhaha487/wechatclaw/actions/runs/41223051740) 成功，代码 `ea341c16895c120a19e782ed56dfae376edc8714`，artifact `13050024460`，读取实际 **24 条 PASS**。保留双架构、DMG 校验/只读挂载/安装复制、签名/系统库、Node、菜单/主题/后台、钥匙串/附件/布局/重启、快照/权限/冲突/回滚/审阅检查；新增真实 WebKit 导航历史、最终地址/标题、重访去重、加密重载/删除及时间范围/500 URL/损坏保留。Mac 标题 KVO 未单独完成整套产品 GUI 验收，Windows 延迟标题更新已实测。未 Apple 公证、未用户 Mac 完整 GUI/中文输入法/线上微信验收，既有 Swift5 主线程隔离警告未冒充 Swift6 严格模式通过。
+
+失败云 run 41222514994：产品编译成功但新增 Swift 样例复杂字典 map 表达式超时，拆表达式并显式类型后修复。失败 run 41222756561：正文出现就读历史早于 didFinish，改等待真实完成记录并补加载后标题处理。两次失败日志 ZIP 均保留，未计为成功。成功 artifact ZIP SHA-256 `BEEA9C12172A3CF18A67F21E648FF88023EF8BAF25D1AE1CD00123E7900C4827` 与 GitHub 上传 digest 一致，CRC、唯一 DMG 条目及 UDIF koly 尾通过。Mac 旧包先在项目外备份，然后替换唯一 DMG。
+
+| 唯一正式成品 | 大小 | SHA-256 |
+| --- | --- | --- |
+| release/QQClaw.exe | 663,040 bytes | 55A2616C8D2D3DD2BB2AF5C39D697D4188AA9A72CE8227BA841704B86F50593A |
+| release/macos/QQClaw.dmg | 817,113 bytes | E04D6507F9683C8E698AD680C2A44D09C2543C2C61B9C521315FDDCE755B0869 |
+
+本轮官方接口调查继续但没有接通：[MCP Events](https://developers.openai.com/plugins/build/mcp-events) 适用 Work web、Desktop Work+Cloud、dots，需要认证 MCP 与 HTTPS 回调，未给本地 Codex 外部消息触发入口；[desktop-only 插件](https://developers.openai.com/plugins/deploy/desktop-only) 允许本地 stdio 工具，但未提供第三方宿主官方浏览器授权接口。allowlist 限制是正式目录提交，不是所有本地插件一律禁止。此前独立 browser-service 无宿主报告 `The browser access host is unavailable` 的结论没有改变。保存本轮官方资料，但没有借用当前开发聊天的私有令牌/管道/宿主身份，也没有换其他远控或云端替代方案充当完成。
+
+本阶段网页框比例和历史功能有两端交付，**整体目标仍未完成**：官方 ChatGPT 扩展授权/自动调用仍未接通；网页批注、完整站点权限/Cookie/SPA 历史和全部主页行为 1:1 仍有差异，复杂站点、Mac 完整产品实机/输入法/线上微信未验收。只报告上述实际检查通过，不把手动浏览、夹具、进程存在或其他远控当作官方扩展成功。持续 goal 保持 active。
