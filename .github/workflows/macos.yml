@@ -197,8 +197,13 @@ jobs:
                       guard (empty["tabs"] as? [[String: Any]])?.isEmpty == true, empty["activeTab"] as? String == "" else { throw failure("Last tab was recreated") }
                       let stillEmpty = try await control("state") as! [String: Any]
                       guard (stillEmpty["tabs"] as? [[String: Any]])?.isEmpty == true else { throw failure("Reading state created a ghost tab") }
+                      guard let closedRevision = empty["revision"] as? Int64,
+                            let currentRevision = stillEmpty["revision"] as? Int64,
+                            currentRevision > closedRevision else { throw failure("Browser state revision did not increase") }
                       let reopened = try await control("newTab") as! [String: Any]
                       guard (reopened["tabs"] as? [[String: Any]])?.count == 1 else { throw failure("First new tab created twice") }
+                      guard let reopenedRevision = reopened["revision"] as? Int64,
+                            reopenedRevision > currentRevision else { throw failure("Reopened browser state revision did not increase") }
                       browser.setView(["visible": false]); browserWindow.orderOut(nil)
                       print("PASS: manual WKWebView preview, navigation, input, screenshot, last-tab close and empty-session state (not official extension automation)")
                       let first = try await host.startBackend()

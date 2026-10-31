@@ -1,3 +1,5 @@
+0.3.17 补充：ui/panel-tabs.mjs 按会话/工作区管理混合标签及读取顺序；ui/app.mjs 负责独立文件面板、Markdown/源码、canonical 去重、#L 行号、各文件阅读及标签栏横向滚动位置。文件和网页异步更新核对 owner、请求/原生 revision，不抢走当前文件，不复活已关闭标签。backend/app.mjs 的 workspace.read 返回 canonical 相对路径；workspace.reveal 复用 realpath 工作区边界检查。两端 BrowserHost 为每个会话状态增加单调 revision。文件标签及阅读位置只保留于进程内；手动网页的共用标签栏不意味着官方扩展自动化已接通。
+
 0.3.16 补充：ui/application-menu.mjs 管理 Windows 菜单、焦点及剪贴板异步目标核对；ui/render-frame.mjs 在同一草稿刷新时保留输入节点及祖先的 DOM 连接，避免清空原生撤销记录。ui/app.mjs 提供外侧应用导航。Windows clipboard.read 仅对应用 UI 开放；Mac 使用 AppKit 菜单及原生 Edit responder chain，window.menuState 同步门禁/勾选/字号边界，menu-action 交给现有 UI action。
 
 0.3.15 补充：shared/review-view.mjs 核对会话、工作区和快照身份；review.remember 将任务审阅位置和面板开关写入既有加密 Store。UI 从后台恢复，Windows/macOS 均不依赖 localStorage 保存该位置；切换会话或面板会清除旧任务选择。

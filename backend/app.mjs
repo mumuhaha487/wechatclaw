@@ -623,6 +623,7 @@ export class App {
       }
       case "workspace.list":
       case "workspace.read":
+      case "workspace.reveal":
       case "workspace.diff": {
         const root = await workspacePath(p.workspace);
         const known = [
@@ -663,13 +664,14 @@ export class App {
           path.isAbsolute(relative)
         )
           throw new Error("只能查看工作目录内的文件。");
+        if (method === "workspace.reveal") return await this.native("shell.reveal", { path: target });
         if (method === "workspace.read") {
           const stat = await fs.stat(target);
           if (!stat.isFile() || stat.size > 512 * 1024)
             throw new Error("预览支持 512 KB 以内的文本文件。");
           const buffer = await fs.readFile(target);
           if (buffer.includes(0)) throw new Error("这个文件不是文本文件。");
-          return { name: path.basename(target), text: buffer.toString("utf8") };
+          return { name: path.basename(target), relative, text: buffer.toString("utf8") };
         }
         const entries = (await fs.readdir(target, { withFileTypes: true }))
           .filter((entry) => !entry.isSymbolicLink())

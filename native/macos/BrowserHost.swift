@@ -2,6 +2,7 @@ import AppKit
 import WebKit
 
 @MainActor final class BrowserSession {
+    var revision: Int64 = 0
     let owner: String, profile: String
     var tabs: [BrowserWindow] = []
     var active: BrowserWindow!
@@ -42,7 +43,8 @@ import WebKit
     }
     func state(_ session: BrowserSession, reveal: Bool = false) -> [String: Any] {
         let tab = session.active
-        return ["owner": session.owner, "reveal": reveal, "activeTab": tab?.id ?? "",
+        session.revision += 1
+        return ["owner": session.owner, "revision": session.revision, "reveal": reveal, "activeTab": tab?.id ?? "",
                 "tabs": session.tabs.map { ["id": $0.id, "title": $0.web.title ?? "新标签页", "url": $0.url, "loading": $0.web.isLoading] as [String: Any] },
                 "url": tab?.url ?? "", "title": tab?.web.title ?? "", "loading": tab?.web.isLoading ?? false,
                 "canGoBack": tab?.web.canGoBack ?? false, "canGoForward": tab?.web.canGoForward ?? false, "error": tab?.errorText ?? ""]

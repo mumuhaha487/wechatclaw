@@ -85,7 +85,7 @@ internal sealed class BrowserHost {
     }
     private object State(BrowserSession s, bool reveal) {
         var tab = s.Active;
-        return new { owner = s.Owner, reveal = reveal, activeTab = tab == null ? "" : tab.Id,
+        return new { owner = s.Owner, revision = ++s.Revision, reveal = reveal, activeTab = tab == null ? "" : tab.Id,
             tabs = s.Tabs.Select(t => new { id = t.Id, title = t.Title, url = t.Url, loading = t.Loading }).ToArray(),
             url = tab == null ? "" : tab.Url, title = tab == null ? "" : tab.Title, loading = tab != null && tab.Loading,
             canGoBack = tab != null && tab.CanGoBack, canGoForward = tab != null && tab.CanGoForward, error = tab == null ? "" : tab.Error };
@@ -100,6 +100,7 @@ internal sealed class BrowserHost {
     }
 }
 internal sealed class BrowserSession {
+    internal long Revision;
     internal string Owner, Profile;
     internal readonly List<BrowserTab> Tabs = new List<BrowserTab>();
     internal BrowserTab Active;
