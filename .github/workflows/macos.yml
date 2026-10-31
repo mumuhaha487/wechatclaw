@@ -52,17 +52,21 @@ jobs:
                       try FileManager.default.createDirectory(at: host.data, withIntermediateDirectories: true)
                       let status = try await host.handle("system.status", [:]) as! [String: Any]
                       guard status["nodeReady"] as? Bool == true else { throw failure("Node discovery failed") }
+                      print("PASS: macOS Node discovery")
                       let first = try await host.startBackend()
                       _ = try await host.call(first, "snapshot")
+                      print("PASS: native backend startup and small pipe response")
                       let session = try await host.call(first, "session.create", params: ["workspace": host.data.path, "title": "native-persistence-check"]) as! [String: Any]
                       let id = session["id"] as! String
                       try await host.shutdown()
+                      print("PASS: native save and shutdown acknowledgement")
                       let file = host.data.appendingPathComponent("state.json")
                       let bytes = try Data(contentsOf: file)
                       guard !String(decoding: bytes, as: UTF8.self).contains("native-persistence-check") else { throw failure("Snapshot was not encrypted") }
                       let encrypted = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
                       let plain = try host.vault.handle("vault.decrypt", encrypted["protected"] as! String)
                       guard plain.contains(id) else { throw failure("Keychain decrypt failed") }
+                      print("PASS: Keychain decrypt of encrypted snapshot")
                       let second = try await host.startBackend()
                       let snapshot = try await host.call(second, "snapshot") as! [String: Any]
                       guard (snapshot["sessions"] as? [[String: Any]])?.contains(where: { $0["id"] as? String == id }) == true else { throw failure("Native restart lost session") }

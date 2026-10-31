@@ -20,6 +20,17 @@ func jsonData(_ value: Any) throws -> Data { try JSONSerialization.data(withJSON
 func jsonText(_ value: Any) throws -> String { String(decoding: try jsonData(value), as: UTF8.self) }
 func quoteShell(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'" }
 
+// Foundation's fixed-length reads can wait for the requested byte count on a
+// pipe. A JSON line must be delivered as soon as read(2) returns any bytes.
+func readPipe(_ handle: FileHandle, limit: Int = 65536) throws -> Data {
+    var bytes = [UInt8](repeating: 0, count: limit)
+    while true {
+        let count = bytes.withUnsafeMutableBytes { Darwin.read(handle.fileDescriptor, $0.baseAddress!, $0.count) }
+        if count >= 0 { return Data(bytes.prefix(count)) }
+        if errno != EINTR { throw failure("无法读取后台管道（\(errno)）。") }
+    }
+}
+
 func command(_ executable: String, _ args: [String], env: [String: String]? = nil, timeout: Double = 10) async throws -> String {
     try await withCheckedThrowingContinuation { continuation in
         DispatchQueue.global(qos: .utility).async {
@@ -32,7 +43,9 @@ func command(_ executable: String, _ args: [String], env: [String: String]? = ni
                 let deadline = DispatchWorkItem { if process.isRunning { process.terminate(); DispatchQueue.global().asyncAfter(deadline: .now() + 1) { if process.isRunning { kill(process.processIdentifier, SIGKILL) } } } }
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
                 var output = Data()
-                while let chunk = try pipe.fileHandleForReading.read(upToCount: 8192), !chunk.isEmpty {
+                while true {
+                    let chunk = try readPipe(pipe.fileHandleForReading, limit: 8192)
+                    if chunk.isEmpty { break }
                     output.append(chunk); if output.count > 32768 { output.removeFirst(output.count - 32768) }
                 }
                 process.waitUntilExit(); deadline.cancel()
@@ -291,7 +304,9 @@ final class Backend: @unchecked Sendable {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 var buffer = Data()
                 do {
-                    while let chunk = try child.output.fileHandleForReading.read(upToCount: 65536), !chunk.isEmpty {
+                    while true {
+                        let chunk = try readPipe(child.output.fileHandleForReading)
+                        if chunk.isEmpty { break }
                         buffer.append(chunk)
                         while let end = buffer.firstIndex(of: 10) {
                             let line = Data(buffer[..<end]); buffer.removeSubrange(...end)
@@ -305,7 +320,7 @@ final class Backend: @unchecked Sendable {
                 child.process.waitUntilExit()
                 DispatchQueue.main.async { self?.exited(child) }
             }
-            DispatchQueue.global(qos: .utility).async { while !(child.errors.fileHandleForReading.availableData).isEmpty {} }
+            DispatchQueue.global(qos: .utility).async { while let chunk = try? readPipe(child.errors.fileHandleForReading), !chunk.isEmpty {} }
             return child
         }
         starting = task
