@@ -1,3 +1,5 @@
+0.3.21：ui/message-search.mjs 的纯 searchSessions 检索会话元数据/已保存消息/附件名；SessionSearch 管理分页、纯文字高亮、结果身份核对和不变节点；MessageFind 收集渲染正文的完整匹配位置，支持跨Markdown行内节点但隔离独立段落/附件边界，避免拼出假匹配，并只装饰当前消息附近的有限范围，关闭时还原文本节点。ConversationView.reveal 复用长消息展开和阅读位置。app.mjs 接入菜单/快捷键与面板遮挡处理，两端编辑菜单增加搜索/查找，Mac通过hasSession控制可用性。只读搜索不调用模型或写消息；查询/高亮仅在进程内保留。以下记录按版本保留。
+
 0.3.20 当前外观：白色为主、黑色为辅，整体亮色。backend/store.mjs 的默认 light 与 appearanceVersion=4 迁移、ui 初始 state/HTML、Windows Form/WebView2 以及 Mac AppKit/WebKit 初始外观保持一致；后续用户主动选色保留。输入框增高前后调用 captureReading/restoreReading，已到底时继续跟随，历史阅读保留锚点。以下补充按版本保留，旧深色描述不覆盖最新偏好。
 
 0.3.19 补充：ui/conversation-view.mjs 负责用户长消息折叠、会话目录和阅读位置。render 前根据真实 DOM 的会话 ID 捕获阅读锚点，render 后测量八行边界并恢复同一消息的相对位置；切换会话分别记忆。目录只读取用户消息，DOM 使用 textContent，跳转核对会话、索引及原消息文本/时间。ResizeObserver 处理容器变化，关闭/切换时恢复入口状态；展示状态不写入会话正文或模型设置，不跨进程。
