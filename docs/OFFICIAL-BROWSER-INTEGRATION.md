@@ -16,6 +16,24 @@
 
 下一步仍是自身身份下的可信Code Mode/浏览器服务和任务/网站授权。不能通过删校验、假nodeRepl、自签始终允许、既有开发聊天管道或自建远控凑完成。本版导航修复是手动预览，**官方扩展自动浏览仍未完成**；其余静态协议快照继续保留。
 
+## 2026-11-01 公开 Code Mode 宿主源码复查
+
+已从官方仓库读取固定提交 [67f0994b532b8740f14b5b738af7b7b2a915b1d6](https://github.com/openai/codex/commit/67f0994b532b8740f14b5b738af7b7b2a915b1d6) 的相关源码。本次是下列文件的静态审查，没有编译该提交或把它当成本机 `codex-cli 0.157.1` 的同版本实现。
+
+| 官方源码（固定提交） | 本次确认的行为 |
+| --- | --- |
+| [app-server/src/code_mode_host.rs](https://github.com/openai/codex/blob/67f0994b532b8740f14b5b738af7b7b2a915b1d6/codex-rs/app-server/src/code_mode_host.rs) | 默认本地宿主；传入URL则选择gRPC出站连接。这是传输选择，不是扩展配对或授权 |
+| [code-mode-host/src/lib.rs](https://github.com/openai/codex/blob/67f0994b532b8740f14b5b738af7b7b2a915b1d6/codex-rs/code-mode-host/src/lib.rs) 及 [delegate.rs](https://github.com/openai/codex/blob/67f0994b532b8740f14b5b738af7b7b2a915b1d6/codex-rs/code-mode-host/src/delegate.rs) | 使用InProcessCodeModeSession；嵌套调用回交已有工具执行器，不自动注册浏览器服务 |
+| [code-mode-runtime/src/runtime/globals.rs](https://github.com/openai/codex/blob/67f0994b532b8740f14b5b738af7b7b2a915b1d6/codex-rs/code-mode-runtime/src/runtime/globals.rs) 及 [module_loader.rs](https://github.com/openai/codex/blob/67f0994b532b8740f14b5b738af7b7b2a915b1d6/codex-rs/code-mode-runtime/src/runtime/module_loader.rs) | 安装tools、text、store等V8全局；模块导入返回Unsupported import in exec。不能把它等同于带privileged nodeRepl/nativePipe的浏览器运行环境，或假定能直接import browser-client |
+
+因此，仅编译公开code-mode-host、追加启动参数或启用feature flag，不能构成当前缺失的官方扩展授权实现。此结论限定于已审查路径，不是对全部私有技术路径不可行的证明。真正缺少的仍是QQClaw自身身份下的服务注册、可信运行环境和真实任务/网站授权。
+
+同时实际读取了官方 [Manage a thread goal](https://learn.chatgpt.com/docs/app-server#manage-a-thread-goal) 和该提交的thread_goal_processor.rs / thread_read_state.rs。原生目标可以在空闲时立即启动回合，active目标的回合结束也可能触发后续执行；它不是纯显示字段。QQClaw当前CodexClient.answer在首个turn/completed结束监听，App.run随后完成快照并释放工作区锁，不能直接加“目标”按钮就宣称支持。接入前须覆盖多回合事件、审批、任务归属、最终结果、微信六条过程预算、显式停止、保存与重启恢复。
+
+本机0.157.1实际生成的ThreadGoalSetParams只有threadId/objective/status/tokenBudget，没有上述公开提交使用的origin字段；ThreadResumeParams也没有deferGoalContinuation（不能从fork参数直接移植到resume）。实现必须以运行版本的协议和实测生命周期为准。上述检查没有启动模型、改写任何原会话目标或发送微信消息。
+
+证据及7份源码SHA-256：项目外 `C:/Users/admin/AppData/Local/Temp/qqclaw-official-probe-20261101/public-source-review.json`。这是新增静态调查，既有功能检查数字不计作本次新验收。产品源码、版本、成品和运行进程未改，整体目标继续active。
+
 ## 当前结论
 
 **QQClaw 尚不能通过官方 ChatGPT 扩展执行微信发起的浏览器任务。** 本机存在官方扩展安装文件和签名有效的官方 native host；这些证据不能证明 QQClaw 已获得独立连接、可信运行环境、任务授权或站点许可。

@@ -916,3 +916,17 @@ Windows正式PID115392仍在运行，先前正常退出请求仍待回应，没�
 Mac更新前将旧两端成品和加密状态备份至replacement-v0329。更新后原1个连接账户、1条断开身份、3个会话/134条消息保留，busy/queued/pending为0，账户绑定/保留身份/threadId/逐条消息及时间/Provider URL和Key比较全为true，前后加密状态指纹相同。没有恢复原断开身份；这是仅更新Mac安装包后的比较，不是Windows替换证明。项目release仍只有一个EXE和一个DMG。
 
 **整体目标仍active且未完成。** 官方扩展自动浏览尚无通过证据；参考原图1/3中的“目标/设为目标”在当前ui/app.mjs和后台主逻辑也没有对应入口，不能宣称主页全部1:1。网页批注、完整SPA/Cookie/站点权限、Mac实机/公证及可信按键等既有差异继续保留。用户完整原始要求不因本轮成功的导航修复而缩小。
+
+## 2026-11-01 截图复核与官方宿主源码调查
+
+本次没有产品代码修改、构建、替换、重启、模型执行或微信测试；版本/成品保持0.3.29章节状态。
+
+无文字截图a705b10b显示Windows未处理异常0x8000000E，本地文件时间01:54:06。重新读取0.3.25保存的原生复现日志，堆栈为CoreWebView2Deferral.Dispose -> Complete -> ICoreWebView2Deferral.Complete。代码已在0.3.25改为finally仅Dispose一次，0.3.26已有21项新窗口回归和正常退出后无COM日志检查；本次没有重跑，不新增通过数字。截图没有提供新的堆栈，不能单凭相同错误码断定所有同码异常均为此原因。本次只读确认正式PID115392仍在、EXE摘要仍C251A31F3D7216934FAFC919A39786D8138A7CB4838572E1E0968DC876BAA085、正式日志无native.log；这些不等于全部GUI健康。
+
+继续阅读官方Codex固定提交67f0994b532b8740f14b5b738af7b7b2a915b1d6的7份Code Mode宿主/runtime/目标实现，具体路径与固定源码链接见docs/OFFICIAL-BROWSER-INTEGRATION.md新增章节。公开宿主提供代码执行与已有工具回调；V8全局不提供官方浏览器所需privileged nodeRepl/nativePipe，模块加载器拒绝import。仅编译该宿主或加--code-mode-host参数不能完成扩展接入；此限定结论不表示全部私有路径已被证明不可能。
+
+官方目标API会在空闲时启动及继续回合，当前单回合CodexClient.answer/App.run生命周期尚不支持；不把添加按钮当作完成。本机0.157.1生成schema的goal/set无origin字段，resume无deferGoalContinuation，与最新main或fork参数须区分。后续需要处理跨回合监听、工作区锁、快照、用户停止、审批、微信消息归属/六条进度/最终结果和原生持久化后再接UI，没有擅自更改原会话目标。
+
+新增证据：项目外qqclaw-official-probe-20261101/public-source-review.json，包含7份源码摘要、安装版字段及只读现场。文档补丁第一次因result.md上下文不匹配被整体拒绝，核对无改动后修正，不计作产品失败或测试通过。本次没有新增UI或原生输入验收。
+
+**整体目标继续active，官方扩展微信自动浏览及主页全部1:1仍未完成。** Windows新版替换仍等待此前正常退出请求的回复，没有重复请求或强杀。
