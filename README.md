@@ -1,6 +1,6 @@
 # QQClaw
 
-当前源码为 **0.3.6**：新增 macOS 原生宿主和通用构建配置，并补充独立对话备份/恢复。Mac 原生编译与实机验证待 macOS 环境完成。当前运行中的 Windows 正式 EXE 仍为 0.3.5，未强制退出或覆盖。
+当前源码为 **0.3.6**：新增 macOS 原生宿主和通用构建配置，并补充独立对话备份/恢复。Mac 已通过 GitHub macOS 云编译与原生后台/数据持久化自检，通用包位于 `release/macos/QQClaw.zip`；完整 GUI 和微信实机验证仍待完成。当前运行中的 Windows 正式 EXE 仍为 0.3.5，未强制退出或覆盖。
 
 轻量 Windows / macOS Codex 工作台。在桌面上编程，也可以通过腾讯 iLink / ClawBot 从微信操作各自的项目目录。
 
@@ -103,11 +103,11 @@ Windows 构建始终只输出 `release/QQClaw.exe`。构建前请关闭程序；
 
 Mac 适配面向 macOS 13.3+，使用 AppKit + 系统 WebKit，支持 Intel / Apple Silicon 通用构建。界面使用原生标题栏、Cmd 快捷键和系统剪贴板，安装页识别 Mac 的 Node/Codex 路径。
 
-在 Mac 安装 Xcode 15+ 的 Command Line Tools 和 Node.js 22.13+，执行 `npm ci`、`npm run build:mac`。产物为 `release/macos/QQClaw.zip`，内含一个 `QQClaw.app`。也提供手动 GitHub Actions 构建配置，尚未上传或执行。Windows 不能直接完成原生 Mac 编译。
+在 Mac 安装 Xcode 15+ 的 Command Line Tools 和 Node.js 22.13+，执行 `npm ci`、`npm run build:mac`。产物为 `release/macos/QQClaw.zip`，内含一个 `QQClaw.app`。源码已保存到 [mumuhaha487/wechatclaw](https://github.com/mumuhaha487/wechatclaw)。Windows 可在该仓库的 [Mac 构建工作流](https://github.com/mumuhaha487/wechatclaw/actions/workflows/macos.yml) 点击 Run workflow，由 macOS 云端机器完成编译并下载产物；本轮已实际成功执行。
 
 Mac 应用数据位于 `~/Library/Application Support/QQClaw`，加密密钥存放在系统钥匙串。删除 EXE 或 .app 不会主动删除账户数据、Codex 原生历史或独立对话备份。**独立备份是可读的 JSON/Markdown，附件只保存原路径；个人备份时还需保留 Codex 用户目录、项目和附件本体。**
 
-真实 Codex 已验证关闭后由新进程读取原生历史并继续原会话。其他 Codex 客户端是否在侧栏显示该会话由它的列表过滤规则决定；可以用 `codex resume <threadId>` 继续。完整的数据位置、恢复步骤、构建和未验证边界见 [docs/MACOS-AND-DATA.md](docs/MACOS-AND-DATA.md)。
+真实 Codex 已验证关闭后由新进程读取原生历史并继续原会话。其他 Codex 客户端是否在侧栏显示该会话由它的列表过滤规则决定；可以用 `codex resume <threadId>` 继续。Mac 成品使用本地签名，尚未做 Apple Developer ID 签名或公证。完整的数据位置、恢复步骤、构建和未验证边界见 [docs/MACOS-AND-DATA.md](docs/MACOS-AND-DATA.md)。
 
 ## 来源
 

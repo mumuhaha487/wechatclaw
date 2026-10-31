@@ -1,6 +1,6 @@
 # macOS 适配与对话保存
 
-2026-10-31，源码 0.3.6。当前机器为 Windows，用户确认没有 Mac，先完成适配和构建配置。**尚未生成 Mac 成品，尚未通过 Swift 原生编译或 Mac 实机验证。**
+2026-10-31，源码与 Mac 成品 **0.3.6**。已从 Windows 发起 GitHub macOS 云编译，并下载真正的 Intel / Apple Silicon 通用 `.app` 分发包。原生后台、管道、钥匙串加密及重启恢复的云端自检通过；完整界面交互与实际微信链路仍需 Mac 验收。
 
 ## Mac 构建
 
@@ -13,9 +13,18 @@ npm run build:mac
 
 唯一 Mac 分发包为 `release/macos/QQClaw.zip`，解压得到 `QQClaw.app`，可移入「应用程序」。包含 Apple Silicon 和 Intel 两种架构；使用系统 AppKit、WebKit、Security 和 CryptoKit，不内置 Node.js、Codex CLI 或浏览器运行时。前端最低目标为 Safari 16.4，对应 macOS 13.3。
 
-`npm run build` 自动选择 Windows 或 Mac；`npm run dev` 构建后启动本机应用。Windows 不支持交叉生成原生 Mac 包，脚本会明确报错，不输出假成品。
+`npm run build` 自动选择 Windows 或 Mac；`npm run dev` 构建后启动本机应用。当前 Swift/AppKit 构建脚本在 macOS 上运行；Windows 可以提交代码到 GitHub Actions，由 macOS 云端机器编译，再下载真正的 Mac 应用。`npm run build:mac` 本身不在 Windows 上交叉运行 Xcode 工具链。
 
-也提供 `.github/workflows/macos.yml`：仓库托管到 GitHub 后，可手动运行 **Build macOS app**，下载其构建产物。当前没有上传源码、创建远程仓库或触发工作流。
+源码仓库为 [mumuhaha487/wechatclaw](https://github.com/mumuhaha487/wechatclaw)，按用户指定使用现有仓库。Windows 发起的构建使用 `.github/workflows/macos.yml`，由 GitHub 的 `macos-15` 托管机器执行。仓库上传内容仅为项目源码与必要资源，不包含本机账户数据、依赖目录或 Windows 成品。
+
+以后在 Windows 上重建 Mac 版：
+
+1. 将代码更新推送到该仓库的 `main` 分支。
+2. 打开 [Mac 构建工作流](https://github.com/mumuhaha487/wechatclaw/actions/workflows/macos.yml)，点击 **Run workflow**。
+3. 等待构建和原生数据保存自检通过，再在该次运行的 **Artifacts** 下载 `QQClaw-macOS-Universal`。
+4. GitHub 下载的是产物容器 ZIP，里面还有最终分发包 `QQClaw.zip`；后者解压才是 `.app`。成品保留在本项目的 `release/macos/QQClaw.zip`，不需要解压在 Windows 上。
+
+云端产物保留 7 天，源码长期保存在仓库，可随时重新构建。工作流只手动触发，不自动发布 Release。
 
 默认使用本地 ad hoc 签名，未公证，首次运行可能受到 Gatekeeper 限制；不能当作已正式签名的发行版。公开分发可设置 `MACOS_SIGN_IDENTITY` 为已安装的 Developer ID Application 身份。若还设置 `MACOS_NOTARY_PROFILE`，构建会通过该钥匙串配置执行公证，检查 Accepted、装订票据并重新打包；公证失败不产出正式包。证书和 Apple 凭证不放进源码。
 
@@ -35,7 +44,9 @@ Finder 启动时不会直接获得交互式 shell 的 PATH。Mac 宿主补查 Ho
 
 WKWebView 只加载 `qqclaw://app/` 的本地资源，桥接只接受该来源主框架。钥匙串加解密只接受 Node 私有管道调用。管道写入使用独立串行队列，读取输出与 UI 不同步写入管道，避免重现双向管道死锁。关闭等待后台保存确认；保存错误或超时时，用户可取消退出。
 
-尚需在 Mac 验证：两种架构的编译与实际启动、WKWebView 自定义协议/CSP/输入法、文件对话框与 Cmd 快捷键、钥匙串首次授权和更新签名后的读取、Node 各安装方式、npm 安装/登录、系统退出与重启、真实微信消息/附件以及签名和公证。Windows 下的源码与浏览器检查不能替代这些检查。
+云端已完成两种架构的 Swift 编译、Universal 合并校验、ad hoc 签名校验，并在 Apple Silicon macOS runner 上执行同源原生后台自检：Node 发现、辅助进程启动、私有管道 RPC、小消息响应、钥匙串加密、正常保存关闭及新后台进程恢复会话。另检查成品只链接系统库。
+
+尚需 Mac 实机验证：完整 `.app` 图形界面、WKWebView 自定义协议/CSP/输入法、文件对话框与 Cmd 快捷键、更新签名后的钥匙串访问、各类 Node 安装方式、npm 安装/登录、系统退出与重启、真实微信消息/附件和 Intel 机器实际运行。Developer ID 签名和 Apple 公证尚未配置。云端后台自检不等于上述完整界面检查。
 
 ## 数据位置与卸载
 
@@ -63,6 +74,15 @@ Codex 通过 `thread/start { ephemeral:false }` 创建原生持久会话，通�
 - 119 项后端、微信协议与限额、长任务、持久保存和恢复检查通过；测试及依赖均在项目外。
 - 使用真实 Codex CLI `0.165.0-alpha.1.2` 完成一次工具写入与读取任务，校验文件字节；关闭客户端后用新 Codex 进程读取原生 JSONL 对应的 thread，再继续原对话，成功复述上一轮口令，独立备份包含该轮结果。
 - 独立测试验证删除应用数据后仍能从备份恢复、重复恢复不覆盖已有对话、移除会话仍保留备份、凭证不被导出、备份故障明确报错，以及 POSIX 路径大小写。
-- Mac 实机、Swift 编译、钥匙串和实际微信 Mac 链路均未验证。
+- GitHub macOS 云端 Swift 双架构编译、Universal/签名校验、Node 发现、原生后台管道、小消息 RPC、钥匙串加密及重启恢复自检通过。完整 GUI、Intel 实机、微信实际 Mac 链路尚未验证。
 
 浏览器模拟 Mac 桥接已检查复制、设置中的 Mac 路径与保留说明、恢复对话提示与侧栏、动态模型菜单，无控制台错误；Safari 目标的前后端资源打包通过。Windows 0.3.6 候选在项目外编译成功。正式 Windows 实例仍在运行，未替换现有 0.3.5 EXE。
+
+## 当前 Mac 成品与构建证据
+
+- 文件：`release/macos/QQClaw.zip`，481,604 字节，内含唯一 `QQClaw.app`。
+- 最低 macOS：13.3；Mach-O 内含 `x86_64` 和 `arm64`。ZIP CRC 与可执行权限核对通过，无 Node/Codex 本体和用户数据。
+- SHA-256：`387FDEAE759870D571B37CC54C933C9665E4553B9C5F0282CA10F1BA39AEF92C`。
+- 成功构建：[GitHub Actions 41166453120](https://github.com/mumuhaha487/wechatclaw/actions/runs/41166453120)，构建源码提交 `b6a269bf99fa873cbf0e644ba9b83f4648487f86`。后续文档和仓库元数据更新不影响该原生代码。
+- 临时自检 Swift 入口和工作数据仅在云端 runner 的临时目录生成，未加入项目，也未打入成品。自检失败则不上传产物。
+- 本轮修复了 Swift 文件对话框 continuation 类型、lipo 参数顺序，以及 Foundation 定长管道读取导致小消息一直等待的问题；改为 `read(2)`，由真实云端小消息通信自检确认。

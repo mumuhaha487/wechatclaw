@@ -20,5 +20,9 @@
   },
   "devDependencies": {
     "esbuild": "^0.25.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mumuhaha487/wechatclaw.git"
   }
 }
