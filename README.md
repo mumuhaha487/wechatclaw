@@ -70,7 +70,7 @@ Windows 使用系统 WebView2，Mac 使用系统 WebKit；外部网页不拥有�
 
 **自动操作浏览器必须通过 OpenAI 官方 ChatGPT 扩展，本版本尚未接通。** 设置 → 运行环境提供官方安装/说明入口和扩展文件检测；检测到安装文件不等于已经授权连接。本版本已移除旧的 `qqclaw_browser` HTTP MCP 和自动调用指令，不会把自建 MCP、Playwright、CDP 或 HTTP 抓取冒充官方扩展。在微信中要求自动浏览时，应如实报告功能未完成，不能声称已经搜索。
 
-当前官方文档描述的是通过官方桌面应用连接扩展，未提供 QQClaw 独立 app-server 所需的宿主授权接口。依据和进一步开发的阻碍见 [result.md](result.md)。
+已读取的官方文档描述通过官方桌面应用连接扩展的流程；本次尚未找到适用于 QQClaw 独立 app-server 的宿主接入与授权契约。安装、native transport、可信 runtime、任务授权及站点许可的分层证据见 [官方扩展接入调查](docs/OFFICIAL-BROWSER-INTEGRATION.md)，当前交付范围见 [result.md](result.md)。
 
 ## 在 Codex Desktop 中继续（可选）
 

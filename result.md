@@ -729,3 +729,19 @@ ZIP SHA-256 `B1DB5086172B2BD091F7887CAC405CA5D57C3E332CB9750B3138353145B1D81A` �
 | release/macos/QQClaw.dmg | 824,734 bytes | 794FE7DD4456E076BABF24D6BAB0D0EA0091E77F995F3B20FF187B56F61BFA67 |
 
 **整体目标仍未完成。** 官方 ChatGPT 扩展授权宿主接入没有变化，本轮未以其他扩展、远控、自建 MCP 或开发聊天身份替代。全部主页行为 1:1、网页批注、完整 SPA/Cookie/站点权限、关闭标签恢复等仍有差异；Mac 网页查找/完整产品键盘与中文输入法、Apple 公证和线上微信端到端未验收。既有 Swift5 警告不等于 Swift6 严格模式通过。发布仅确认上述实际修复和检查，持续 goal 保持 active。
+
+## 2026-11-01 官方扩展独立接入专项调查
+
+本次没有产品代码修改、构建、替换或重启。正式版本仍为 0.3.26；只读核对当前 Windows PID 115392 的路径为 release/QQClaw.exe，正式日志目录未发现 native.log。没有新执行 UI、模型或线上微信检查，不能将既有 341/119/28 项计作本次新检查，亦不能仅凭无日志证明所有原生行为正常。
+
+新增 [docs/OFFICIAL-BROWSER-INTEGRATION.md](docs/OFFICIAL-BROWSER-INTEGRATION.md)，README 及开发交接已加入索引。调查区分扩展安装、签名 native host、JSON-RPC transport、可信 nodeRepl runtime、任务授权及站点许可，避免把“扩展已安装”或 transport connected 写成“模型可用”。
+
+实际读取 OpenAI Docs 的 Browser extension、app-server initialization/remote Code Mode host、Computer use SDK drivers。确认 requestAttestation 是宿主响应 opaque token，不提供浏览器授权自助签发；--code-mode-host 是实验性的出站宿主连接配置，不是官方扩展授权入口；SDK 要求开发者实现 driver，不能当作本项目官方扩展接入的替代交付。未找到公开可用的独立接入契约，不据此推断所有技术路径绝对不可能。
+
+本机静态检查：Chrome 官方扩展 1.26.1020.11845，Edge 安装目录版本 1.26.901.11451_0；host 为 com.openai.codexextension，allowed_origins 含两者官方 ID，extension-host.exe 的 Authenticode 为 Valid / OpenAI OpCo, LLC。扩展通过 connectNative 使用 JSON-RPC，并在获得 port 后标记 transport connected；后续任务权限仍单独检查。只读分析官方 browser-client/service 和扩展 service worker，并做语法格式化，没有导入或执行 vendor 代码。
+
+修正早期容易过度推断的技术描述：browser/access 验证公钥由宿主环境注入，并非代码固定的 OpenAI 公钥；executor 缺失时有跳过该检查的分支。因此不能写成“只有 OpenAI 固定私钥，技术上绝对无解”。但删环境变量、伪造 trusted runtime 或始终返回允许，也不证明已接通官方授权。尚缺 QQClaw 自身身份下可信宿主、扩展会话、真实任务和站点许可的完整实现及验收。
+
+项目外证据目录 C:\Users\admin\AppData\Local\Temp\qqclaw-official-protocol-20261101，evidence.json 保存来源文件摘要、静态定位和签名状态；格式化副本仅供本地阅读，未放入项目发布。未读取真实管道、令牌、Cookie、Chrome Local State 或 Local Extension Settings，未修改官方 native-host 注册表，未借用开发聊天权限。没有向原微信账户/会话发测试消息。
+
+**自动浏览仍未完成，整体目标保持 active。** 既有 0x8000000E 的一次性 deferral 释放修复及 0.3.26 成品不变；全部主页 1:1、Mac 实机及其他未完成项继续保留。下一阶段必须补齐实际独立接入链路后再做端到端验收，不能用本次调查替代功能完成。
