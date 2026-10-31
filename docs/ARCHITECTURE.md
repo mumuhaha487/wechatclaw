@@ -1,4 +1,14 @@
-0.3.26 当前补充：原生网页的应用快捷键使用宿主 KeyDown（Windows）和 AppKit 菜单（Mac）转交主 UI，同一套 action 处理标签创建/关闭/切换和地址栏。Windows 仅捕获白名单 Ctrl 组合，排除 Alt/AltGr；BeginInvoke 离开同步原生按键回调后才切换主 WebView 和发 browser-shortcut。UI 核对当前会话、实际标签、面板和模态状态；window.focusBrowser 只给当前可见 owner/tabId 聚焦，不开放模型工具或网页消息桥。Mac 自定义菜单执行前切回主 WKWebView，原生编辑菜单仍走 responder chain。
+## 0.3.27 关闭恢复及操作归属
+
+ClosedPanelTabs 与 PanelTabs 分工：前者保存有限的已关闭位置描述、恢复中的 owner 锁和可重试记录，后者管理实际打开对象及位置。自动同步移除、canonical 去重和工作面板收起不写关闭历史；显式浏览器关闭失败先读取真实 state，仍存在时恢复原对象、顺序、草稿和未被更新的选择。
+
+手动 browser.command 新增 restoreTab，经过既有会话串行队列及 BrowserViewer URL 校验。两端原生创建后台页面并返回 tabId/state，保持先前 activeTab；前端仅当 owner/panelIntent/菜单状态仍允许时再 selectTab。这样迟到的恢复不会使标签栏选择与实际页面错配。Windows 等待 CoreWebView2 初始化后还检查停止/关闭标志，取消则清理新页。失败创建保留记录；创建成功后的选择/聚焦失败报告错误而不重复恢复旧记录。
+
+恢复元数据和锁不写 Store。用户发送的消息、原生 Codex 对话、账户/目录绑定及 Provider 的保存路径不变；没有恢复自建 MCP 或官方插件授权。版本/成品和分层检查见根目录 result.md。
+
+<!-- end-qqclaw-0327 -->
+
+0.3.26 历史补充：原生网页的应用快捷键使用宿主 KeyDown（Windows）和 AppKit 菜单（Mac）转交主 UI，同一套 action 处理标签创建/关闭/切换和地址栏。Windows 仅捕获白名单 Ctrl 组合，排除 Alt/AltGr；BeginInvoke 离开同步原生按键回调后才切换主 WebView 和发 browser-shortcut。UI 核对当前会话、实际标签、面板和模态状态；window.focusBrowser 只给当前可见 owner/tabId 聚焦，不开放模型工具或网页消息桥。Mac 自定义菜单执行前切回主 WKWebView，原生编辑菜单仍走 responder chain。
 
 focusPanelSelection 在 DOM/视口同步后核对原 owner、panelIntent 和标签对象，关闭地址建议并释放地址焦点后再还给原生网页；空组回到聊天输入框。render/refreshBrowserPanel 仅在主文档有焦点时恢复表单焦点，BrowserHistory 在 blur 时关闭建议。菜单状态在 render 和视口更新时同步，避免后台标签数量变化后菜单状态过期。菜单可用性独立区分工作台、面板、网页与多标签，不让模态框背后的键盘命令生效。对话、微信、模型和存储后台源码本轮未改；实际检查和限制见 result.md 0.3.26。
 

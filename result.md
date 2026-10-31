@@ -1,6 +1,6 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-11-01。此文件供后续开发与独立审核使用。**当前源码、正式 Windows 程序与 Mac 安装包均为 0.3.26，唯一同名成品已替换，Windows 正常退出/重启并核对实际资源。修复原生网页获得焦点后应用快捷键失效，新增 22 项真实原生键盘检查。最终 341 项 Windows UI/原生集成、119 项核心回归、Mac 28 条实际检查通过；1 个连接账户、1 条断开身份、3 会话/134 消息、目录绑定与 Provider 比较保留。白色为主、黑色为辅、整体亮色及网页比例不变。官方扩展仍未接通，不能写成整体通过。** 历史交付记录不覆盖最新状态，当前指纹/失败/限制见文末 0.3.26。
+更新时间：2026-11-01。当前源码 **0.3.27**。Mac 唯一安装包已更新为 0.3.27；Windows 候选已编译，正式 EXE 仍为 0.3.26，等待用户正常退出后替换。 亮色、可调宽/可关闭面板、真实上下文统计和此前数据保存继续保留。官方 ChatGPT 扩展自动浏览仍未接通，整体目标没有完成；交付范围与限制以文末本版记录为准。
 
 ## 用户目标与不可替换的要求
 
@@ -745,3 +745,54 @@ ZIP SHA-256 `B1DB5086172B2BD091F7887CAC405CA5D57C3E332CB9750B3138353145B1D81A` �
 项目外证据目录 C:\Users\admin\AppData\Local\Temp\qqclaw-official-protocol-20261101，evidence.json 保存来源文件摘要、静态定位和签名状态；格式化副本仅供本地阅读，未放入项目发布。未读取真实管道、令牌、Cookie、Chrome Local State 或 Local Extension Settings，未修改官方 native-host 注册表，未借用开发聊天权限。没有向原微信账户/会话发测试消息。
 
 **自动浏览仍未完成，整体目标保持 active。** 既有 0x8000000E 的一次性 deferral 释放修复及 0.3.26 成品不变；全部主页 1:1、Mac 实机及其他未完成项继续保留。下一阶段必须补齐实际独立接入链路后再做端到端验收，不能用本次调查替代功能完成。
+
+## 0.3.27 关闭标签恢复与异步状态修正
+
+Mac 唯一安装包已更新为 0.3.27；Windows 候选已编译，正式 EXE 仍为 0.3.26，等待用户正常退出后替换。
+
+新增文件/网页“重新打开关闭的标签页”：文件菜单、标签右键菜单、标签栏加号、Windows Ctrl+Shift+T 与 Mac ⌘⇧T 共用逻辑。每个会话和目录分别保留最近 20 次成功关闭；恢复原混合位置，已有文件选择现存对象，文件重新读取磁盘并保留源码/预览模式及阅读位置。文件丢失提示并保留重试记录。网页按地址新建后台页，再由仍有效的原操作显式选择；不重放 POST、缓存文件正文或未提交网页表单。
+
+本阶段发现并修正的真实问题：
+
+| 触发条件 | 证据及修正 |
+| --- | --- |
+| 恢复文件等待期间切换其他文件 | 内部已添加但标签栏没刷新；再次点击才出现。恢复结束重绘当前 owner，保留新选择和关闭状态 |
+| 浏览器关闭请求失败 | 原网页仍在，前端重建对象追加末尾并可能丢地址草稿。按原位置和对象回滚，不写假关闭历史 |
+| 主 HTML 重载后查询已存在原生网页 | 临时开始页移除后无选中工作标签。仅当开始页仍拥有选择时采用实际 activeTab |
+| 延迟恢复期间选择另一网页 | 标签栏选 second、原生 active 却为 first，未提交地址草稿还能掩盖错配。改为原生后台创建，当前操作仍有效才显式选择 |
+| 恢复期间打开应用菜单 | 菜单仍在但焦点丢失、当前文件被切换。恢复尊重现有菜单，菜单可用状态动态更新 |
+| Windows 网页初始化期间立即停止 | 原生基线失败并留下新网页。停止标志改为等待前清零、等待后检查；新页清理，基线失败留存，旧候选未替换正式程序 |
+
+源码索引：ui/closed-panel-tabs.mjs 管理有限恢复描述、owner 锁、失败重试和会话清理；ui/panel-tabs.mjs 的 place 恢复位置；ui/app.mjs 的 closePanelTabs/reopenPanelTab/updateBrowserState/focusPanelSelection 处理实际关闭结果及异步归属；ui/application-menu.mjs 和 ui/panel-tab-actions.mjs 连接入口及实时状态；backend/app.mjs、backend/browser.mjs 增加手动 restoreTab 白名单及 URL 验证；两端 BrowserHost 创建后台恢复页，Windows 检查初始化期间的停止；Mac QQClaw.swift 增加菜单及 canReopen。没有开放模型浏览器工具或修改微信消息预算、Provider、主 Store 与原生 Codex 归档实现。
+
+证据全部在项目外 C:\Users\admin\AppData\Local\Temp\qqclaw-v0327-20261101：
+
+| 材料 | 本轮实际范围 |
+| --- | --- |
+| cua-checks.json、component-events-cua-25.jsonl | 25 条 CUA 承载的当前产品前端 + 实际 App RPC/Windows BrowserHost 组件检查；本地 HTTP 实际网页、文件读取、关闭/恢复、原生选择与标签计数、菜单/草稿、会话隔离和删除清理；检查跨候选迭代，修复后重跑受影响场景 |
+| final-native-ui-smoke.json | 最终停止修复后的当前前端与重编原生组件实际导航/关闭/键盘恢复；不是独立 EXE GUI 或原生焦点按键检查 |
+| native-protocol.json / native-protocol-stop-baseline.json | 最终 11 项直接 Windows BrowserHost API 检查通过，真实初始化取消、后台加载与显式选择、非法地址、12 页上限、空白页、最后关闭和 dispose；保留停止失败基线，最终进程正常退出 0 |
+| closed-tabs.tap / closed-tabs.test.mjs | 7 项：owner 隔离、异步去重、后续关闭不被误消费、失败重试、移除/重建 owner、有限无正文描述和混合位置 |
+| regression.tap | 当前后台 119 项核心回归，fail 0；之后只修改 Windows 原生停止处理，没有重复宣称后台重跑 |
+| failure-notes.md、component-events-*-fixture.jsonl、BrowserHost-before-stop-fix.cs | 保留真实失败及准备工具错误：CJS 顶层 await/file URL 打包、archive.prepare 缺失、模型返回结构、地址栏角色选择器；这些失败不计为通过 |
+| QQClaw-0.3.27-restore-menu-cua.jpg | 已查看白底黑灰的实际前端菜单截图，展示隔离数据；不是正式 EXE 截图或官方自动浏览 |
+| candidate-source-match.json / cloud-source-match.json / candidate-payload.json | 57 份代码/样式/页面/版本/工作流与候选构建副本逐字节相同，与云 head 按换行规范化匹配；成品内嵌主资源另行检查 |
+| mac-build.json | 成功 run、原始执行 PASS、摘要、ZIP CRC、唯一 DMG 及 UDIF 校验 |
+
+本轮没有向原微信账户/原会话发送测试消息，没有运行模型或借用开发聊天浏览器身份。CUA 页面只作产品前端验证，环境/模型门禁为隔离夹具；真实原生网页由当前 Windows BrowserHost 执行。没有将其写成完整独立 EXE GUI、原生网页焦点下的新快捷键实测、官方扩展或线上微信验收。此前 0.3.26 的 341 项不是本轮新检查。
+
+[Mac 云构建 41237546213](https://github.com/mumuhaha487/wechatclaw/actions/runs/41237546213) 成功，代码 ba4c21c9e6cbe0c22d96427b1ffd71b4720e20d5，artifact 13055677654。读取实际 **31 条 PASS**，排除脚本源码回显。新增恢复状态竞争、AppKit ⌘⇧T 及门禁/派发、真实 WKWebView 空白/URL 后台恢复、显式选择、非法地址拒绝和最后关闭；保留双架构/签名/系统库、DMG 挂载/安装、下载/历史/弹窗、后台/加密/附件/重启等既有云检查。组件菜单派发不是实机可信按键。既有 Swift5 隔离警告保留，未 Apple 公证。
+
+ZIP SHA-256 E768C087A811ED766C978BFF6AAD7D76D9FBA6C34DAB56CBF9D0A852699A0609 与上传 digest 一致；CRC、唯一 DMG 条目及 UDIF koly 尾通过。旧包和加密数据备份在 replacement-v0327，项目仍只有一个 EXE 和一个 DMG。Windows 运行中的正式程序尚待正常退出；已发送手动退出请求，因为当前浏览器工具说明原生桌面控制禁用，不能代替用户点击退出。既有更新授权保留，不是重新请求更新许可。
+
+| 成品 | 当前状态 | 大小 | SHA-256 |
+| --- | --- | --- | --- |
+| release/QQClaw.exe | 仍为 0.3.26，待正常退出后替换 | 671,744 | C251A31F3D7216934FAFC919A39786D8138A7CB4838572E1E0968DC876BAA085 |
+| 项目外 build-root/release/QQClaw.exe | 0.3.27 Windows 候选 | 675,328 | 9CEBB5B6F1F2894EE8BE2A7B18469E21BC6F5417F337326F19B967D119041757 |
+| release/macos/QQClaw.dmg | 0.3.27 已更新 | 831,162 | 1FEA8CBCA1927764B93F37AB90AF43655BE5CC59F06CEDCA75797649EF9AB845 |
+
+替换前备份的保存状态为 1 个连接账户、1 条断开身份、3 会话/134 消息，保存的 busy/queued/pending 均为 0；数据只在内存中解密比较，不输出密钥。Windows 替换后的运行资源及数据比较尚未完成，不能把旧版比较结果写成本版结果。
+
+**整体目标仍未完成。** 官方 ChatGPT 扩展独立授权及微信触发自动浏览没有接通；关闭恢复只涵盖用户显式关闭的文件/网页，不跨重启，不保存整段网页历史/表单/POST，审阅/文件管理器工具页和网页自行关闭暂不进入该历史。全部主页 1:1、网页批注、完整 SPA/Cookie/站点权限、Mac 网页查找/完整产品键盘和中文输入法、Apple 公证及线上微信等仍有差异或未验收。本版只报告上述可核对的阶段进展，持续 goal 保持 active。
+
+<!-- end-qqclaw-0327 -->
