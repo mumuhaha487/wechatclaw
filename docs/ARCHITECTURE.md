@@ -1,4 +1,8 @@
-0.3.24 当前补充：白色为主、黑色为辅。`content-area` 内部拆成独立 conversation-pane 与工作面板，标题/提示条不再压低右侧网页，面板从主体顶部到底。默认宽度为窗口的 28.7%（受最小值/最大值及聊天剩余空间约束）；保存的主动宽度优先，双击分隔线清掉 panel-width 恢复比例。调宽、关闭/收起/展开和窄窗口覆盖仍走原生 viewport 同步，检查使用真实手动网页及全窗口截图，没有开放模型自动化接口。
+0.3.25 当前补充：Windows 新窗口事件通过 OpenWindow 建立与来源同一 CoreWebView2Environment 的未导航 WebView，设置 e.NewWindow 后 finally 只 Dispose deferral 一次；using+Complete 会重复结束并触发 0x8000000E，已在隔离环境复现后修正。统一 CloseTab 同时服务工具栏和网页 WindowCloseRequested。Mac newTab 接受 WebKit 的原始 WKWebViewConfiguration，createWebViewWith 返回新 WKWebView，禁止自行 load URL 破坏 POST/opener。两端都保留源页、会话资料和标签上限，不提供应用消息桥给网页。UI updateBrowserState 在原网页仍拥有选择时跟随新原生 activeTab；已关闭面板、文件/工具选择和其他会话不被抢占。
+
+Windows 原生 COM 异常在 Program.Main 注册的 FirstChanceException 观察器写入用户数据 logs/native.log，超过 1 MiB 轮换为 .1；保留完整堆栈，不修改默认异常处理。微信/Codex 后台、主 Store 和原生对话保存源码本轮未改。验证与交付见根目录 result.md 的 0.3.25。
+
+0.3.24 历史补充：白色为主、黑色为辅。`content-area` 内部拆成独立 conversation-pane 与工作面板，标题/提示条不再压低右侧网页，面板从主体顶部到底。默认宽度为窗口的 28.7%（受最小值/最大值及聊天剩余空间约束）；保存的主动宽度优先，双击分隔线清掉 panel-width 恢复比例。调宽、关闭/收起/展开和窄窗口覆盖仍走原生 viewport 同步，检查使用真实手动网页及全窗口截图，没有开放模型自动化接口。
 
 新 `ui/browser-history.mjs` 处理最多 6 项地址联想、全局记录管理、50 行分批、搜索/键盘/焦点及带确认的时间范围清除。`ui/app.mjs` 在成功历史导航前清空当前标签地址草稿，连接原生 browser.history RPC 与 browser-history revision 事件。Windows BrowserHistory 在顶层成功 NavigationCompleted 写访问，DocumentTitleChanged 更新现存记录；Mac 在 didFinish 写访问，以 title KVO 更新现存记录。只接受无凭据 HTTP(S)、移除 fragment、同 URL 最近一次、全局最多 500 URL。标题更新保留 ID/时间，不能复活已删除记录。
 

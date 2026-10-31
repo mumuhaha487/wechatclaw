@@ -1,6 +1,6 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-11-01。此文件供后续开发与独立审核使用。**当前源码、正式 Windows 程序与 Mac 安装包均为 0.3.24，已替换唯一同名成品，Windows 正常重启。最新网页框反馈已修正顶部对齐和默认比例，新增加密浏览记录/地址联想。最终 298 条 Windows UI/原生集成、本轮 119 项核心回归及 Mac 24 条检查通过；现有 1 个连接账户、1 条断开身份、3 会话/134 消息与 Provider 比较保留。白色为主、黑色为辅、整体亮色。官方扩展仍未接通，未达到全部目标，不能写成整体通过。** 下文历史交付记录不覆盖最新状态，成品/失败/限制见文末 0.3.24。
+更新时间：2026-11-01。此文件供后续开发与独立审核使用。**当前源码、正式 Windows 程序与 Mac 安装包均为 0.3.25，唯一同名成品已替换，Windows 已启动并核对实际运行资源。修复开发候选中复现的 0x8000000E（新窗口 deferral 重复结束），新窗口现在保留来源页、POST 与 opener。最终 319 条 Windows UI/原生集成、119 项核心回归、Mac 26 条实际检查通过；1 个连接账户、1 条断开身份、3 会话/134 消息及 Provider 比较保留。白色为主、黑色为辅、整体亮色，网页顶部对齐与默认 28.7% 比例继续有效。官方扩展仍未接通，不能写成整体通过。** 下文历史交付记录不覆盖最新状态，当前指纹/失败/限制见文末 0.3.25。
 
 ## 用户目标与不可替换的要求
 
@@ -651,3 +651,42 @@ Windows 替换前再次确认 busy/queued/pending 均为 0；只执行一次初�
 本轮官方接口调查继续但没有接通：[MCP Events](https://developers.openai.com/plugins/build/mcp-events) 适用 Work web、Desktop Work+Cloud、dots，需要认证 MCP 与 HTTPS 回调，未给本地 Codex 外部消息触发入口；[desktop-only 插件](https://developers.openai.com/plugins/deploy/desktop-only) 允许本地 stdio 工具，但未提供第三方宿主官方浏览器授权接口。allowlist 限制是正式目录提交，不是所有本地插件一律禁止。此前独立 browser-service 无宿主报告 `The browser access host is unavailable` 的结论没有改变。保存本轮官方资料，但没有借用当前开发聊天的私有令牌/管道/宿主身份，也没有换其他远控或云端替代方案充当完成。
 
 本阶段网页框比例和历史功能有两端交付，**整体目标仍未完成**：官方 ChatGPT 扩展授权/自动调用仍未接通；网页批注、完整站点权限/Cookie/SPA 历史和全部主页行为 1:1 仍有差异，复杂站点、Mac 完整产品实机/输入法/线上微信未验收。只报告上述实际检查通过，不把手动浏览、夹具、进程存在或其他远控当作官方扩展成功。持续 goal 保持 active。
+
+## 0.3.25 真实新标签与 0x8000000E 修复
+
+用户新增截图为 Windows 未处理异常“在意外的时间调用了方法”，HRESULT 0x8000000E。读取现场时已无 QQClaw 进程、旧后端日志没有原生堆栈，不能凭截图倒推出运行成品指纹。随后在本轮未交付的 0.3.25 开发候选中复现同码：第一次链接新窗口能打开，关闭后第二次原生点击被模态异常挡住。新增不干预异常流程的 COM FirstChanceException 日志，实际堆栈为 CoreWebView2Deferral.Dispose -> Complete -> ICoreWebView2Deferral.Complete。本轮候选同时使用 using 与显式 Complete，导致请求结束两次。现仅在 finally 内 Dispose 一次，捕获取消请求的完成异常，未通过关闭默认异常弹窗或忽略未处理异常来伪造通过。根因日志保存于项目外 reproduced-0x8000000E.log，完整失败说明见 failure-notes.md。
+
+主页浏览交互继续补齐：网页 target=_blank / window.open 现在创建真实新原生标签，保留源页面，不再简单拿 URL 导航覆盖源页；支持 POST 表单请求体、opener、命名窗口复用、about:blank 后导航、页面 window.close。Windows 使用源页同一 CoreWebView2Environment，初始化后交回 e.NewWindow；Mac 接受 WebKit 原始 WKWebViewConfiguration 并返回新 WKWebView，由浏览器继续原始请求。关闭来源不误关已建立的新页；关闭最后一页不会重建幽灵标签。每会话仍最多 12 页，其他会话不继承资料；禁止不支持的 file/应用内部 URL，按引擎用户激活规则拦截无手势弹窗。网页不获得 QQClaw 应用消息桥。面板状态只在原浏览器选中时跟随新 activeTab，不抢文件/工具、其他会话或重开关闭的面板。
+
+代码索引：native/BrowserHost.cs 的 NewTab/OpenWindow/CloseTab/EnsureReady/NewWindowRequested/WindowCloseRequested；native/macos/BrowserHost.swift 的 newTab(configuration:)/closeTab/createWebViewWith/webViewDidClose；ui/app.mjs 的 updateBrowserState；native/Program.cs 的 COM 日志观察器；.github/workflows/macos.yml 的真实 WebKit 组件检查。logs/native.log 写入独立用户数据目录，超过 1 MiB 轮换为 .1，不改变默认异常处理。微信/Codex 后台、主存储和原生对话归档源码本轮未改，backend.cjs 摘要仍为 25AE1A12BA8B268FA94E4A0190518E9E70EA345127C1EBD42D9C6200A4213A09。
+
+所有测试、依赖、截图、失败及备份在项目外 `C:\Users\admin\AppData\Local\Temp\qqclaw-v0325-20261101`：
+
+| 证据 | 本轮最终候选实际覆盖 |
+| --- | --- |
+| popup-ui.mjs/.log/.json、click-native.ps1 | 21 条：真实 Win32 点击链接/脚本新窗口、源页保留、opener/noopener、命名复用、POST 实际方法/请求体、about:blank、页面关闭、非法/无近期手势弹窗、跨会话 Cookie 隔离、后台关闭、关闭面板不重开、关闭来源/最后页、12 页上限、消息/草稿保留；进程正常退出 0 |
+| post-popup-native-check.json | 正常退出后隔离数据无 native.log，即该完整流程未记录 COM 异常，不只看状态或进程存在 |
+| panel-proportion-ui.json | 27 条：六档真实窗口的顶部/全高/28.7% 比例、拖动键盘宽度、双击恢复、跨重启保留、展开还原和关闭；截图 QQClaw-0.3.25-light-proportions.png 已查看 |
+| history-ui.json | 47 条：真实历史、地址建议、导航/标题/持久保存、范围清除、故障保留与边界 |
+| download-storage-ui.json / downloads-ui.json / download-edge-*.json | 7+32+4+3+3 条：真实下载、关闭源页仍完成、取消、完整文件字节、写入冲突/损坏/目的地异常 |
+| appearance-ui / tab-actions-ui / search-ui / conversation-ui / layout-ui 的 JSON | 26+44+60+32+13 条亮色、图片边界、混合标签操作、搜索、长消息与布局保存回归 |
+| regression.tap | 本轮实际 119 项核心回归通过，fail 0 |
+| candidate-source-match.json / cloud-source-match.json | 当前 62 份代码/样式/资源/构建文件与 Windows 候选逐字节一致；与成功 Mac head 按换行规范化一致 |
+| mac-build.json / verification-summary.json / runtime-audit.json / final-delivery.json | 云结果/指纹、最终检查汇总、正式运行内嵌资源与实际后台来源、交付数据比较 |
+
+最终 13 份 Windows 检查 JSON 均晚于最终 build.json，合计 **319 条**，未捕获前端错误均为空。全部检查使用隔离 DPAPI 数据、本地 HTTP 夹具，未向原微信账户或会话发测试消息，没有运行模型；本轮新标签的真实鼠标检查不等于官方扩展已接通。此前已经通过的比例套件不因历史辅助文件遗漏而重复跑；修复外部 helper 后完整重跑失败及后续套件。脚本结尾的正常退出 CDP 断开已正确处理并重跑，未将非零退出算通过。6500ms 无手势 timer 的用例明确等待实际尝试，150ms 继承短期激活的早期结果不冒充产品缺陷。其他早期失败/输入焦点证据见 failure-notes.md。
+
+Windows 替换前 busy/queued/pending 均为 0，初始加密状态/旧 EXE/旧 DMG 已在 replacement-v0325 保存。正式程序读取时已退出，替换同名 EXE 后正常启动。现有 1 个连接账户、1 条断开身份、3 会话/134 消息，账号及工作目录绑定、断开身份、原 threadId/逐条正文/时间、Provider URL/Key 比较均保留。没有擅自恢复既有断开身份。production-after 的比较证明替换保留，不等于线上微信/模型端到端验收。
+
+正式 Windows PID `155296`，运行资源 `C:\Users\admin\AppData\Local\QQClaw\app\3704D9A7B2AC5F2A`，.complete=0.3.25。runtime-audit.json 核对后台及所有主 UI/CSS/HTML 与成品内嵌资源一致，实际后台从该目录运行，样式/HTML 与当前源码一致。只保留一个 EXE 和一个 DMG。
+
+[最终 Mac 云构建 41227468490](https://github.com/mumuhaha487/wechatclaw/actions/runs/41227468490) 成功，代码 `e1166079cf58dfcedb8af0e599681166560c8184`，artifact `13051474677`，读取实际 **26 条 PASS**。包含双架构、签名/系统库检查、DMG 校验/只读挂载/安装复制、菜单/主题/后台、钥匙串/附件/布局/重启、审阅/冲突/回滚以及真实 WebKit 历史/新窗口/POST/命名窗口/页面关闭/下载。Mac 新窗口组件在隔离视图临时允许脚本弹窗驱动 delegate，不是可信鼠标或完整产品 GUI 验收；无手势策略另用页面 timer。失败 run 41226018929 的错误是用携带宿主手势的 evaluateJavaScript 充当无手势测试，产品编译已成功；改为页面 timer 后 run 41226768100 成功，最终 head 再构建的 41227468490 也成功。日志 ZIP 保留，不把失败计作通过。
+
+最终上传 ZIP SHA-256 `1D59ACB2E56DCB5AF67110AC1B15C0BD777D40BA5102E1F3A8CC9ECDEE2DECD9` 与 GitHub digest 一致，CRC、唯一 DMG 条目、UDIF koly 尾检查通过。旧 DMG 项目外备份后替换同名成品。
+
+| 唯一正式成品 | 大小 | SHA-256 |
+| --- | --- | --- |
+| release/QQClaw.exe | 667,648 bytes | 078D93B41D5F4BE885161A9AD30F2F2968350BC250E85496B36562A6EB0CBD22 |
+| release/macos/QQClaw.dmg | 819,715 bytes | 3739974888AB530AF78FE1338C6150600146ED33931E4E7C6D514902AB55B9C1 |
+
+本轮也重新查看官方 Browser/Chrome extension/app-server/remote Markdown（项目外 official-*.md）：仍未找到独立第三方宿主获取官方浏览器授权并由微信触发的公开接口，app-server requestAttestation 为客户端响应的 opaque token，不是自助签发接口。未借用当前开发聊天身份/令牌/管道，未换普通远控、其他扩展或自建 MCP 作为完成。**官方 ChatGPT 扩展自动浏览仍未接通；全部参考主页操作 1:1、网页批注、完整 SPA/Cookie/网站权限仍有差异，Mac 未 Apple 公证/用户整套 GUI/中文输入法/线上微信验收，Swift5 既有隔离警告不等于 Swift6 严格模式通过。整体目标保持 active，不能宣布整体完成。**

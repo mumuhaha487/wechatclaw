@@ -1,8 +1,16 @@
 # macOS 适配与对话保存
 
-2026-11-01，当前源码与两端正式成品 **0.3.24**，以白色为主、黑色为辅，整体亮色。Mac 原生窗口和 WebKit 初始使用 aqua/白底，动态主题同步及主动选色保存继续保留。文件与手动网页共用右侧标签栏，按会话及目录隔离；Mac 原生状态同样提供单调 revision。混合标签和文件阅读位置仅在进程内，普通布局偏好现保存至加密 Store 并跨重启恢复；网站登录态仍未保证跨重启。已发送对话和当前任务审阅的加密保存机制不变。官方 ChatGPT 扩展自动调用尚未完成，微信/QQClaw 的自动浏览器任务会如实报告无法完成。最新验收、源码及成品指纹见根目录 `result.md`；下方早期交付记录保留为历史，不能作为当前官方插件成功的证据。
+2026-11-01，当前源码与两端正式成品 **0.3.25**，以白色为主、黑色为辅，整体亮色。Mac 原生窗口和 WebKit 初始使用 aqua/白底，动态主题同步及主动选色保存继续保留。文件与手动网页共用右侧标签栏，按会话及目录隔离；Mac 原生状态同样提供单调 revision。混合标签和文件阅读位置仅在进程内，普通布局偏好现保存至加密 Store 并跨重启恢复；网站登录态仍未保证跨重启。已发送对话和当前任务审阅的加密保存机制不变。官方 ChatGPT 扩展自动调用尚未完成，微信/QQClaw 的自动浏览器任务会如实报告无法完成。最新验收、源码及成品指纹见根目录 `result.md`；下方早期交付记录保留为历史，不能作为当前官方插件成功的证据。
 
-## 0.3.24 当前安装包与浏览记录
+## 0.3.25 当前安装包与网页新窗口
+
+唯一 release/macos/QQClaw.dmg，819,715 bytes，SHA-256 `3739974888AB530AF78FE1338C6150600146ED33931E4E7C6D514902AB55B9C1`。[云构建 41227468490](https://github.com/mumuhaha487/wechatclaw/actions/runs/41227468490) 成功，代码 `e1166079cf58dfcedb8af0e599681166560c8184`，实际 26 条 PASS。下载 ZIP 摘要与 GitHub upload digest 一致，CRC、唯一 DMG 条目及 UDIF koly 尾核查通过，云端完成双架构/签名检查、DMG 校验与只读挂载/安装复制、原生后台及数据重启检查。
+
+WebKit 新窗口由 createWebViewWith 接受原始 configuration，返回真实新 WKWebView，保留源页、POST 请求体、opener 和命名窗口复用；webViewDidClose 关闭对应标签。默认关闭脚本自动弹窗。云组件仅在隔离视图中临时允许脚本弹窗以驱动 delegate，不是可信鼠标或完整产品 GUI 检查；无手势弹窗使用网页 timer，不能用携带宿主手势的 evaluateJavaScript 冒充无手势。
+
+用户截图的 Windows 0x8000000E 在开发候选中复现为 WebView2 deferral 重复结束，已修复；Mac 不使用这套 deferral。原对话保存、独立用户数据和钥匙串策略不变。尚未 Apple 公证或用户 Mac 完整 GUI/输入法/线上微信验收，官方扩展自动浏览仍未接通。
+
+## 0.3.24 历史安装包与浏览记录
 
 唯一 `release/macos/QQClaw.dmg`，817,113 bytes，SHA-256 `E04D6507F9683C8E698AD680C2A44D09C2543C2C61B9C521315FDDCE755B0869`。[云构建 41223051740](https://github.com/mumuhaha487/wechatclaw/actions/runs/41223051740) 成功，代码 `ea341c16895c120a19e782ed56dfae376edc8714`，实际 24 条 PASS。上传 ZIP 摘要匹配、CRC、唯一 DMG 条目和 UDIF 尾检查通过。两次先前失败 run 及修正见 result.md，不能计为成功证据。
 
