@@ -586,6 +586,11 @@ jobs:
                       _ = try await control("selectTab", ["tabId":concurrentA.id])
                       let heldA = Task { @MainActor in try await control("open", ["tabId":concurrentA.id,"url":fixture + "slow-page?a"]) }
                       try await awaitSlowPages(1)
+                      let pendingURLState = try await control("state") as! [String: Any]
+                      let pendingHistory = browser.history.state()["items"] as! [[String: Any]]
+                      guard pendingURLState["url"] as? String == fixture + "slow-page?a", pendingURLState["loading"] as? Bool == true,
+                            !pendingHistory.contains(where: { $0["url"] as? String == fixture + "slow-page?a" }) else { throw failure("Pending address was lost or recorded as an actual visit") }
+                      print("PASS: pending WKWebView address is displayed while its unvisited URL stays out of browsing history")
                       let selectStart = Date()
                       let selectedB = try await control("selectTab", ["tabId":concurrentB.id]) as! [String: Any]
                       guard Date().timeIntervalSince(selectStart) < 0.7, selectedB["activeTab"] as? String == concurrentB.id, concurrentA.web.isLoading else { throw failure("Slow page blocked native tab selection") }

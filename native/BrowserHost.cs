@@ -127,7 +127,7 @@ internal sealed class BrowserHost {
         // redirect queued work into a different page.
         if (target == null && action == "open") target = NewTab(session);
         if (target == null) throw new Exception("没有打开的标签页，请先打开网页。");
-        int revision = new [] { "open", "back", "forward", "reload" }.Contains(action) ? target.BeginNavigation() : target.OperationRevision;
+        int revision = new [] { "open", "back", "forward", "reload" }.Contains(action) ? target.BeginNavigation(action == "open" ? Value(p, "url") : "") : target.OperationRevision;
         Task interrupted = target.OperationInterruption;
         Layout(); Publish(session, action == "open" && session.Active == target);
         await target.Serial.WaitAsync();
@@ -170,8 +170,8 @@ internal sealed class BrowserHost {
     private object State(BrowserSession s, bool reveal) {
         var tab = s.Active;
         return new { owner = s.Owner, revision = ++s.Revision, reveal = reveal, activeTab = tab == null ? "" : tab.Id,
-            tabs = s.Tabs.Select(t => new { id = t.Id, title = t.Title, url = t.Url, loading = t.Loading }).ToArray(),
-            url = tab == null ? "" : tab.Url, title = tab == null ? "" : tab.Title, loading = tab != null && tab.Loading,
+            tabs = s.Tabs.Select(t => new { id = t.Id, title = t.Title, url = t.DisplayUrl, loading = t.Loading }).ToArray(),
+            url = tab == null ? "" : tab.DisplayUrl, title = tab == null ? "" : tab.Title, loading = tab != null && tab.Loading,
             canGoBack = tab != null && tab.CanGoBack, canGoForward = tab != null && tab.CanGoForward, error = tab == null ? "" : tab.Error };
     }
     private void Publish(BrowserSession session, bool reveal) { if (!session.Disposed) notify(State(session, reveal)); }
@@ -284,6 +284,8 @@ internal sealed class BrowserTab {
     internal bool Loading;
     internal string Error = "";
     internal string Url { get { return Web.CoreWebView2 == null || Web.CoreWebView2.Source == "about:blank" ? "" : Web.CoreWebView2.Source; } }
+    private string requestedUrl = "";
+    internal string DisplayUrl { get { return Loading && requestedUrl != "" ? requestedUrl : Url; } }
     internal string Title { get { return Web.CoreWebView2 == null || String.IsNullOrEmpty(Web.CoreWebView2.DocumentTitle) ? "新标签页" : Web.CoreWebView2.DocumentTitle; } }
     internal bool CanGoBack { get { return Web.CoreWebView2 != null && Web.CoreWebView2.CanGoBack; } }
     internal bool CanGoForward { get { return Web.CoreWebView2 != null && Web.CoreWebView2.CanGoForward; } }
@@ -352,14 +354,14 @@ internal sealed class BrowserTab {
         Web.CoreWebView2.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e) {
             NavigationId = e.NavigationId;
             if (e.Uri != "about:blank" && !BrowserHost.Allowed(e.Uri)) { e.Cancel = true; Error = "已阻止不支持的链接。"; }
-            else { Loading = true; Error = ""; downloadNavigation = false; }
+            else { Loading = true; requestedUrl = e.Uri == "about:blank" ? "" : e.Uri; Error = ""; downloadNavigation = false; }
             changed();
         };
         Web.CoreWebView2.NavigationCompleted += async delegate(object sender, CoreWebView2NavigationCompletedEventArgs e) {
             if (!e.IsSuccess && !stopping) await Task.Delay(200);
             if (Web.IsDisposed || e.NavigationId != NavigationId) return;
             if (e.IsSuccess && !closed && !downloadNavigation) history.Visit(Url, Title);
-            Loading = false; Error = e.IsSuccess || stopping || downloadNavigation ? "" : "网页未能加载：" + e.WebErrorStatus; changed();
+            Loading = false; requestedUrl = ""; Error = e.IsSuccess || stopping || downloadNavigation ? "" : "网页未能加载：" + e.WebErrorStatus; changed();
         };
         Web.CoreWebView2.SourceChanged += delegate { changed(); };
         Web.CoreWebView2.DocumentTitleChanged += delegate { if (!Loading && !closed && !downloadNavigation) history.UpdateTitle(Url, Title); changed(); };
@@ -394,13 +396,13 @@ internal sealed class BrowserTab {
                 if (e.Cancel) navigation.TrySetException(new Exception(Error));
                 else navigation.TrySetResult(false);
             }
-            Loading = false; changed();
+            Loading = false; requestedUrl = ""; changed();
         };
     }
     internal void Close() { if (closed) return; Stop(); closed = true; closedSignal.TrySetResult(true); findRevision++; findOpen = false; findInterrupted.TrySetResult(true); Web.Visible = false; Web.Bounds = new Rectangle(-2000, 0, 1000, 760); ReleaseDownloadView(); }
     internal void ReleaseDownloadView() { if (closed && !downloads.Active(Id) && !Web.IsDisposed) Web.Dispose(); }
-    internal void Stop() { stopping = true; OperationRevision++; operationInterrupted.TrySetResult(true); if (!Web.IsDisposed && Web.CoreWebView2 != null) Web.CoreWebView2.Stop(); Loading = false; changed(); }
-    internal int BeginNavigation() { Stop(); operationInterrupted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously); return OperationRevision; }
+    internal void Stop() { stopping = true; OperationRevision++; operationInterrupted.TrySetResult(true); if (!Web.IsDisposed && Web.CoreWebView2 != null) Web.CoreWebView2.Stop(); Loading = false; requestedUrl = ""; changed(); }
+    internal int BeginNavigation(string url) { Stop(); operationInterrupted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously); requestedUrl = url; Loading = true; Error = ""; return OperationRevision; }
     private async Task<bool> Navigate(Action action, Task interrupted) {
         var result = new TaskCompletionSource<bool>();
         navigation = result; downloadNavigation = false;

@@ -131,8 +131,8 @@ private struct BrowserHistoryRecord: Codable {
         let tab = session.active
         session.revision += 1
         return ["owner": session.owner, "revision": session.revision, "reveal": reveal, "activeTab": tab?.id ?? "",
-                "tabs": session.tabs.map { ["id": $0.id, "title": $0.web.title ?? "新标签页", "url": $0.url, "loading": $0.web.isLoading] as [String: Any] },
-                "url": tab?.url ?? "", "title": tab?.web.title ?? "", "loading": tab?.web.isLoading ?? false,
+                "tabs": session.tabs.map { ["id": $0.id, "title": $0.web.title ?? "新标签页", "url": $0.displayURL, "loading": $0.loading] as [String: Any] },
+                "url": tab?.displayURL ?? "", "title": tab?.web.title ?? "", "loading": tab?.loading ?? false,
                 "canGoBack": tab?.web.canGoBack ?? false, "canGoForward": tab?.web.canGoForward ?? false, "error": tab?.errorText ?? ""]
     }
     func focusedPage() -> BrowserWindow? {
@@ -226,7 +226,7 @@ private struct BrowserHistoryRecord: Codable {
         if action == "open" && !Self.allowed(p["url"] as? String ?? "") { throw failure("浏览器仅支持 HTTP/HTTPS 网页。") }
         if target == nil && action == "open" { target = try newTab(session) }
         guard let tab = target else { throw failure("没有打开的标签页，请先打开网页。") }
-        let revision = ["open", "back", "forward", "reload"].contains(action) ? tab.beginNavigation() : tab.operationRevision
+        let revision = ["open", "back", "forward", "reload"].contains(action) ? tab.beginNavigation(action == "open" ? p["url"] as? String ?? "" : "") : tab.operationRevision
         let previous = operations[tab.id]
         tab.queueRevision += 1
         let queueRevision = tab.queueRevision
@@ -261,6 +261,9 @@ private struct BrowserHistoryRecord: Codable {
     var closed = false, downloadNavigation = false
     var errorText = ""
     var url: String { web.url?.absoluteString == "about:blank" ? "" : web.url?.absoluteString ?? "" }
+    private var requestedURL = ""
+    var loading: Bool { !requestedURL.isEmpty || web.isLoading }
+    var displayURL: String { !requestedURL.isEmpty ? requestedURL : url }
     var observations: [NSKeyValueObservation] = []
     var navigation: CheckedContinuation<Void, Error>?, navigationToken: UUID?
     var currentNavigation: WKNavigation?, awaitedNavigation: WKNavigation?
@@ -298,10 +301,10 @@ private struct BrowserHistoryRecord: Codable {
         operationRevision += 1
         for request in [currentNavigation, awaitedNavigation].compactMap({ $0 }) where !retiredNavigations.contains(where: { $0 === request }) { retiredNavigations.append(request) }
         if retiredNavigations.count > 64 { retiredNavigations.removeFirst(retiredNavigations.count - 64) }
-        currentNavigation = nil; finishNavigation(.failure(failure("浏览器操作已停止。")))
+        currentNavigation = nil; requestedURL = ""; finishNavigation(.failure(failure("浏览器操作已停止。")))
         operationCompletion?(); web.stopLoading(); changed()
     }
-    func beginNavigation() -> Int { stop(); return operationRevision }
+    func beginNavigation(_ url: String) -> Int { stop(); requestedURL = url; errorText = ""; return operationRevision }
     func close() { guard !closed else { return }; stop(); closed = true; retiredNavigations.removeAll(); findRevision += 1; findOpen = false; findCanStep = false; findCompletion?(); web.isHidden = true; releaseDownloadView() }
     func releaseDownloadView() {
         if closed && !downloads.active(id) { observations.removeAll(); web.navigationDelegate = nil; web.uiDelegate = nil; web.removeFromSuperview() }
@@ -327,6 +330,7 @@ private struct BrowserHistoryRecord: Codable {
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard !closed, let navigation, currentNavigation === navigation else { return }
+        requestedURL = ""
         if !closed && !downloadNavigation { history.visit(url, title: web.title ?? "") }
         errorText = ""; finishNavigation(.success(())); changed()
     }
@@ -337,11 +341,13 @@ private struct BrowserHistoryRecord: Codable {
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         guard !closed, let navigation, currentNavigation === navigation else { return }
         if downloadPolicyError(error) { return }
+        requestedURL = ""
         errorText = error.localizedDescription; finishNavigation(.failure(error)); changed()
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         guard !closed, let navigation, currentNavigation === navigation else { return }
         if downloadPolicyError(error) { return }
+        requestedURL = ""
         errorText = error.localizedDescription; finishNavigation(.failure(error)); changed()
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -357,7 +363,7 @@ private struct BrowserHistoryRecord: Codable {
         decisionHandler(downloadNavigation ? .download : .allow)
     }
     func becameDownload(_ download: WKDownload) {
-        downloadNavigation = true; errorText = ""; downloads.start(download, source: self, owner: owner)
+        downloadNavigation = true; requestedURL = ""; errorText = ""; downloads.start(download, source: self, owner: owner)
         finishNavigation(.success(())); changed()
     }
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { becameDownload(download) }
