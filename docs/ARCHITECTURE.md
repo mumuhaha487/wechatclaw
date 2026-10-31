@@ -1,3 +1,5 @@
+0.3.14 补充：backend/checkpoints.mjs 保存加密文件快照和恢复事务；shared/change-stats.mjs 提供真实行数。backend/app.mjs 管理工作目录锁、checkpoint.review/restore RPC、重启恢复和后续 Codex 上下文。ui/app.mjs 显示更改卡片和消息对应的前后文件内容，详情及限制见 result.md。
+
 0.3.13 补充：默认深色黑白，appearanceVersion=3 仅迁移一次；window.theme 同步两端原生窗口外观，图片预览以弹窗实际剩余空间约束，详情见 result.md。
 
 0.3.12 补充：桌面附件由 backend/desktop-attachments.mjs 保存到用户数据目录；UI 附件预览与应用导航拆分为 ui/attachments.mjs、ui/navigation.mjs。草稿仅在当前进程内保留，已发送消息继续走加密状态和原生 Codex 历史。官方扩展限制未解除，详情见 result.md。

@@ -34,6 +34,8 @@ const paths = {
   minus: '<path d="M5 12h14"/>',
   maximize: '<rect x="5" y="5" width="14" height="14" rx="1"/>',
   back: '<path d="m14 6-6 6 6 6"/>',
+  undo: '<path d="m9 4-6 6 6 6M3 10h11a7 7 0 0 1 0 14" transform="translate(1 -2) scale(.9)"/>',
+  redo: '<path d="m9 4-6 6 6 6M3 10h11a7 7 0 0 1 0 14" transform="translate(23 -2) scale(-.9 .9)"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   copy: '<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/>',
   trash: '<path d="M4 6h16m-13 0 1 15h8l1-15M9 6V3h6v3m-5 4v7m4-7v7"/>',

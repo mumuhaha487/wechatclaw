@@ -89,10 +89,12 @@ export class Store {
       session.queued = 0;
       if (session.busy) {
         session.busy = false;
+        if (session.runStats?.checkpoint) session.runStats.checkpoint = { status: "unavailable", reason: "应用中断时未完成任务结束快照，本轮撤销不可用。" };
         session.messages.push({
           role: "system",
           text: "上次任务随应用关闭而中断。请检查工作目录后决定是否继续。",
           at: new Date().toISOString(),
+          ...(session.runStats ? { runStats: structuredClone(session.runStats) } : {}),
         });
       }
     }

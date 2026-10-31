@@ -12,6 +12,7 @@ import { sameWorkspace, workspaceKey } from "../shared/workspace.mjs";
 import { contextSnapshot } from "../shared/context-usage.mjs";
 import { AttachmentPreviews } from "./attachments.mjs";
 import { NavigationHistory } from "./navigation.mjs";
+import { groupChanges } from "../shared/change-stats.mjs";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -151,6 +152,9 @@ const ui = {
   notifications: [],
   panelPage: ["browser", "files", "review"].includes(viewStorage.getItem("panel-page")) ? viewStorage.getItem("panel-page") : "",
   panelData: null,
+  reviewTarget: null,
+  checkpointBusy: new Set(),
+  checkpointErrors: new Map(),
   panelSeq: 0,
 };
 const efforts = [
@@ -504,7 +508,7 @@ function sidebar() {
     ) +
     ib("history", "会话历史", "clock") +
     ib("notifications", "通知", "bell") +
-    '<button class="version" data-action="about">v0.3.13</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v0.3.14</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -526,12 +530,27 @@ function messageView(m, index, s) {
   }).join("");
   const assistant = m.role === "assistant" && m.kind !== "progress";
   const time = m.at && !Number.isNaN(Date.parse(m.at)) ? `<time datetime="${esc(m.at)}" title="${esc(new Date(m.at).toLocaleString())}">${esc(new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time>` : "";
-  const changes = m.runStats?.changes || [];
   return `<article class="message ${m.role}${m.kind === "progress" ? " progress-message" : ""}">
     ${m.kind === "progress" ? '<div class="progress-label">过程进度</div>' : assistant && m.runStats ? runSummary(m.runStats, `${s.id}-${index}`) : ""}
     ${m.role === "user" ? attachments : ""}<div class="message-content">${m.role === "assistant" ? markdown(m.text) : esc(m.text)}</div>${m.role === "user" ? "" : attachments}
-    ${changes.length ? `<details class="change-card" data-detail-key="${s.id}-${index}-changes"><summary>${icon("review")}<strong>已修改 ${new Set(changes.map(c => c.path)).size} 个文件</strong>${icon("down")}</summary><div class="change-list">${changes.map((c, ci) => `<details class="changed-file" data-detail-key="${s.id}-${index}-change-${ci}"><summary><span class="ellipsis" title="${esc(c.path)}">${esc(c.path)}</span><span>${esc({ add: "新增", delete: "删除", update: "修改" }[c.kind] || "修改")}</span></summary><pre>${esc(c.diff || "本次事件未提供补丁内容。")}</pre></details>`).join("")}</div><button data-action="panel-review">查看工作区更改${icon("external")}</button></details>` : ""}
+    ${changeCard(m, index, s)}
     ${assistant ? `<div class="message-actions">${ib("copy-message", "复制回复", "copy", `data-index="${index}"`)}${ib("message-menu", "回复菜单", "more", `data-id="${index}"`)}${time}<span class="message-model" title="${esc(s.model || "Codex")}">${esc(s.model || "Codex")}</span></div>` : ""}</article>`;
+}
+function changeCard(message, index, s) {
+  const changes = groupChanges(message.runStats?.changes), cp = message.runStats?.checkpoint;
+  if (!changes.length && (!cp || cp.status === "empty")) return "";
+  const key = `${s.id}:${index}`, busy = ui.checkpointBusy.has(key) || cp?.status === "applying";
+  const recovering = ["applying", "recovery-needed"].includes(cp?.status);
+  const available = cp?.id && ["ready", "undone", "applying", "recovery-needed"].includes(cp.status);
+  const attrs = `data-session="${esc(s.id)}" data-message="${index}"`;
+  const row = (c, i) => {
+    const stats = c.stats ? `<span class="change-added">+${c.stats.added}</span><span class="change-removed">−${c.stats.removed}</span>` : `<span class="change-kind">${esc({ add: "新增", delete: "删除", update: "修改" }[c.kind] || "修改")}</span>`;
+    const label = `<span class="ellipsis" title="${esc(c.path)}">${esc(c.relative || c.path)}</span><span class="change-counts">${stats}</span>`;
+    return available ? `<button class="change-file-row" data-action="checkpoint-view" ${attrs} data-relative="${esc(c.relative || "")}">${label}</button>` : `<details class="changed-file" data-detail-key="${key}-change-${i}"><summary>${label}</summary><pre>${esc(c.diffs?.join("\n\n") || c.diff || "本次任务未提供可显示的补丁。")}</pre></details>`;
+  };
+  const direction = recovering ? "recover" : cp?.status === "undone" ? "redo" : "undo";
+  const label = recovering ? "恢复操作前状态" : direction === "redo" ? "重新应用" : "撤销";
+  return `<section class="change-card"><div class="change-card-heading">${icon("review")}<div class="grow"><strong>${changes.length ? `已${cp?.status === "undone" ? "撤销" : "更改"} ${changes.length} 个文件` : "文件快照不可用"}</strong><span class="change-card-caption">${cp?.status === "undone" ? "文件已恢复到任务开始前" : "任务期间检测到的文件更改"}</span></div>${available ? `<button class="change-restore" data-action="checkpoint-restore" title="恢复本轮开始前或结束后的文件；包括任务期间其他程序产生的更改。任务结束后的新修改会拒绝覆盖。" ${attrs} data-direction="${direction}" ${busy && !recovering || ui.checkpointBusy.has(key) || s.busy || s.queued ? "disabled" : ""}>${esc(label)}${icon(direction === "redo" ? "redo" : "undo")}</button><button class="change-view" data-action="checkpoint-view" ${attrs}>查看更改</button>` : ""}</div>${changes.length ? `<div class="change-list">${changes.slice(0, 3).map(row).join("")}${changes.length > 3 ? `<details class="more-changes" data-detail-key="${key}-more"><summary>再显示 ${changes.length - 3} 个文件${icon("down")}</summary>${changes.slice(3).map((c, i) => row(c, i + 3)).join("")}</details>` : ""}</div>` : ""}${cp?.reason || ui.checkpointErrors.has(key) ? `<p class="change-card-note" role="status">${esc(ui.checkpointErrors.get(key) || cp.reason)}</p>` : ""}${recovering || busy ? `<p class="change-card-note" role="status">${ui.checkpointBusy.has(key) ? "正在处理文件，请稍候…" : "上次文件操作未完成，请恢复操作前状态。"}</p>` : ""}</section>`;
 }
 function composer() {
   const s = session(),
@@ -815,13 +834,16 @@ function workPanel() {
           esc(ui.filePreview.text) +
           "</pre></div>"
         : "");
-  else
+  else if (ui.reviewTarget) {
+    const data = ui.panelData, display = (value, exists) => !exists ? '<p class="review-placeholder">此时文件不存在</p>' : value === null ? '<p class="review-placeholder">二进制文件或超过 256 KiB，不显示文本预览。</p>' : `<pre class="snapshot-source">${esc(value || "（空文件）")}</pre>`;
+    body = `<div class="checkpoint-review"><div class="review-note">本次任务快照 · ${data?.status === "undone" ? "已撤销" : "修改前后"}</div><div class="review-file-list">${(data?.files || []).map(c => `<button class="review-file${data.selected === c.relative ? " active" : ""}" data-action="checkpoint-file" data-relative="${esc(c.relative)}"><span class="ellipsis" title="${esc(c.relative)}">${esc(c.relative)}</span>${c.stats ? `<span class="change-counts">+${c.stats.added} −${c.stats.removed}</span>` : ""}</button>`).join("")}</div><div class="review-path">${esc(data?.selected)}</div><div class="review-columns"><section><h3>修改前</h3>${display(data?.before, data?.beforeExists)}</section><section><h3>修改后</h3>${display(data?.after, data?.afterExists)}</section></div></div>`;
+  } else
     body =
       '<div class="review-note">工作目录中的未提交更改</div><pre class="diff-preview">' +
       esc(ui.panelData?.diff || "当前没有未提交的更改。") +
       "</pre>";
   return (
-    '<aside class="work-panel' +
+    '<aside class="work-panel' + (ui.reviewTarget && ui.panelPage === "review" ? " review-panel" : "") +
     (ui.panelMax ? " maximized" : "") +
     '">' +
     header +
@@ -923,7 +945,7 @@ function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.13 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.14 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
@@ -1436,12 +1458,39 @@ async function action(name, element) {
     case "panel-review":
     case "panel-files":
     case "panel-browser":
+      invalidatePanel();
       ui.panelPage = name.slice(6);
       ui.panel = true;
       ui.filePreview = null;
       if (ui.panelPage === "browser") ui.browserHidden.delete(session()?.id);
       rememberPanel();
       return loadPanel();
+    case "checkpoint-view":
+      invalidatePanel();
+      ui.panel = true; ui.panelPage = "review";
+      ui.reviewTarget = { sessionId: element.dataset.session, message: Number(element.dataset.message), relative: element.dataset.relative || "" };
+      rememberPanel(); return loadPanel();
+    case "checkpoint-file":
+      if (!ui.reviewTarget) return;
+      ui.reviewTarget = { ...ui.reviewTarget, relative: element.dataset.relative };
+      return loadPanel();
+    case "checkpoint-restore": {
+      const params = { sessionId: element.dataset.session, message: Number(element.dataset.message), direction: element.dataset.direction };
+      const key = `${params.sessionId}:${params.message}`;
+      if (ui.checkpointBusy.has(key)) return;
+      ui.checkpointBusy.add(key); ui.checkpointErrors.delete(key); render();
+      try {
+        await rpc("checkpoint.restore", params);
+        toast(params.direction === "undo" ? "已撤销本次文件更改。" : params.direction === "redo" ? "已重新应用文件更改。" : "已恢复操作前状态。");
+      } catch (error) { ui.checkpointErrors.set(key, error.message); }
+      finally {
+        ui.checkpointBusy.delete(key);
+        try { state = await rpc("snapshot"); } catch (error) { toast(error.message); }
+        render();
+        if (ui.reviewTarget?.sessionId === params.sessionId && ui.reviewTarget.message === params.message) await loadPanel();
+      }
+      return;
+    }
     case "panel-refresh":
       return loadPanel();
     case "file-open": {
@@ -2284,7 +2333,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") document.querySelector(".context-menu")?.remove();
 });
 function panelContext() {
-  return JSON.stringify([ui.active, workspaceKey(session()?.workspace || project()?.workspace), ui.panelPage]);
+  return JSON.stringify([ui.active, workspaceKey(session()?.workspace || project()?.workspace), ui.panelPage, ui.reviewTarget]);
 }
 function invalidatePanel() {
   ui.panelSeq++;
@@ -2292,6 +2341,7 @@ function invalidatePanel() {
   ui.panelData = null;
   ui.filePreview = null;
   ui.panelError = "";
+  ui.reviewTarget = null;
 }
 async function loadPanel(directory = "") {
   const seq = ++ui.panelSeq, context = panelContext();
@@ -2312,8 +2362,8 @@ async function loadPanel(directory = "") {
   render();
   try {
     const data = await rpc(
-      ui.panelPage === "review" ? "workspace.diff" : "workspace.list",
-      { workspace, directory },
+      ui.panelPage === "review" ? ui.reviewTarget ? "checkpoint.review" : "workspace.diff" : "workspace.list",
+      ui.reviewTarget || { workspace, directory },
     );
     if (seq !== ui.panelSeq || context !== panelContext()) return;
     ui.panelData = data;

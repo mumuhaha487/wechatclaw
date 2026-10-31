@@ -341,7 +341,10 @@ export class CodexClient extends EventEmitter {
         additionalContext: { qqclaw_browser_requirement: {
           kind: "application",
           value: "本轮运行在 QQClaw 独立客户端。用户要求浏览器必须通过官方 ChatGPT 扩展调用，但本客户端尚未接通官方扩展的授权宿主。历史中的 qqclaw_browser 是已停用的自建工具，不是官方扩展。不要改用 Playwright、CDP、HTTP 抓取、自建 MCP 或其他远控来冒充完成浏览器任务，也不要借用其他会话的宿主身份。遇到浏览器要求请如实说明这项功能尚未完成，继续处理任务中独立且获授权的工作，不得声称浏览器已执行。",
-        } },
+        }, ...(session.fileRestore ? { qqclaw_file_restore: {
+          kind: "application",
+          value: `用户已在 QQClaw 中${session.fileRestore.direction === "undo" ? "撤销任务后的文件更改" : session.fileRestore.direction === "redo" ? "重新应用任务后的文件更改" : "恢复上次文件操作前的状态"}。时间：${session.fileRestore.at}。涉及路径：${JSON.stringify(session.fileRestore.files)}。聊天历史未回滚；请重新读取当前文件后继续，不能假定历史补丁仍在磁盘中。`,
+        } } : {}) },
         cwd: session.workspace,
         approvalPolicy: permissionPolicy(session.permission).approvalPolicy,
         ...(session.model ? { model: session.model } : {}),

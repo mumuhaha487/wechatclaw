@@ -16,6 +16,46 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Verify checkpoint files, permissions and rollback on macOS
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+          import assert from 'node:assert/strict';
+          import { Checkpoints } from './backend/checkpoints.mjs';
+          const temporary = await fs.mkdtemp(path.join(process.env.RUNNER_TEMP,'qqclaw-checkpoint-'));
+          const workspace = path.join(temporary,'workspace');
+          await fs.mkdir(workspace);
+          const native = async (method,{value}) => method === 'vault.encrypt' ? Buffer.from(value).toString('base64') : Buffer.from(value,'base64').toString();
+          const checkpoint = new Checkpoints(path.join(temporary,'data'),native);
+          const file = path.join(workspace,'a');
+          await fs.writeFile(file,'before\n',{mode:0o640});
+          const start = await checkpoint.begin(workspace);
+          assert.equal(start.status,'capturing');
+          await fs.writeFile(file,'after\n'); await fs.chmod(file,0o600);
+          await fs.writeFile(path.join(workspace,'new'),'created\n');
+          const result = await checkpoint.finish(start,workspace);
+          assert.equal(result.checkpoint.status,'ready');
+          assert.equal(result.changes.length,2);
+          await checkpoint.restore(start.id,workspace,'undo');
+          assert.equal(await fs.readFile(file,'utf8'),'before\n');
+          assert.equal((await fs.stat(file)).mode & 0o777,0o640);
+          await assert.rejects(fs.readFile(path.join(workspace,'new')),{code:'ENOENT'});
+          await new Checkpoints(path.join(temporary,'data'),native).restore(start.id,workspace,'redo');
+          assert.equal(await fs.readFile(file,'utf8'),'after\n');
+          assert.equal((await fs.stat(file)).mode & 0o777,0o600);
+          const write = checkpoint.write.bind(checkpoint); let count = 0;
+          checkpoint.write = async (...args) => { await write(...args); if (++count === 2) throw Error('injected write failure'); };
+          await assert.rejects(checkpoint.restore(start.id,workspace,'undo'),/已保留操作前/);
+          assert.equal(await fs.readFile(file,'utf8'),'after\n');
+          assert.equal(await fs.readFile(path.join(workspace,'new'),'utf8'),'created\n');
+          checkpoint.write = write;
+          await fs.writeFile(file,'external');
+          await assert.rejects(checkpoint.restore(start.id,workspace,'undo'),/发生变化/);
+          assert.equal(await fs.readFile(path.join(workspace,'new'),'utf8'),'created\n');
+          console.log('PASS: macOS checkpoint undo/redo, permissions, restart, rollback and external-edit conflict');
+          await fs.rm(temporary,{recursive:true,force:true});
+          NODE
       - run: npm run build:mac
       - name: Verify installer, native backend and encrypted data persistence
         run: |
