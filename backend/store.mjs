@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { parseActionBlocksSafe } from "./wechat-actions.mjs";
 import { ConversationArchive } from "./conversations.mjs";
 import { workspaceKey } from "../shared/workspace.mjs";
+import { reviewView } from "../shared/review-view.mjs";
 
 export const defaults = () => ({
   version: 2,
@@ -28,6 +29,7 @@ export const defaults = () => ({
   sessions: [],
   accounts: [],
   retainedAccounts: [],
+  reviewView: null,
 });
 
 export class Store {
@@ -98,6 +100,7 @@ export class Store {
         });
       }
     }
+    this.state.reviewView = reviewView(this.state.reviewView, this.state.sessions);
     return this;
   }
   save() {
@@ -143,6 +146,7 @@ export class Store {
   }
   snapshot() {
     const state = structuredClone(this.state);
+    state.reviewView = reviewView(state.reviewView, state.sessions);
     state.providers = state.providers.map(({ apiKey, ...p }) => ({
       ...p,
       hasKey: Boolean(apiKey),

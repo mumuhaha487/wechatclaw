@@ -23,6 +23,9 @@ jobs:
           import path from 'node:path';
           import assert from 'node:assert/strict';
           import { Checkpoints } from './backend/checkpoints.mjs';
+          import { Store } from './backend/store.mjs';
+          import { App } from './backend/app.mjs';
+          import { ConversationArchive } from './backend/conversations.mjs';
           const temporary = await fs.mkdtemp(path.join(process.env.RUNNER_TEMP,'qqclaw-checkpoint-'));
           const workspace = path.join(temporary,'workspace');
           await fs.mkdir(workspace);
@@ -54,6 +57,24 @@ jobs:
           await assert.rejects(checkpoint.restore(start.id,workspace,'undo'),/发生变化/);
           assert.equal(await fs.readFile(path.join(workspace,'new'),'utf8'),'created\n');
           console.log('PASS: macOS checkpoint undo/redo, permissions, restart, rollback and external-edit conflict');
+          const data = path.join(temporary,'review-data');
+          const archive = new ConversationArchive(path.join(temporary,'archive'));
+          const store = await new Store(data,native,{archive}).init();
+          const app = new App({directory:path.join(temporary,'data'),native,store});
+          const session = app.newSession({workspace,providerId:'local',permission:'auto'});
+          session.messages.push({role:'assistant',text:'checkpoint fixture',runStats:result});
+          const selection = {sessionId:session.id,workspace,message:0,checkpointId:start.id,relative:'a',open:false};
+          await app.handle('review.remember',{value:selection});
+          await app.close();
+          const reopened = await new Store(data,native,{archive}).init();
+          assert.deepEqual(reopened.state.reviewView,selection);
+          const resumed = new App({directory:path.join(temporary,'data'),native,store:reopened});
+          const reviewed = await resumed.handle('checkpoint.review',selection);
+          assert.equal(reviewed.before,'before\n'); assert.equal(reviewed.after,'after\n');
+          await assert.rejects(resumed.handle('checkpoint.review',{...selection,checkpointId:'replaced'}),/快照已变化/);
+          await resumed.handle('review.remember',{value:null}); await resumed.close();
+          assert.equal((await new Store(data,native,{archive}).init()).state.reviewView,null);
+          console.log('PASS: macOS persisted task/file review selection, closed panel, checkpoint identity and clearing');
           await fs.rm(temporary,{recursive:true,force:true});
           NODE
       - run: npm run build:mac

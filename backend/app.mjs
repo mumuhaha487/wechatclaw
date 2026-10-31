@@ -13,6 +13,7 @@ import { BrowserViewer, officialBrowserStatus } from "./browser.mjs";
 import { DesktopAttachments, attachmentPreview } from "./desktop-attachments.mjs";
 import { Checkpoints } from "./checkpoints.mjs";
 import { groupChanges } from "../shared/change-stats.mjs";
+import { reviewView } from "../shared/review-view.mjs";
 
 export const EFFORTS = [
   "",
@@ -405,6 +406,8 @@ export class App {
     const session = this.getSession(p.sessionId), index = Number(p.message);
     const message = Number.isInteger(index) && index >= 0 ? session.messages[index] : null;
     if (!message?.runStats?.checkpoint?.id) throw new Error("此消息没有可用的文件快照。");
+    if (p.checkpointId && p.checkpointId !== message.runStats.checkpoint.id)
+      throw new Error("此消息的文件快照已变化，请重新打开更改卡片。");
     return { session, message, id: message.runStats.checkpoint.id };
   }
   async restoreCheckpoint(p) {
@@ -572,6 +575,10 @@ export class App {
       }
       case "snapshot":
         return { ...this.store.snapshot(), wechat: this.bridge.status() };
+      case "review.remember":
+        state.reviewView = reviewView(p.value, state.sessions);
+        await this.store.save();
+        return { saved: true };
       case "checkpoint.review": {
         const { session, id } = this.checkpointMessage(p);
         return await this.checkpoints.review(id, session.workspace, String(p.relative || ""));

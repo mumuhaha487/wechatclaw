@@ -13,6 +13,7 @@ import { contextSnapshot } from "../shared/context-usage.mjs";
 import { AttachmentPreviews } from "./attachments.mjs";
 import { NavigationHistory } from "./navigation.mjs";
 import { groupChanges } from "../shared/change-stats.mjs";
+import { reviewView } from "../shared/review-view.mjs";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -153,6 +154,8 @@ const ui = {
   panelPage: ["browser", "files", "review"].includes(viewStorage.getItem("panel-page")) ? viewStorage.getItem("panel-page") : "",
   panelData: null,
   reviewTarget: null,
+  reviewHydrated: false,
+  reviewSignature: "null",
   checkpointBusy: new Set(),
   checkpointErrors: new Map(),
   panelSeq: 0,
@@ -508,7 +511,7 @@ function sidebar() {
     ) +
     ib("history", "会话历史", "clock") +
     ib("notifications", "通知", "bell") +
-    '<button class="version" data-action="about">v0.3.14</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v0.3.15</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -945,7 +948,7 @@ function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.14 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.15 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
@@ -970,6 +973,11 @@ function settings() {
     )}<button class="settings-back" data-action="return">${icon("back")}返回应用</button></aside><div class="settings-main"><div class="settings-titlebar" data-drag>${navigationButtons()}${windowButtons()}</div><main class="settings-content"><div class="settings-inner">${({ general: generalSettings, models: modelSettings, projects: projectSettings, runtime: runtimeSettings, about: aboutSettings }[ui.page] || generalSettings)()}</div></main></div></div>`;
 }
 function render() {
+  if (ui.reviewTarget && (ui.reviewTarget.sessionId !== ui.active || !reviewView(ui.reviewTarget, state.sessions))) {
+    invalidatePanel();
+    if (ui.panelPage === "review") ui.panelPage = "";
+  }
+  rememberReview();
   if (environmentReady()) {
     navigation.prune(location => !location.active || state.sessions.some(s => s.id === location.active));
     navigation.visit({ active: ui.active, project: ui.project, page: ui.page });
@@ -1138,7 +1146,7 @@ function renderOverlay() {
 function selectSession(id) {
   if (!state.sessions.some((s) => s.id === id)) return toast("该会话已不存在，请重新选择。");
   rememberDraft();
-  invalidatePanel();
+  if (ui.active !== id) invalidatePanel();
   ui.active = id;
   viewStorage.setItem("active-session", id);
   ui.overlay = "";
@@ -1189,6 +1197,20 @@ async function checkEnvironment(restart) {
       if (restart) await rpc("system.reload");
       const initial = await rpc("snapshot");
       state = initial;
+      if (!ui.reviewHydrated) {
+        const saved = reviewView(initial.reviewView, state.sessions);
+        if (saved) {
+          ui.active = saved.sessionId;
+          ui.project = saved.workspace;
+          ui.panel = saved.open;
+          ui.panelPage = "review";
+          ui.reviewTarget = saved;
+          viewStorage.setItem("active-session", ui.active);
+          rememberPanel();
+        }
+        ui.reviewSignature = JSON.stringify(saved);
+        ui.reviewHydrated = true;
+      }
       ui.login = initial.wechat?.login;
       ui.busyAccounts = initial.wechat?.busyAccounts || [];
       if (!state.sessions.some((s) => s.id === ui.active)) ui.active = state.sessions[0]?.id || "";
@@ -1212,6 +1234,7 @@ async function checkEnvironment(restart) {
   }
   if (!environmentReady()) { ui.overlay = ""; renderOverlay(); }
   render();
+  if (environmentReady() && ui.panel && ui.reviewTarget && !ui.panelData && !ui.panelLoading) await loadPanel();
 }
 async function updateComposer(change) {
   const s = session();
@@ -1454,7 +1477,9 @@ async function action(name, element) {
       ui.panel = true;
       ui.panelMax = !ui.panelMax;
       rememberPanel();
-      return render();
+      render();
+      if (ui.reviewTarget && !ui.panelData && !ui.panelLoading) return loadPanel();
+      return;
     case "panel-review":
     case "panel-files":
     case "panel-browser":
@@ -1468,7 +1493,13 @@ async function action(name, element) {
     case "checkpoint-view":
       invalidatePanel();
       ui.panel = true; ui.panelPage = "review";
-      ui.reviewTarget = { sessionId: element.dataset.session, message: Number(element.dataset.message), relative: element.dataset.relative || "" };
+      {
+        const s = state.sessions.find(s => s.id === element.dataset.session);
+        const message = Number(element.dataset.message);
+        ui.reviewTarget = reviewView({ sessionId: s?.id, workspace: s?.workspace, message,
+          checkpointId: s?.messages[message]?.runStats?.checkpoint?.id, relative: element.dataset.relative || "", open: true }, state.sessions);
+        if (!ui.reviewTarget) { ui.panelPage = ""; render(); return toast("此消息没有可用的文件快照。"); }
+      }
       rememberPanel(); return loadPanel();
     case "checkpoint-file":
       if (!ui.reviewTarget) return;
@@ -1572,7 +1603,9 @@ async function action(name, element) {
       if (ui.panel) ui.browserHidden.delete(session()?.id);
       else ui.browserHidden.add(session()?.id);
       rememberPanel();
-      return render();
+      render();
+      if (ui.panel && ui.reviewTarget && !ui.panelData && !ui.panelLoading) return loadPanel();
+      return;
     case "project-show-more":
       ui.projectLimits.set(id, (ui.projectLimits.get(id) || 20) + 20);
       return render();
@@ -2335,6 +2368,20 @@ document.addEventListener("keydown", (e) => {
 function panelContext() {
   return JSON.stringify([ui.active, workspaceKey(session()?.workspace || project()?.workspace), ui.panelPage, ui.reviewTarget]);
 }
+function rememberReview() {
+  if (!ui.reviewHydrated || !environmentReady()) return;
+  const value = ui.panelPage === "review" && ui.reviewTarget?.sessionId === ui.active
+    ? reviewView({ ...ui.reviewTarget, open: ui.panel }, state.sessions) : null;
+  const signature = JSON.stringify(value);
+  if (signature === ui.reviewSignature) return;
+  ui.reviewSignature = signature;
+  // Send structural changes immediately so normal window shutdown waits for the
+  // Store's existing save queue, including on WebKit's nonpersistent origin.
+  rpc("review.remember", { value }).catch(error => {
+    if (ui.reviewSignature === signature) ui.reviewSignature = undefined;
+    toast(`审阅位置保存失败：${error.message}`);
+  });
+}
 function invalidatePanel() {
   ui.panelSeq++;
   ui.panelLoading = false;
@@ -2373,6 +2420,8 @@ async function loadPanel(directory = "") {
   }
   if (seq !== ui.panelSeq || context !== panelContext()) return;
   ui.panelLoading = false;
+  if (ui.reviewTarget && ui.panelData && !ui.panelError)
+    ui.reviewTarget = { ...ui.reviewTarget, relative: ui.panelData.selected || "" };
   render();
 }
 document.addEventListener("pointerdown", (e) => {
