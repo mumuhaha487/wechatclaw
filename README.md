@@ -1,6 +1,6 @@
 # QQClaw
 
-当前源码为 **0.3.7**：增加 Codex Desktop 接续、Desktop / CLI 自动检测与手动切换。Windows 正式 EXE 与 Mac 通用 DMG 均已更新为 0.3.7；Windows 在用户正常退出后替换，文件指纹与已验证候选一致。
+当前源码为 **0.3.8**：修复独立 Codex 后台继承父 Desktop 工具连接、执行器身份的问题，并为已有会话更新工具边界说明。发布包状态以本文件末尾的交付记录为准。
 
 轻量 Windows / macOS Codex 工作台。在桌面上编程，也可以通过腾讯 iLink / ClawBot 从微信操作各自的项目目录。
 
@@ -33,6 +33,8 @@ Mac：把 **`release/macos/QQClaw.dmg`** 传到 Mac，双击打开，将 QQClaw 
 1. 在 QQClaw 会话右上角点击 **Desktop 中继续**，或从会话菜单选择 **在 Codex Desktop 中继续**。
 2. 已有原生历史会保存为独立的 Codex 对话副本，并通过官方深链接打开 Desktop；空会话直接打开当前工作目录。草稿保留在 QQClaw，请在 Desktop 中发送下一条任务。
 3. 在 Desktop 使用其内置浏览器及可用工具。Desktop 副本的后续消息不会自动同步回 QQClaw 或微信；原会话仍可继续使用。
+
+QQClaw 后台与 Desktop 的浏览器执行器相互独立。仅将运行来源切换为「Desktop 附带的运行程序」，不会让 QQClaw 或微信获得 Desktop 内置浏览器。如果后台提示 `Local browser use is disabled in Work settings`，这也可能表示共享工具不属于当前执行器，不能据此判断用户关闭了设置。请点击「Desktop 中继续」，并在 Desktop 中发送下一条任务。若 Desktop 自己的会话也提示禁用，则需检查 Desktop / Work 的浏览器设置与账户策略。QQClaw 不会修改或绕过这些限制。
 
 副本使用本机 Codex 配置和动态默认模型，避免继续依赖 QQClaw 的临时第三方 API 转发进程。Desktop 的模型、登录和工具需在 Desktop 中配置。同一历史重复点击会复用已有副本；QQClaw 有新历史后会创建新副本。目录中有运行或排队任务时，先等待任务结束。两端编辑同一目录时请协调操作。
 

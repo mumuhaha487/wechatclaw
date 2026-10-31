@@ -9,9 +9,13 @@ const resolutions = new Map();
 export const CODEX_SOURCES = ["auto", "desktop", "cli", "custom"];
 
 export function codexEnvironment(source = process.env) {
-  // Never inherit the parent Desktop chat's tools pipe, identity or permissions.
-  const env = Object.fromEntries(Object.entries(source).filter(([key]) =>
-    !key.startsWith("CODEX_") || ["CODEX_HOME", "CODEX_API_KEY"].includes(key)));
+  // A standalone app-server is not the parent Desktop worker. In particular,
+  // its tool requests must never carry that worker's pipe or executor identity.
+  const env = Object.fromEntries(Object.entries(source).filter(([key]) => {
+    const name = key.toUpperCase();
+    if (["CODEX_HOME", "CODEX_API_KEY"].includes(name)) return true;
+    return !["CODEX_", "CODEXHOST_", "BROWSER_USE_", "CUA_REPL_", "NODE_REPL_", "SKY_"].some((prefix) => name.startsWith(prefix));
+  }));
   return { ...env, QQCLAW_REMOTE: "1", CODEX_WECHAT_REMOTE: "1" };
 }
 
