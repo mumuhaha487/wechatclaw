@@ -15,6 +15,7 @@ import { Checkpoints } from "./checkpoints.mjs";
 import { groupChanges } from "../shared/change-stats.mjs";
 import { reviewView } from "../shared/review-view.mjs";
 import { viewPreferences } from "../shared/view-preferences.mjs";
+import { goalRequest, goalSnapshot } from "../shared/goal.mjs";
 
 export const EFFORTS = [
   "",
@@ -28,7 +29,7 @@ export const EFFORTS = [
   "ultra",
 ];
 const UI_CODEX_METHODS = new Set([
-  "thread/tokenUsage/updated", "turn/completed", "item/agentMessage/delta", "item/completed", "item/started",
+  "thread/tokenUsage/updated", "turn/started", "turn/completed", "item/agentMessage/delta", "item/completed", "item/started",
 ]);
 export function normalizeModels(entries) {
   const seen = new Set();
@@ -220,6 +221,13 @@ export class App {
         this.emit("approval", { sessionId: session.id, ...request }),
       );
       entry.client.on?.("unexpected-close", (error) => this.log("ERROR", error));
+      entry.client.on?.("notification", ({ method, params }) => {
+        if (params?.threadId !== session.threadId || !["thread/goal/updated", "thread/goal/cleared"].includes(method)) return;
+        session.goal = method === "thread/goal/cleared" ? null : goalSnapshot(params.goal, session.threadId);
+        if (session.goal && session.busy && session.runStats) session.runStats.goal = structuredClone(session.goal);
+        this.changed();
+        this.store.save().catch(error => this.log("ERROR", error));
+      });
     }
     entry.lastUsed = Date.now();
     return entry.client;
@@ -302,10 +310,6 @@ export class App {
         return await this.finish(session, "任务已停止。", taskKey);
       if (this.hasPendingRestore(session.workspace)) throw new Error("工作目录有尚未完成的文件恢复，请先在更改卡片中恢复操作前状态。");
       const client = await this.client(session);
-      session.threadId = await client.thread(session);
-      await this.store.save();
-      if (this.cancelled.has(id) || this.closing)
-        return await this.finish(session, "任务已停止。", taskKey);
       session.runStats = { startedAt: Date.now(), tools: 0, actions: [], changes: [] };
       this.emit("activity", { sessionId: id, text: "正在准备文件更改快照…" });
       try { session.runStats.checkpoint = await this.checkpoints.begin(session.workspace); }
@@ -316,7 +320,12 @@ export class App {
         return await this.finish(session, "任务已停止。", taskKey);
       }
       const progressSeen = new Set();
-      const reply = await client.answer(session, taskKey ? text : buildPrompt(text, options.attachments || [], "Web"), (event) => {
+      const answer = client.answerWithThread ? client.answerWithThread.bind(client) : async (...args) => {
+        session.threadId = await client.thread(session); await this.store.save();
+        if (this.cancelled.has(id) || this.closing) return "任务已停止。";
+        return client.answer(...args);
+      };
+      const reply = await answer(session, taskKey ? text : buildPrompt(text, options.attachments || [], "Web"), (event) => {
         const item = event.params?.item;
         if (
           event.method === "item/started" &&
@@ -341,8 +350,10 @@ export class App {
             if (entry.path) session.runStats.changes.push(entry);
           }
         }
-        if (event.method === "item/completed" && item?.type === "agentMessage" && item.phase === "commentary" && item.text?.trim()) {
-          const progress = item.text.trim();
+        const progressText = event.method === "qqclaw/goalProgress" ? event.params.text
+          : event.method === "item/completed" && item?.type === "agentMessage" && item.phase === "commentary" ? item.text : "";
+        if (progressText?.trim()) {
+          const progress = progressText.trim();
           if (!progressSeen.has(progress)) {
             progressSeen.add(progress);
             session.messages.push({ role: "assistant", kind: "progress", text: progress, at: new Date().toISOString(), taskKey });
@@ -356,7 +367,8 @@ export class App {
           }
         }
         if (UI_CODEX_METHODS.has(event.method)) this.emit("codex", { sessionId: id, ...event });
-      }, { images: taskKey ? [] : (options.attachments || []).filter(a => a.kind === "image").map(a => a.path) });
+      }, { images: taskKey ? [] : (options.attachments || []).filter(a => a.kind === "image").map(a => a.path), goal: options.goal,
+        onThread: async () => { await this.store.save(); if (this.cancelled.has(id) || this.closing) await client.interrupt(); } });
       await progressChain;
       await completeCheckpoint();
       return await this.finish(session, reply, taskKey);
@@ -760,6 +772,7 @@ export class App {
             effort: provider ? String(entry.effort || "") : "", permission: "ask", busy: false, queued: 0,
             createdAt: entry.createdAt, updatedAt: entry.updatedAt, threadId: entry.threadId || undefined,
             codexThreadPath: entry.codexThreadPath || null,
+            goal: goalSnapshot(entry.goal, entry.threadId),
             messages: entry.messages.map((m) => ({ role: m.role, text: m.text, kind: m.kind === "progress" ? "progress" : undefined, at: m.at,
               attachments: (m.attachments || []).map((a) => ({ type: a.type, path: a.path, label: a.label })) })),
           });
@@ -863,9 +876,10 @@ export class App {
         const attachments = await this.desktopAttachments.resolveMany(p.attachments || []);
         const text = String(p.text || "").trim();
         if (text.length > 120000 || (!text && !attachments.length)) throw new Error("请输入任务或添加附件。");
+        const goal = p.goal === true ? goalRequest(text, p.tokenBudget) : undefined;
         // Return promptly; completion and errors are delivered through state events.
         this.enqueue(session.id, text || "请查看附件。", undefined, undefined, {
-          attachments, displayText: text || "请查看附件。",
+          attachments, displayText: text || "请查看附件。", goal,
         }).catch((error) =>
           this.emit("task-error", {
             sessionId: p.sessionId,
@@ -876,6 +890,42 @@ export class App {
       }
       case "chat.stop":
         return this.stop(p.sessionId);
+      case "goal.get": {
+        const session = this.getSession(p.sessionId);
+        session.goal = session.threadId ? await (await this.client(session)).readGoal(session) : null;
+        await this.store.save(); this.changed();
+        return session.goal;
+      }
+      case "goal.fromMessage": {
+        const session = this.getSession(p.sessionId), message = session.messages[p.message];
+        if (!Number.isInteger(p.message) || message?.role !== "user") throw new Error("请选择一条用户消息作为目标。");
+        if (session.busy || session.queued) throw new Error("请先停止或等待当前任务结束，再设置目标。");
+        const goal = goalRequest(message.text, p.tokenBudget);
+        const attachments = await Promise.all((message.attachments || []).map(async attachment => ({
+          ...await this.desktopAttachments.import({ path: attachment.path }), label: attachment.label,
+        })));
+        this.enqueue(session.id, message.text, undefined, undefined, { displayText: message.text, attachments, goal })
+          .catch(error => this.emit("task-error", { sessionId: session.id, error: safeError(error) }));
+        return { accepted: true };
+      }
+      case "goal.resume": {
+        const session = this.getSession(p.sessionId);
+        if (session.busy || session.queued || this.desktopHandoffs.has(session.id)) throw new Error("请等待当前任务结束后继续目标。");
+        if (!session.threadId) throw new Error("没有可继续的Codex目标。");
+        const budget = goalRequest("继续目标", p.tokenBudget).tokenBudget;
+        this.enqueue(session.id, "请继续当前目标，直到完成或遇到需要用户处理的实际阻碍。", undefined, undefined, {
+          displayText: "继续目标", goal: { resume: true, ...(budget !== undefined ? { tokenBudget: budget } : {}) },
+        }).catch(error => this.emit("task-error", { sessionId: session.id, error: safeError(error) }));
+        return { accepted: true };
+      }
+      case "goal.clear": {
+        const session = this.getSession(p.sessionId);
+        if (session.busy || session.queued || this.desktopHandoffs.has(session.id)) throw new Error("请先停止当前任务，再移除目标。");
+        if (session.threadId) await (await this.client(session)).clearGoal(session);
+        session.goal = null;
+        await this.store.save(); this.changed();
+        return { cleared: true };
+      }
       case "settings.save": {
         const connectionChange = ["defaultProvider", "defaultModel", "defaultEffort", "defaultPermission", "codexPath", "codexSource"]
           .some((key) => Object.hasOwn(p, key));

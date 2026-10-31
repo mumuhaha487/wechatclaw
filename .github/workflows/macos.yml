@@ -16,6 +16,52 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Verify native goal turn lifecycle and portable transcripts
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+          import {EventEmitter} from 'node:events';
+          import {answerTurns} from './backend/codex-answer.mjs';
+          import {goalRequest} from './shared/goal.mjs';
+          import {ConversationArchive} from './backend/conversations.mjs';
+          const client=new EventEmitter(),events=[],threadId='00000000-0000-4000-8000-000000000001';
+          let goal=null,settled=false;
+          const emit=(method,params)=>client.emit('notification',{method,params:{threadId,...params}});
+          Object.assign(client,{profile:{},dismissApprovals(){},close(){},readGoal:async()=>goal,
+            request:async()=>({turn:{id:'one'}}),writeGoal:async(session,changes)=>{
+              goal={...goal,...changes,threadId};emit('thread/goal/updated',{goal});return goal;
+            }});
+          const session={id:'goal-mac-check',threadId,workspace:'/tmp',messages:[{role:'user',text:'Goal fixture'}]};
+          const result=answerTurns(client,session,{},event=>events.push(event),{goal:goalRequest('Two stages')}).then(value=>{settled=true;return value});
+          const tick=()=>new Promise(resolve=>setImmediate(resolve));
+          await tick();
+          emit('turn/completed',{turn:{id:'one',status:'completed',items:[{type:'agentMessage',id:'m1',text:'Stage one'}]}});
+          await tick();assert.equal(settled,false);assert.ok(client.active);
+          emit('turn/started',{turn:{id:'two'}});
+          await client.writeGoal(session,{status:'complete'});assert.equal(settled,false);
+          emit('turn/completed',{turn:{id:'two',status:'completed',items:[{type:'agentMessage',id:'m2',text:'Final result'}]}});
+          assert.equal(await result,'Final result');assert.equal(client.active,null);
+          assert.equal(events.filter(event=>event.method==='qqclaw/goalProgress').length,1);
+          goal={...goal,status:'active'};
+          let steered=false;
+          client.request=async method=>{assert.equal(method,'turn/steer');steered=true;return {turnId:'resumed'}};
+          const resumed=answerTurns(client,session,{input:[{type:'text',text:'Continue'}]},()=>{}, {
+            goal:{resume:true},prepare:async()=>{setImmediate(()=>emit('turn/started',{turn:{id:'resumed'}}));},
+          });
+          await tick();await tick();assert.equal(steered,true);
+          await client.writeGoal(session,{status:'complete'});
+          emit('turn/completed',{turn:{id:'resumed',status:'completed',items:[{type:'agentMessage',id:'m3',text:'Resumed result'}]}});
+          assert.equal(await resumed,'Resumed result');
+          const temporary=await fs.mkdtemp(path.join(process.env.RUNNER_TEMP,'qqclaw-goal-'));
+          try {
+            const archive=new ConversationArchive(temporary);session.goal=goal;
+            await archive.sync(archive.prepare([session]));
+            assert.equal((await archive.read())[0].goal.status,'complete');
+          } finally { await fs.rm(temporary,{recursive:true,force:true}); }
+          console.log('PASS: native goal lifecycle, intermediate/final separation and portable goal transcripts');
+          NODE
       - name: Verify closed-tab history isolation and asynchronous recovery
         run: |
           node --input-type=module <<'NODE'

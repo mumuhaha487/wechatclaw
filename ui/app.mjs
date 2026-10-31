@@ -1,4 +1,5 @@
 import { renderFrame } from "./render-frame.mjs";
+import { goalRequest, goalStatusLabel } from "../shared/goal.mjs";
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
 import { icon } from "./icons.mjs";
@@ -136,6 +137,7 @@ const ui = {
   detailStates: new Map(),
   expanded: new Set(),
   draft: "",
+  goalMode: false,
   attachments: [],
   drafts: new Map(),
   overlay: "",
@@ -248,7 +250,7 @@ function syncNativeMenuState() {
 function rememberDraft() {
   const key = draftKey();
   const entry = ui.drafts.get(key) || { pending: 0 };
-  Object.assign(entry, { text: ui.draft, attachments: ui.attachments });
+  Object.assign(entry, { text: ui.draft, attachments: ui.attachments, goalMode: ui.goalMode });
   ui.drafts.set(key, entry);
   return entry;
 }
@@ -256,6 +258,7 @@ function restoreDraft() {
   const entry = ui.drafts.get(draftKey());
   ui.draft = entry?.text || "";
   ui.attachments = entry?.attachments || [];
+  ui.goalMode = Boolean(entry?.goalMode);
 }
 function hydrateAttachments() {
   previews.hydrate($("app"), img => img.dataset.uploadId ? { id: img.dataset.uploadId } : {
@@ -602,7 +605,15 @@ function messageView(m, index, s) {
     ${m.kind === "progress" ? '<div class="progress-label">过程进度</div>' : assistant && m.runStats ? runSummary(m.runStats, `${s.id}-${index}`) : ""}
     ${m.role === "user" ? attachments : ""}<div class="message-content${m.role === "user" ? " user-message-content" : ""}">${m.role === "user" ? `<div class="user-message-text${conversationView.expanded(s.id, index, m.text) ? "" : " is-collapsed"}" id="message-text-${index}">${esc(m.text)}</div><button class="message-expand" data-action="toggle-message" data-index="${index}" aria-expanded="${conversationView.expanded(s.id, index, m.text)}" aria-controls="message-text-${index}" hidden><span>显示更多</span>${icon("down")}</button>` : m.role === "assistant" ? markdown(m.text) : esc(m.text)}</div>${m.role === "user" ? "" : attachments}
     ${changeCard(m, index, s)}
+    ${m.role === "user" ? `<div class="user-message-actions"><button class="set-message-goal" data-action="message-goal" data-index="${index}" ${s.busy || s.queued ? "disabled" : ""}>${icon("target")}设为目标</button></div>` : ""}
     ${assistant ? `<div class="message-actions">${ib("copy-message", "复制回复", "copy", `data-index="${index}"`)}${ib("message-menu", "回复菜单", "more", `data-id="${index}"`)}${time}<span class="message-model" title="${esc(s.model || "Codex")}">${esc(s.model || "Codex")}</span></div>` : ""}</article>`;
+}
+function goalCard(s) {
+  const goal = s?.goal;
+  if (!goal) return "";
+  const running = s.busy && s.runStats?.goal?.status === "active", label = goal.status === "active" && !running ? "待继续" : goalStatusLabel(goal.status);
+  const tokens = Number.isFinite(goal.tokensUsed) ? goal.tokensUsed.toLocaleString() : "未知";
+  return `<section class="goal-card" aria-label="当前目标"><div class="goal-card-heading">${icon("target")}<button class="goal-open" data-action="goal-details"><strong>目标</strong><span>${esc(label)}</span></button><span class="grow"></span><span class="goal-usage">${esc(tokens)} Tokens${goal.tokenBudget ? ` / ${esc(goal.tokenBudget.toLocaleString())}` : ""}</span>${s.busy ? button("stop", running ? "暂停" : "停止", "stop", "ghost") : goal.status !== "complete" ? button("goal-resume", "继续", "arrow", "ghost", s.queued ? "disabled" : "") : ""}${ib("goal-details", "目标详情", "more")}</div><button class="goal-objective" data-action="goal-details">${esc(goal.objective)}</button></section>`;
 }
 function changeCard(message, index, s) {
   const changes = groupChanges(message.runStats?.changes), cp = message.runStats?.checkpoint;
@@ -637,6 +648,7 @@ function composer() {
   );
   return (
     '<div class="composer-wrap">' +
+    goalCard(s) +
     (s?.messages.length
       ? ib("scroll-bottom", "滚动到底部", "down", "", "scroll-bottom")
       : "") +
@@ -675,7 +687,7 @@ function composer() {
     '<div class="composer" aria-label="任务输入区">' +
     (ui.attachments.length || importing ? `<div class="composer-attachments" aria-label="待发送附件">${ui.attachments.map(a => `<div class="composer-attachment">${a.kind === "image" ? `<button class="attachment-thumb" data-action="preview-upload" data-id="${esc(a.id)}" aria-label="预览 ${esc(a.label)}">${icon("file")}<img hidden alt="${esc(a.label)}" data-preview-key="upload:${esc(a.id)}" data-upload-id="${esc(a.id)}"></button>` : `<span class="attachment-thumb">${icon("file")}</span>`}<span class="attachment-label" title="${esc(a.label)}">${esc(a.label)}</span>${ib("remove-upload", `移除 ${a.label}`, "close", `data-id="${esc(a.id)}"`)}</div>`).join("")}${importing ? '<span class="attachment-loading" role="status">正在添加附件…</span>' : ""}</div>` : "") +
     '<textarea id="composer-input" aria-label="编程任务" placeholder="' +
-    (busy ? "可以继续输入，发送后将依次处理" : "描述任务，或说明需要修改的地方…") +
+    (busy ? "可以继续输入，发送后将依次处理" : ui.goalMode ? "描述需要持续完成的目标…" : "描述任务，或说明需要修改的地方…") +
     '">' +
     esc(ui.draft) +
     '</textarea><div class="composer-bottom"><div class="composer-left">' +
@@ -699,7 +711,7 @@ function composer() {
     blocked +
     ">" +
     permissionOptions(config.permission) +
-    '</select></span></div><div class="composer-right">' +
+    '</select></span><button class="goal-mode' + (ui.goalMode ? ' selected' : '') + '" data-action="goal-mode" aria-pressed="' + ui.goalMode + '" title="将本次任务设为持续目标">' + icon("target") + '目标</button></div><div class="composer-right">' +
     contextUsage(s) +
     (state.providers.length > 1
       ? '<span class="composer-control provider-control"><select id="provider-select" aria-label="模型服务" ' +
@@ -1482,6 +1494,13 @@ function renderOverlay() {
     $("overlay").innerHTML = "";
     return;
   }
+  if (ui.overlay === "goal") {
+    const editor = ui.goalEditor, s = state.sessions.find(s => s.id === editor?.sessionId), goal = s?.goal;
+    if (!editor || !goal) { ui.overlay = ""; $("overlay").innerHTML = ""; return; }
+    const disabled = s.busy || s.queued || ui.goalSaving ? "disabled" : "";
+    $("overlay").innerHTML = `<div class="overlay-backdrop"><section class="modal compact-modal goal-modal" role="dialog" aria-modal="true" aria-label="目标详情"><div class="modal-header">${icon("target")}<h2>目标</h2><span class="grow"></span>${ib("close-overlay", "关闭目标详情", "close")}</div><div class="modal-body"><p class="goal-detail-status">${esc(goalStatusLabel(goal.status))} · ${esc(goal.tokensUsed?.toLocaleString() ?? "未知")} Tokens · ${esc(goal.timeUsedSeconds ?? "未知")} 秒</p><label class="field"><span class="field-label">目标内容</span><textarea id="goal-objective" rows="6" ${disabled}>${esc(editor.objective)}</textarea></label><label class="field"><span class="field-label">Token预算（可选）</span><input id="goal-budget" type="number" min="1" step="1" value="${esc(editor.tokenBudget)}" ${disabled} placeholder="不设置预算"></label><p class="setting-description">目标会在Codex中保存。暂停后可继续；更换目标内容会重新统计用量。已有预算留空时保持原预算。</p><div class="modal-actions">${button("goal-clear", "移除目标", "trash", "ghost", disabled)}${button("goal-refresh", "刷新状态", "refresh", "outline", ui.goalSaving ? "disabled" : "")}${button("goal-save", ui.goalSaving ? "正在提交…" : "更新目标并继续", "target", "primary", disabled)}</div></div></section></div>`;
+    return;
+  }
   if (ui.overlay === "attachment-preview") {
     const p = ui.attachmentPreview;
     $("overlay").innerHTML = `<div class="overlay-backdrop"><section class="modal image-preview-modal" role="dialog" aria-modal="true" aria-label="图片预览"><div class="modal-header"><h2 class="ellipsis" title="${esc(p.label)}">${esc(p.label)}</h2><span class="grow"></span>${ib("close-overlay", "关闭图片预览", "close")}</div><div class="image-preview-body">${p.src ? `<img src="${esc(p.src)}" alt="${esc(p.label)}">` : `<p role="status">${esc(p.error || "正在加载图片…")}</p>`}</div>${p.message !== undefined ? `<div class="image-preview-footer">${button("reveal-attachment", "在文件夹中显示", "folder", "outline", `data-message="${p.message}" data-attachment="${p.attachment}"`)}</div>` : ""}</section></div>`;
@@ -1685,7 +1704,8 @@ async function updateComposer(change) {
 async function send() {
   const text = ui.draft.trim();
   if (ui.sending || (!text && !ui.attachments.length) || !environmentReady() || ui.drafts.get(draftKey())?.pending) return;
-  const attachments = [...ui.attachments], sourceKey = draftKey();
+  const attachments = [...ui.attachments], sourceKey = draftKey(), goalMode = ui.goalMode;
+  if (goalMode) goalRequest(text);
   let targetId, cleared = false;
   ui.sending = true;
   try {
@@ -1702,12 +1722,13 @@ async function send() {
       ui.logs.delete(ui.active);
     }
     render();
-    await rpc("chat.send", { sessionId: targetId, text, attachments: attachments.map(a => a.id) });
+    await rpc("chat.send", { sessionId: targetId, text, attachments: attachments.map(a => a.id), goal: goalMode });
   } catch (e) {
     if (cleared) {
       const newer = (targetId === ui.active ? rememberDraft() : ui.drafts.get(targetId)) || { text: "", attachments: [], pending: 0 };
       newer.text = text + (newer.text ? "\n" + newer.text : "");
       newer.attachments.unshift(...attachments);
+      newer.goalMode = goalMode;
       ui.drafts.set(targetId, newer);
       if (targetId === ui.active) restoreDraft();
     }
@@ -1862,6 +1883,53 @@ async function action(name, element) {
         { label: "选择工作目录", icon: "folder", action: "add-project" },
         { label: "添加文件或图片", icon: "file", action: "attach-file" },
       ]);
+    case "goal-mode":
+      ui.goalMode = !ui.goalMode; rememberDraft(); render();
+      return $("composer-input")?.focus();
+    case "message-goal": {
+      const s = session(); if (!s || s.busy || s.queued) return;
+      return rpc("goal.fromMessage", { sessionId: s.id, message: Number(element.dataset.index) });
+    }
+    case "goal-details": {
+      const s = session(); if (!s?.goal) return;
+      ui.goalEditor = { sessionId: s.id, objective: s.goal.objective, tokenBudget: s.goal.tokenBudget ?? "" };
+      ui.overlay = "goal"; renderOverlay();
+      return;
+    }
+    case "goal-resume": {
+      const s = session(); if (!s?.goal || s.busy || s.queued) return;
+      if (["budgetLimited", "usageLimited"].includes(s.goal.status)) return action("goal-details");
+      return rpc("goal.resume", { sessionId: s.id });
+    }
+    case "goal-refresh": {
+      const editor = ui.goalEditor; if (!editor || ui.goalSaving) return;
+      await rpc("goal.get", { sessionId: editor.sessionId });
+      if (editor === ui.goalEditor && ui.overlay === "goal") renderOverlay();
+      return;
+    }
+    case "goal-save": {
+      const editor = ui.goalEditor, s = state.sessions.find(s => s.id === editor?.sessionId);
+      if (!editor || !s || s.busy || s.queued || ui.goalSaving) return;
+      const goal = goalRequest(editor.objective, editor.tokenBudget);
+      ui.goalSaving = true; renderOverlay();
+      try {
+        // Keeping the objective resumes its native accounting; only a changed
+        // objective is submitted as a replacement user task.
+        if (editor.objective.trim() === s.goal?.objective && s.goal.status !== "complete")
+          await rpc("goal.resume", { sessionId: s.id, tokenBudget: goal.tokenBudget });
+        else await rpc("chat.send", { sessionId: s.id, text: goal.objective, goal: true, tokenBudget: goal.tokenBudget });
+        if (editor === ui.goalEditor) { ui.overlay = ""; renderOverlay(); }
+      } finally { ui.goalSaving = false; if (ui.overlay === "goal") renderOverlay(); }
+      return;
+    }
+    case "goal-clear": {
+      const editor = ui.goalEditor, s = state.sessions.find(s => s.id === editor?.sessionId);
+      if (!editor || !s || s.busy || s.queued || ui.goalSaving) return;
+      ui.goalSaving = true; renderOverlay();
+      try { await rpc("goal.clear", { sessionId: s.id }); if (editor === ui.goalEditor) { ui.overlay = ""; renderOverlay(); } }
+      finally { ui.goalSaving = false; if (ui.overlay === "goal") renderOverlay(); }
+      return;
+    }
     case "attach-file": {
       const files = await rpc("dialog.files");
       if (files?.length) return addAttachments(files, true);
@@ -2566,6 +2634,8 @@ document.addEventListener("dblclick", (event) => {
     rpc("window.maximize").catch(() => {});
 });
 document.addEventListener("input", (event) => {
+  if (ui.goalEditor && event.target.id === "goal-objective") ui.goalEditor.objective = event.target.value;
+  if (ui.goalEditor && event.target.id === "goal-budget") ui.goalEditor.tokenBudget = event.target.value;
   const el = event.target;
   if (el.id === "browser-address") {
     const tab = panelTabs.group(el.dataset.owner).tabs.find(tab => tab.key === el.dataset.key);
@@ -2835,6 +2905,10 @@ function onEvent(event, data) {
     if (panelChanged) invalidatePanel();
     render();
     if (["wechat", "wechat-bind", "search", "history", "notifications"].includes(ui.overlay)) renderOverlay();
+    else if (ui.overlay === "goal") {
+      const id = ui.goalEditor?.sessionId, before = previous.get(id), after = state.sessions.find(s => s.id === id);
+      if (!after || before?.busy !== after.busy || before?.queued !== after.queued || JSON.stringify(before?.goal) !== JSON.stringify(after.goal)) renderOverlay();
+    }
     if (panelChanged && ["files", "review"].includes(ui.panelPage)) loadPanel();
   } else if (event === "wechat") {
     const wasLogin = ui.login;
@@ -2848,6 +2922,7 @@ function onEvent(event, data) {
   } else if (event === "codex") {
     const p = data.params;
     const id = data.sessionId;
+    if (data.method === "turn/started") { ui.streams.delete(id); ui.activities.set(id, state.sessions.find(s => s.id === id)?.goal?.status === "active" ? "Codex正在继续目标…" : "Codex正在处理…"); }
     if (data.method === "thread/tokenUsage/updated") {
       const s = state.sessions.find((s) => s.id === id);
       if (s) s.tokenUsage = p.tokenUsage;

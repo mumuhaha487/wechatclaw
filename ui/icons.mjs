@@ -1,4 +1,5 @@
 const paths = {
+  target: '<path d="M20 10a8 8 0 1 1-6-6M16 3v5h5M16 8l-4 4"/><path d="M15.5 12a3.5 3.5 0 1 1-3.5-3.5"/>',
   download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',
   outline: '<circle cx="5" cy="6" r="1.4"/><circle cx="5" cy="12" r="1.4"/><circle cx="5" cy="18" r="1.4"/><path d="M10 6h10m-10 6h7m-7 6h10"/>',
   home: '<path d="m3 10 9-7 9 7v11h-6v-7H9v7H3Z"/>',

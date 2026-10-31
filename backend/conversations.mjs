@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { createHash, randomBytes } from "node:crypto";
+import { goalSnapshot, goalStatusLabel } from "../shared/goal.mjs";
 
 export const codexHome = (env = process.env) => path.resolve(env.CODEX_HOME || path.join(os.homedir(), ".codex"));
 
@@ -23,6 +24,7 @@ export class ConversationArchive {
         threadId: s.threadId || null, codexThreadPath: s.codexThreadPath || null,
         codexHome: codexHome(), providerId: s.providerId,
         model: s.model, effort: s.effort,
+        ...(s.goal ? { goal: goalSnapshot(s.goal, s.threadId) } : {}),
         messages: s.messages.map((m) => ({
           role: m.role, text: String(m.text || ""), kind: m.kind, at: m.at,
           attachments: (m.attachments || []).map((a) => ({ type: a.type, path: a.path, label: a.label })),
@@ -42,6 +44,7 @@ export class ConversationArchive {
         await this.write(`${entry.id}.json`, entry.json);
         const s = entry.transcript;
         const markdown = `# ${String(s.title || "未命名会话").replace(/[\r\n]/g, " ")}\n\n工作目录：${s.workspace || ""}\n\nCodex 会话：${s.threadId || "尚未创建"}\n\n${s.threadId ? `继续命令：\`codex resume ${s.threadId}\`\n\n` : ""}` +
+          (s.goal ? `## 当前目标 · ${goalStatusLabel(s.goal.status)}\n\n${s.goal.objective}\n\n` : "") +
           s.messages.map((m) => `## ${{ user: "用户", assistant: "Codex", system: "系统" }[m.role] || m.role}${m.kind === "progress" ? " · 过程" : ""}${m.at ? ` · ${m.at}` : ""}\n\n${m.text || ""}${m.attachments.length ? "\n\n" + m.attachments.map((a) => `附件：${a.label || ""} · ${a.path}`).join("\n") : ""}\n`).join("\n");
         await this.write(`${entry.id}.md`, markdown);
         this.written.set(entry.id, entry.hash);
