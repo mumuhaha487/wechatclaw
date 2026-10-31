@@ -136,6 +136,6 @@ Codex 对接依据 [App Server](https://developers.openai.com/codex/app-server)�
 
 ## 0.3.8 交付记录（2026-10-31）
 
-142 项检查及真实 Codex 的第三方 API、原会话恢复和副本接续验证通过。Windows 候选已在项目外编译并核对内嵌代码；当前 `release/QQClaw.exe` 仍为运行中的 0.3.7，等待用户正常退出后替换。Mac 唯一 `release/macos/QQClaw.dmg` 已更新为 0.3.8，[云构建及原生验证通过](https://github.com/mumuhaha487/wechatclaw/actions/runs/41182366453)。
+142 项检查及真实 Codex 的第三方 API、原会话恢复和副本接续验证通过。用户确认退出后，Windows 唯一 `release/QQClaw.exe` 已替换为已验证的 0.3.8 候选原字节并启动；新版运行资源与内嵌代码一致，后台启动记录已核对。替换前后应用数据文件指纹一致。Mac 唯一 `release/macos/QQClaw.dmg` 已更新为 0.3.8，[云构建及原生验证通过](https://github.com/mumuhaha487/wechatclaw/actions/runs/41182366453)。
 
 当前 Desktop 会话已实际打开网页，未发现全局浏览器禁用；该检查不等同于已验收 QQClaw 接续副本中的浏览器操作。内置浏览器仍由 Desktop 提供，需要点击「Desktop 中继续」并在那里发送任务。

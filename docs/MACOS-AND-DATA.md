@@ -1,14 +1,14 @@
 # macOS 适配与对话保存
 
-2026-10-31，源码与 Mac 安装包 **0.3.8**。新增父 Desktop 工具连接的环境隔离修复。Windows 0.3.8 候选已编译并验证（568,832 字节）；当前正式 EXE 仍为 0.3.7，等待用户正常退出后替换。Mac 双架构编译、DMG 安装复制、原生后台、对话保存与重启恢复均通过云端检查；完整 GUI、Desktop 内置浏览器交互与真实微信 Mac 链路仍需实机验收。
+2026-10-31，源码与 Mac 安装包 **0.3.8**。新增父 Desktop 工具连接的环境隔离修复。Windows 正式 EXE 已在用户确认退出后更新为 0.3.8（568,832 字节），核对与已验证候选字节一致，新版运行资源和后台已启动。Mac 双架构编译、DMG 安装复制、原生后台、对话保存与重启恢复均通过云端检查；完整 GUI、Desktop 内置浏览器交互与真实微信 Mac 链路仍需实机验收。
 
 ## 当前成品与 Desktop 接续
 
 - Mac：`release/macos/QQClaw.dmg`，575,226 字节，SHA-256 `e5287be773a1ef033affbf37bc9464c7a5b5e1e97190b37867911dbd5357674d`。仍为 macOS 13.3+、Intel / Apple Silicon 通用、ad hoc 签名且未 Apple 公证。
 - 云构建：[GitHub Actions 41182366453](https://github.com/mumuhaha487/wechatclaw/actions/runs/41182366453)，应用源码提交 `85ed1aa382488f347d16f3d8750ea8059991d10d`。下载后核对 Artifact 摘要、ZIP CRC 与 DMG 文件尾；旧 DMG 仅保存在项目外。
-- Windows 现运行 0.3.7：`release/QQClaw.exe`，568,320 字节，SHA-256 `5BE1DA6A9F3BB79447DBEFEDAB6E1FBB00C9CEE7EE2AF03720546BB3638F12E9`；用户确认退出后已替换正式路径并核对完整文件，项目内仅保留这一份 EXE。已重新启动，确认 0.3.7 解压完成标记、后台资源与 EXE 内嵌资源指纹一致，新窗口和后台进程启动成功。
-- Windows 0.3.8 候选位于项目外，568,832 字节，SHA-256 `8DF0CEDECC9DE266DAE1AC9DC07704C5E46BAED5F83597C7EAAA0ECB1B6ADEE3`；142 项检查通过，真实 Codex 验证第三方 API、原对话恢复及独立副本接续。当前进程仍运行，不能写成“正式包已替换”。
-- 本地通过 119 项既有回归与 19 项新增检查。独立 CODEX_HOME 与本地受控 API 下，真实 Codex 完成第三方首轮、原生 fork、新进程恢复及继续回复；分别验证配置模型与动态默认模型，原线程保持 1 轮，副本独立完成 2 轮。额外确认未配置思考等级时不能传 null TOML 覆盖，已改为省略。
+- Windows：唯一 `release/QQClaw.exe`，568,832 字节，SHA-256 `8DF0CEDECC9DE266DAE1AC9DC07704C5E46BAED5F83597C7EAAA0ECB1B6ADEE3`。用户确认退出后替换，正式文件与已验证候选字节一致。已重新启动并确认 0.3.8 解压标记、运行后台及前端资源与 EXE 内嵌文件一致，后台启动日志已核对。替换前后账户/会话所在加密数据文件指纹一致。
+- 本地通过 142 项检查（119 项既有回归、19 项接续检查、4 项本轮环境隔离/恢复检查）。独立 CODEX_HOME 与受控本地 API 下，真实 Codex 完成第三方调用、原线程关闭恢复、原生 fork、新进程恢复及继续回复，原线程保留 2 轮、副本独立完成 3 轮。
+- 0.3.7 历史验证：119 项既有回归与 19 项新增检查通过。独立 CODEX_HOME 与本地受控 API 下，真实 Codex 完成第三方首轮、原生 fork、新进程恢复及继续回复；分别验证配置模型与动态默认模型，原线程保持 1 轮，副本独立完成 2 轮。额外确认未配置思考等级时不能传 null TOML 覆盖，已改为省略。
 - Windows 原生 API 确认商店版 Desktop 可通过 AppUserModelID 检测，UUID/工作目录链接校验通过。Mac 云端检查 Desktop 链接编码和非法 threadId 拒绝。界面模拟验证 Windows 接续提示、来源保存、Mac 缺环境引导与 CLI 恢复，没有控制台错误；模拟页面不能代替原生 GUI 验收。
 
 使用：QQClaw 会话右上角 **Desktop 中继续**，或会话菜单 **在 Codex Desktop 中继续**。已有原生历史复制为独立的 Codex 持久线程；空会话打开当前工作目录。草稿留在 QQClaw，请到 Desktop 发送下一条任务并使用其内置浏览器。Desktop 后续回复不会回传 QQClaw 或微信。
