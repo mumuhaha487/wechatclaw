@@ -76,6 +76,12 @@ jobs:
                       host.web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1000, height: 760))
                       let browserWindow = NSWindow(contentRect: host.web.frame, styleMask: [.titled], backing: .buffered, defer: false)
                       browserWindow.contentView = host.web; browserWindow.orderFront(nil)
+                      host.window = browserWindow
+                      _ = try await host.handle("window.theme", ["theme": "dark"])
+                      guard browserWindow.appearance?.name == .darkAqua, host.web.appearance?.name == .darkAqua else { throw failure("Dark native appearance failed") }
+                      _ = try await host.handle("window.theme", ["theme": "light"])
+                      guard browserWindow.appearance?.name == .aqua, host.web.appearance?.name == .aqua else { throw failure("Light native appearance failed") }
+                      print("PASS: native window and WKWebView monochrome appearance switching")
                       let browser = BrowserHost(resources: host.resources, parent: host.web) { _ in }
                       let owner = UUID().uuidString.lowercased()
                       browser.setView(["owner": owner, "visible": true, "x": 0, "y": 0, "width": 1000, "height": 760, "viewportWidth": 1000, "viewportHeight": 760])
@@ -110,7 +116,9 @@ jobs:
                       browser.setView(["visible": false]); browserWindow.orderOut(nil)
                       print("PASS: manual WKWebView preview, navigation, input, screenshot, last-tab close and empty-session state (not official extension automation)")
                       let first = try await host.startBackend()
-                      _ = try await host.call(first, "snapshot")
+                      let initial = try await host.call(first, "snapshot") as! [String: Any]
+                      let settings = initial["settings"] as! [String: Any]
+                      guard settings["theme"] as? String == "dark", settings["appearanceVersion"] as? Int == 3 else { throw failure("Dark appearance default missing") }
                       print("PASS: native backend startup and small pipe response")
                       let session = try await host.call(first, "session.create", params: ["workspace": host.data.path, "title": "native-persistence-check"]) as! [String: Any]
                       let id = session["id"] as! String

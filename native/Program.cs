@@ -96,7 +96,7 @@ internal static class Program {
                         using (var source = entry.Open()) using (var destination = File.Create(target)) source.CopyTo(destination);
                     }
                 }
-                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.12");
+                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.13");
             }
             CleanupOldRuntimes(hash);
             SetDllDirectory(RuntimeDirectory);
@@ -148,7 +148,7 @@ internal sealed class DesktopWindow : Form {
     internal DesktopWindow() {
         var work = Screen.PrimaryScreen.WorkingArea;
         Text = "QQClaw"; Size = new Size(Math.Min(1800, work.Width - 60), Math.Min(1100, work.Height - 70)); MinimumSize = new Size(1000, 680);
-        StartPosition = FormStartPosition.CenterScreen; BackColor = Color.White; FormBorderStyle = FormBorderStyle.None;
+        StartPosition = FormStartPosition.CenterScreen; BackColor = Color.FromArgb(17, 17, 17); ForeColor = Color.FromArgb(242, 242, 242); FormBorderStyle = FormBorderStyle.None;
         AutoScaleMode = AutoScaleMode.Dpi;
         try { Icon = new Icon(Path.Combine(Program.RuntimeDirectory, "app.ico")); } catch { }
         fallback = new Label { Dock = DockStyle.Fill, Text = "正在打开 QQClaw…", TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Microsoft YaHei UI", 13) };
@@ -167,7 +167,7 @@ internal sealed class DesktopWindow : Form {
             int port;
             string flags = Int32.TryParse(debugPort, out port) && port > 1024 && port < 65536 ? "--remote-debugging-port=" + port : "";
             var environment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(Program.DataDirectory, "webview"), new CoreWebView2EnvironmentOptions(flags));
-            view = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.White };
+            view = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(17, 17, 17) };
             Controls.Add(view); view.BringToFront();
             await view.EnsureCoreWebView2Async(environment);
             view.CoreWebView2.Settings.AreDevToolsEnabled = !String.IsNullOrEmpty(flags);
@@ -213,7 +213,13 @@ internal sealed class DesktopWindow : Form {
             id = request["id"]; var method = Get(request, "method"); var p = Params(request);
             object result;
             if (method.StartsWith("window.")) {
-                if (method == "window.minimize") WindowState = FormWindowState.Minimized;
+                if (method == "window.theme") {
+                    bool dark = Get(p, "theme") == "dark";
+                    BackColor = dark ? Color.FromArgb(17, 17, 17) : Color.White;
+                    ForeColor = dark ? Color.FromArgb(242, 242, 242) : Color.FromArgb(32, 32, 32);
+                    view.DefaultBackgroundColor = BackColor;
+                }
+                else if (method == "window.minimize") WindowState = FormWindowState.Minimized;
                 else if (method == "window.maximize") { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized; }
                 else if (method == "window.close") Close();
                 else if (method == "window.drag") { if (WindowState != FormWindowState.Maximized) { ReleaseCapture(); SendMessage(Handle, 0xA1, new IntPtr(2), IntPtr.Zero); } }
@@ -302,7 +308,7 @@ internal sealed class DesktopWindow : Form {
                 }
             } catch (Exception failure) { error = failure.Message; }
         }
-        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.12", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
+        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.13", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
     }
     private Task<string> ReadNodeVersion(string node) { return ReadNodeVersion(node, 5); }
     private async Task<string> ReadNodeVersion(string node, int timeoutSeconds) {

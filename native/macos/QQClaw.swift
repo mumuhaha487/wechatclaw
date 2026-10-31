@@ -242,8 +242,12 @@ final class Backend: @unchecked Sendable {
             """
             config.userContentController.addUserScript(WKUserScript(source: bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             web = WKWebView(frame: .zero, configuration: config); web.navigationDelegate = self
+            web.appearance = NSAppearance(named: .darkAqua)
+            web.underPageBackgroundColor = NSColor(white: 17.0 / 255.0, alpha: 1)
             window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1320, height: 850), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "QQClaw"; window.minSize = NSSize(width: 1000, height: 680)
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.backgroundColor = NSColor(white: 17.0 / 255.0, alpha: 1)
             window.setFrameAutosaveName("QQClawMain"); window.contentView = web; window.delegate = self
             window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
             web.load(URLRequest(url: URL(string: "qqclaw://app/index.html")!))
@@ -279,6 +283,13 @@ final class Backend: @unchecked Sendable {
     func handle(_ method: String, _ p: [String: Any]) async throws -> Any? {
         let path = p["path"] as? String ?? ""
         switch method {
+        case "window.theme":
+            let dark = p["theme"] as? String == "dark"
+            let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            window?.appearance = appearance; web?.appearance = appearance
+            let background = dark ? NSColor(white: 17.0 / 255.0, alpha: 1) : .white
+            window?.backgroundColor = background; web?.underPageBackgroundColor = background
+            return true
         case "window.minimize": window.miniaturize(nil); return true
         case "window.maximize": window.zoom(nil); return true
         case "window.close": NSApp.terminate(nil); return true
