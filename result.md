@@ -1,6 +1,6 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-10-31。此文件供后续开发与独立审核使用。**当前源码与 Windows 正式包为 0.3.14，已替换启动；本轮 Mac 云构建待执行。官方扩展仍未接通，未达到全部目标，不能写成整体通过。** 下文保留历史交付记录，最新状态见文末。
+更新时间：2026-10-31。此文件供后续开发与独立审核使用。**当前源码与两端正式包为 0.3.14，Windows 已替换启动；Mac 云构建及原生检查成功。官方扩展仍未接通，未达到全部目标，不能写成整体通过。** 下文保留历史交付记录，最新状态见文末。
 
 ## 用户目标与不可替换的要求
 
@@ -35,6 +35,7 @@
 | `ui/attachments.mjs` / `ui/navigation.mjs` | 图片预览缓存/加载、应用导航历史；0.3.12 新增 |
 | `backend/desktop-attachments.mjs` | 桌面附件复制、标识解析、栅格图片识别、预览与大小限制；0.3.12 新增 |
 | `backend/store.mjs` | 设置、会话、账户持久化与迁移，密钥加密与归档 |
+| `backend/checkpoints.mjs` / `shared/change-stats.mjs` | 任务文件快照、加密内容、冲突预查/撤销/重做/恢复、真实逐文件行数；0.3.14 接入 |
 | `backend/codex.mjs` | Codex app-server 生命周期、工具/权限/流式事件 |
 | `backend/browser.mjs` | 手动 BrowserViewer、独立子进程浏览器隔离、官方扩展文件检测；不再提供自建 MCP |
 | `backend/app.mjs` | 桌面 RPC、会话与微信协调 |
@@ -239,3 +240,12 @@ Windows 同名正式程序已在确认运行/排队/待回复均为 0 后正常�
 第一次真实任务测试将工作区建在测试应用数据目录内，文件实际修改成功但快照规则将它们排除，脚本一直等待更改卡片。已正常关闭该隔离候选，修正产品为明确提示不可用，并把测试工作区移到独立目录。最终候选已完整重跑两轮真实 Codex（修改任务、撤销后只读任务）及全部 17 条 UI 检查；没有修改用户原会话或向原微信账户发送测试消息。
 
 Windows 已在确认原运行/排队/待回复均为 0 后正常关闭、替换同名 EXE 并重启。最终文件为 **612,352 bytes**，SHA-256 `ECDD40DEE880CC4DE92F5191FA205D560ED27263164A78AFFFB84BE20C0201BA`。升级前原加密数据、日志和旧程序保存于项目外 `replacement-v0314`。本轮继续是目标的阶段进展，官方扩展和未复刻的主页行为仍未完成。
+
+
+0.3.14 运行代码提交为 `e0463903763540fc902fda9064314f3ab556a553`。[最终 Mac 云构建](https://github.com/mumuhaha487/wechatclaw/actions/runs/41200200916) 成功。除 Universal `x86_64 arm64`、DMG、签名/系统库、Node、原生窗口主题、手动网页预览/标签、附件、钥匙串和重启持久化外，新增的 macOS 文件撤销/重新应用、权限位恢复、实例重建后恢复、写入失败回滚、外部编辑冲突均实际执行通过。未做用户 Mac 完整人工 GUI 验收，仍为本地签名、未 Apple 公证。
+
+最新同名 `release/macos/QQClaw.dmg` 为 **675986 bytes**，SHA-256 `4B2FECFA09833B404F35DDE5905A0C2D2EDF86C45E15354C303149AAFC1FCB88`。artifact ZIP SHA-256 `0e55a65c3d131795c6df39d9fefcefba415cba63150919fe0827f2fe04a89f36` 与 GitHub 上传日志一致，ZIP CRC 和 DMG 文件尾已核对。旧安装包留在项目外，项目内继续只有一份 EXE 和一份 DMG。
+
+`replacement-v0314/after.json` 核对升级时原 2 个微信账户、3 个会话、134 条消息及其身份/目录绑定、threadId/逐条消息、Provider URL/Key 均保留，主题保持 dark、appearanceVersion=3。`runtime-audit.json` 核对正式 Windows 实际资源目录 `C:\Users\admin\AppData\Local\QQClaw\app\90D7E2C56C46A468` 的 `.complete=0.3.14`；后台、UI JavaScript、CSS 和 HTML 均与正式 EXE 内嵌资源一致，CSS/HTML 也与当前源文件相同。没有只凭进程存在宣称验收。
+
+任务审阅当前选择的快照/文件不跨应用重启保存，重启后可从对应消息的更改卡片重新打开；面板宽度和开关仍保存。这仍是主页复刻的待补齐细节。官方扩展授权与自动调用、原生外侧应用 rail/菜单和其余未复刻行为继续未完成，本轮不得标记整体目标达成。
