@@ -1,3 +1,5 @@
+0.3.19 补充：ui/conversation-view.mjs 负责用户长消息折叠、会话目录和阅读位置。render 前根据真实 DOM 的会话 ID 捕获阅读锚点，render 后测量八行边界并恢复同一消息的相对位置；切换会话分别记忆。目录只读取用户消息，DOM 使用 textContent，跳转核对会话、索引及原消息文本/时间。ResizeObserver 处理容器变化，关闭/切换时恢复入口状态；展示状态不写入会话正文或模型设置，不跨进程。
+
 0.3.18 补充：shared/view-preferences.mjs 校验布局白名单与实体引用；ui/view-preferences.mjs 仅在首次迁移读取网页存储，后续通过 view.remember 保存加密布局。拖动宽度暂存并在释放/失焦时提交；键盘调整按目标宽度计算。App 按会话序列化手动网页操作，定向停止绕过导航队列，removingSessions 阻止移除期间新任务；正常退出等待会话移除操作。两端原生 dispose 停止导航、释放子视图并移除会话，Mac 额外释放 KVO 观察器。UI 过滤关闭中的标签状态，失败后读取真实原生状态恢复。文件/网页标签和草稿仍不跨重启。
 
 0.3.17 补充：ui/panel-tabs.mjs 按会话/工作区管理混合标签及读取顺序；ui/app.mjs 负责独立文件面板、Markdown/源码、canonical 去重、#L 行号、各文件阅读及标签栏横向滚动位置。文件和网页异步更新核对 owner、请求/原生 revision，不抢走当前文件，不复活已关闭标签。backend/app.mjs 的 workspace.read 返回 canonical 相对路径；workspace.reveal 复用 realpath 工作区边界检查。两端 BrowserHost 为每个会话状态增加单调 revision。文件标签及阅读位置只保留于进程内；手动网页的共用标签栏不意味着官方扩展自动化已接通。
