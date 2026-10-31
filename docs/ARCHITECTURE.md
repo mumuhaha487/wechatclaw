@@ -1,5 +1,8 @@
 0.3.22：文件/网页标签支持拖动排序、鼠标中键关闭和右键菜单（关闭、关闭其他、关闭右侧、复制路径/地址、文件夹显示或系统浏览器打开）。Shift+F10打开菜单，方向键/Home/End选项，Escape/Tab关闭并恢复焦点。关闭其他会包含当前文件管理器/审阅工具页；异步关闭始终绑定原会话和实际标签对象，不会误关另一会话。
 
+0.3.23：ui/browser-downloads.mjs 以独立弹窗管理全局下载，原生事件只更新下载行而不刷新对话DOM；50条一批，保持键盘焦点并受可用窗口高度约束。Program/QQClaw Host 路由 browser.downloads 给各自 BrowserDownloads；WebView2 DownloadStarting 和 WebKit action/response didBecome 接管真实下载。标签关闭后在途下载保留源视图，终态再释放；元数据按系统加密且原子写入用户数据，实际文件保留在系统下载目录。状态 revision 与主网页标签 revision 独立，不通过微信/Codex后台。ui/app.mjs 构建导入 package.json 的版本，侧栏和关于页自动一致。详细失败边界及验证见result.md。
+
+
 修复新建原生网页标签时完整刷新清空地址输入的竞争：创建期间禁用地址输入，完成后恢复；每个网页标签单独保留未提交地址草稿，后台刷新和切回标签不丢失，提交后显示真实URL。地址草稿、标签顺序和菜单状态仅在进程内保存。
 
 0.3.21：ui/message-search.mjs 的纯 searchSessions 检索会话元数据/已保存消息/附件名；SessionSearch 管理分页、纯文字高亮、结果身份核对和不变节点；MessageFind 收集渲染正文的完整匹配位置，支持跨Markdown行内节点但隔离独立段落/附件边界，避免拼出假匹配，并只装饰当前消息附近的有限范围，关闭时还原文本节点。ConversationView.reveal 复用长消息展开和阅读位置。app.mjs 接入菜单/快捷键与面板遮挡处理，两端编辑菜单增加搜索/查找，Mac通过hasSession控制可用性。只读搜索不调用模型或写消息；查询/高亮仅在进程内保留。以下记录按版本保留。

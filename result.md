@@ -1,6 +1,6 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-10-31。此文件供后续开发与独立审核使用。**当前源码、正式 Windows 程序与 Mac 安装包均为 0.3.22，唯一同名成品已替换，Windows 已正常重启，原3会话/134消息及Provider保留；当前1个连接账户、1条已断开身份记录，变化说明见文末。最新直接消息要求白色为主、黑色为辅、整体亮色，覆盖此前黑色为主的偏好。官方扩展仍未接通，未达到全部目标，不能写成整体通过。** 下文保留历史交付记录，最新状态见文末。
+更新时间：2026-11-01。此文件供后续开发与独立审核使用。**当前源码、正式 Windows 程序与 Mac 安装包均为 0.3.23，唯一同名成品已替换，Windows 已正常重启，原3会话/134消息及Provider保留；当前1个连接账户、1条已断开身份记录，变化说明见文末。最新直接消息要求白色为主、黑色为辅、整体亮色，覆盖此前黑色为主的偏好。官方扩展仍未接通，未达到全部目标，不能写成整体通过。** 下文保留历史交付记录，最新状态见文末。
 
 ## 用户目标与不可替换的要求
 
@@ -563,3 +563,47 @@ artifact ZIP SHA-256 `C161863CFED32179896FC9320B4E434EE3B0DFE44D7253AED1ECF17196
 | `release/macos/QQClaw.dmg` | 716,136 bytes | `3B27F67B654C0C995DBC09C62D29AF42336D363A169B1FA0DBE979A1067FD159` |
 
 本轮有可核对的主页交互进展，整体目标仍未完成。官方ChatGPT扩展授权及自动调用尚未接通；网页批注、下载管理、网站权限/完整历史及全部参考主页1:1仍有差异。Mac仍未Apple公证、用户实机完整GUI/输入法/线上微信验收。没有将手动预览、组件夹具或其他远控当作官方扩展成功。
+
+
+## 0.3.23 亮色核验与原生下载管理
+
+保持最新要求的白色为主、黑色为辅：聊天/网页/弹窗白底，侧栏与选中项浅灰，文字/图标及进度条黑灰。最终真实EXE重新执行26条亮色与图片检查，覆盖旧dark/version3迁移、主动选色的重启保留、6000×240/240×6000/4000×3000图片、四窗口及20号字体。已查看真实候选截图；历史图片识别回复为既有检查数据，不冒充本轮新模型调用。
+
+本轮完成上一阶段尚在开发的原生下载：Windows DownloadStarting/WebView2DownloadOperation、Mac WKNavigationPolicy.download/WKDownloadDelegate执行真实下载。网页工具栏及外侧导航均可打开下载面板，显示原生字节进度，未知总长不伪造百分比；支持取消、打开、文件夹显示、刷新及清除终态记录。打开/显示按不透明ID查原记录，不接受调用者路径；文件移走/删除时禁用打开。50条一批、滚动/焦点循环/Escape恢复入口，进度事件不刷新整段对话。
+
+文件保存在系统Downloads/QQClaw的独立目录，建议名称去路径/非法字符并限长，同名不覆盖。元数据单独写到用户数据browser-downloads.json，Windows用独立entropy的DPAPI，Mac用Vault/Keychain/AES-GCM，原子写入且独立于state.json及会话。关闭标签/移除会话保留在途源视图，终态后释放；退出整个应用会中断，重启把遗留running标interrupted并提示原网页重试，没有暂停/自动续传。清记录不删文件。历史损坏/保存失败保留旧文件并提示，仍可取消内存中真实在途下载。
+
+实际发现并修正：Windows短响应重试返回新.NET wrapper，旧实现留下永远running的记录；最终按源页面/导航ID/URL关联同次下载、解除旧wrapper事件且不Cancel同一原生下载。Mac转下载的WebKit policy102曾被误报Frame load interrupted，现只在已决定转下载时处理并等待didBecome。保存历史失败曾连取消也禁用，现两端/UI均保留取消。初次检查只等16秒不足，观察约60秒收到原生Completed；产品没有按字节收齐伪报完成，也没有禁用系统下载检查。仅凭这些事件不能断言具体延迟原因。
+
+代码索引：ui/browser-downloads.mjs、ui/app.mjs、ui/icons.mjs、ui/desktop.css；native/BrowserHost.cs、native/Program.cs；native/macos/BrowserHost.swift、native/macos/QQClaw.swift；.github/workflows/macos.yml。侧栏/关于页版本从package.json构建导入，避免显示旧版本。微信/Codex后台及主对话存储源码未变。
+
+证据目录：`C:\Users\admin\AppData\Local\Temp\qqclaw-v0323-20261101`。
+
+| 证据 | 实际范围与结果 |
+| --- | --- |
+| downloads-ui.json/.mjs/.log | 最终EXE32条：真实文件摘要、已知/未知总长、同名独立保存、异常名称、面板/焦点、取消、最后标签关闭后完整下载、短响应重试真实中断、整个应用重启保留终态及中断状态、文件丢失/伪造ID拒绝、四窗口边界、清记录不删文件 |
+| download-storage-ui.json/.mjs/.log | 最终EXE7条：真实历史写入冲突、错误提示、取消仍可用、实际取消、保留原加密文件 |
+| download-edge-*.json / download-edge-ui-*.log | 最终EXE10条：损坏历史、历史位置为目录、下载根为文件，均不宣称成功、不留running记录，保留原数据和原因 |
+| appearance-ui.json | 最终EXE26条亮色/图片/字号/重启检查 |
+| tab-actions-ui.json / search-ui.json / conversation-ui.json / layout-ui.json | 最终EXE44+60+32+13条回归 |
+| regression.tap | 本轮119项核心回归；之后仅改原生/UI，后台源码未变，不冒充每次候选都重跑后台 |
+| candidate-source-match.json | 最终候选与61份代码/样式/资源/构建文件逐字节一致，之后仅更新文档 |
+| cloud-source-match.json | 最终Mac云run的相关原生/UI/版本/构建源码与项目规范化换行后匹配 |
+| failure-notes.md、earlier-candidate、download-diagnostic.mjs、download-data-qoYrzF/download-trace.txt、logs-41218678365.zip | 保留早期失败、wrapper诊断、Mac原生失败；部分早期完整堆栈仅在聊天工具输出，最终源码无临时诊断注入 |
+
+最终Windows共224条UI/原生集成检查，未捕获前端错误均为空。均用隔离DPAPI数据和本地HTTP文件，没有向原微信账户/会话发测试消息，也没有运行模型。打开/文件夹按钮的系统应用启动未完整人工验收；接口ID校验/缺失文件拒绝已检查。单页HTML download属性的多次同时点击、blob及所有复杂站点下载未完整覆盖，不把本地HTTP夹具写成所有网站兼容。
+
+Windows替换前确认无运行/排队/待回复任务，保留初始加密状态及旧EXE/DMG，正常退出、替换同名EXE并重启。保留1个连接账户、1条断开身份、3会话/134消息；身份/目录绑定、断开身份、原生threadId/逐条消息、Provider URL/Key比较均通过。没有恢复此前断开账户，也没有把0.3.21账户变化断言为用户操作，见replacement-v0323/after.json。
+
+正式Windows PID `139792`，资源目录 `C:\Users\admin\AppData\Local\QQClaw\app\6142D3C61E8B92C5`，.complete=0.3.23。runtime-audit.json核对前后端及UI/CSS/HTML与内嵌资源/源码，当前busy/queued/pending均为0。
+
+[Mac云构建41219830143](https://github.com/mumuhaha487/wechatclaw/actions/runs/41219830143)成功，代码`d6c620932aa8959242dced31e6a57a90bd96e2ee`，读取实际22条PASS。新增真实WKDownload字节、关闭最后标签后完整下载、取消、Keychain加密历史重建实例读取、清记录不删文件、真实保存失败后仍可取消；保留双架构/安装/菜单/主题/后台/主数据/附件/布局保存及快照审阅检查。Mac下载历史检查为重建管理器，整个产品重启的下载检查在Windows，不冒充Mac整套GUI验收。Swift5既有主线程隔离警告保留，未Apple公证。
+
+artifact ZIP SHA-256 `8917656B09D7DA36BF8D220E82BE361419C424A77E1149E43F6CA947E398DD79`与上传digest一致，ZIP CRC、唯一DMG及UDIF尾通过。旧包/截图/依赖/脚本/日志/备份均在项目外，项目成品各一份：
+
+| 唯一成品 | 大小 | SHA-256 |
+| --- | --- | --- |
+| release/QQClaw.exe | 653,824 bytes | 8929A301D88BFE4E6EF011A32690E7BB663AD7462B34F8919A567D1C103AC38A |
+| release/macos/QQClaw.dmg | 776,223 bytes | A900EC41E8759A45C472B967B1A50B31A4FE0F0EA9DCF13E1ABDDF50657DED52 |
+
+本轮有实际两端交付，整体目标仍未完成：官方ChatGPT扩展宿主授权/自动调用尚未接通，网页批注、网站权限/完整历史及全部参考主页操作1:1仍有差异。Windows某些首次下载可能较久等待原生完成；复杂网站和Mac完整产品GUI/输入法/线上微信未验收。不把手动网页下载、组件夹具或其他远控当作官方扩展成功。
