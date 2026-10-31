@@ -329,16 +329,17 @@ private struct BrowserDownloadRecord: Codable {
     func handle(_ p: [String: Any]) throws -> Any {
         let action = p["action"] as? String ?? ""
         if action == "state" { return state() }
+        if action == "cancel" {
+            guard let item = items.first(where: { $0.id == p["id"] as? String }) else { throw failure("下载记录已不存在。") }
+            if let entry = running.values.first(where: { $0.id == item.id }) { entry.download.cancel(nil); finish(entry.download, status: "cancelled") }
+            return state()
+        }
         guard storageError.isEmpty else { throw failure(storageError) }
         if action == "clear" {
             let original = items; items.removeAll { $0.status != "running" }
             do { try save() } catch { items = original; throw error }; publish(); return state()
         }
         guard let item = items.first(where: { $0.id == p["id"] as? String }) else { throw failure("下载记录已不存在。") }
-        if action == "cancel" {
-            if let entry = running.values.first(where: { $0.id == item.id }) { entry.download.cancel(nil); finish(entry.download, status: "cancelled") }
-            return state()
-        }
         guard ["open", "reveal"].contains(action) else { throw failure("不支持的下载操作。") }
         guard item.status == "completed", FileManager.default.fileExists(atPath: item.path) else { throw failure("下载文件尚未完成，或已被移动或删除。") }
         let url = URL(fileURLWithPath: item.path)

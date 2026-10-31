@@ -87,7 +87,7 @@ export class BrowserDownloads {
       row.querySelector(".download-status").textContent = `${labels[item.status] || "未知状态"} · ${bytes(item.received)}${item.total > 0 ? ` / ${bytes(item.total)}` : ""}${item.error ? ` · ${item.error}` : ""}${item.status === "completed" && !item.available ? " · 文件已移动或删除" : ""}`;
       for (const node of row.querySelectorAll("button")) {
         const cancel = node.dataset.downloadAction === "cancel"; node.hidden = cancel ? item.status !== "running" : item.status !== "completed";
-        node.disabled = this.busy.has(item.id) || (!cancel && !item.available) || Boolean(this.value.storageError);
+        node.disabled = this.busy.has(item.id) || (!cancel && (!item.available || Boolean(this.value.storageError)));
       }
       const focused = document.activeElement;
       if (row.contains(focused) && focused.hidden) (row.querySelector("button:not([hidden]):not(:disabled)") || this.root.querySelector('[data-download-action="close"]')).focus();

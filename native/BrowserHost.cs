@@ -356,11 +356,16 @@ internal sealed class BrowserDownloads {
     internal object Handle(Dictionary<string, object> p) {
         string action = BrowserHost.Value(p, "action");
         if (action == "state") return State();
+        if (action == "cancel") {
+            var active = items.Find(value => value.id == BrowserHost.Value(p, "id"));
+            if (active == null) throw new Exception("下载记录已不存在。");
+            if (active.Operation != null) { active.Cancelled = true; active.Operation.Cancel(); Update(active); Publish(); }
+            return State();
+        }
         if (storageError != "") throw new Exception(storageError);
         if (action == "clear") { var original = items.ToArray(); items.RemoveAll(entry => entry.status != "running"); try { Save(); } catch { items.Clear(); items.AddRange(original); throw; } Publish(); return State(); }
         var item = items.Find(value => value.id == BrowserHost.Value(p, "id"));
         if (item == null) throw new Exception("下载记录已不存在。");
-        if (action == "cancel") { if (item.Operation != null) { item.Cancelled = true; item.Operation.Cancel(); Update(item); Publish(); } return State(); }
         if (action != "open" && action != "reveal") throw new Exception("不支持的下载操作。");
         if (item.status != "completed" || !File.Exists(item.path)) throw new Exception("下载文件尚未完成，或已被移动或删除。");
         if (action == "open") Process.Start(new ProcessStartInfo(item.path) { UseShellExecute = true });

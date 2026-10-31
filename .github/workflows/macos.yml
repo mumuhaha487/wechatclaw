@@ -278,6 +278,24 @@ jobs:
                       _ = try browser.downloads.handle(["action": "clear"])
                       guard downloadItems().isEmpty, FileManager.default.fileExists(atPath: completedDownload["path"] as! String) else { throw failure("Clearing records removed files") }
                       print("PASS: WKDownload cancellation, Keychain-encrypted history reload and clear without file deletion")
+                      let heldURL = fixture + "held-download"
+                      _ = try await control("open", ["url": heldURL])
+                      let held = try await awaitDownload(heldURL, "running")
+                      for _ in 0..<50 {
+                          if downloadItems().contains(where: { $0["id"] as? String == held["id"] as? String && !($0["path"] as? String ?? "").isEmpty }) { break }
+                          try await Task.sleep(nanoseconds: 100_000_000)
+                      }
+                      let historyURL = host.data.appendingPathComponent("download-verification/browser-downloads.json")
+                      let savedHistoryURL = historyURL.appendingPathExtension("preserved")
+                      try FileManager.default.moveItem(at: historyURL, to: savedHistoryURL)
+                      try FileManager.default.createDirectory(at: historyURL, withIntermediateDirectories: false)
+                      var failedHistoryWrite = false
+                      do { _ = try browser.downloads.handle(["action": "clear"]) } catch { failedHistoryWrite = true }
+                      guard failedHistoryWrite else { throw failure("Download history fault did not fail") }
+                      _ = try browser.downloads.handle(["action": "cancel", "id": held["id"]!])
+                      _ = try await awaitDownload(heldURL, "cancelled")
+                      guard FileManager.default.fileExists(atPath: savedHistoryURL.path) else { throw failure("History fault removed preserved data") }
+                      print("PASS: in-progress WKDownload remains cancellable after a real history write failure")
                       let afterCancel = try await control("state") as! [String: Any]
                       _ = try await control("closeTab", ["tabId": afterCancel["activeTab"]!])
                       let reopened = try await control("newTab") as! [String: Any]
@@ -354,11 +372,11 @@ jobs:
           const fixture = spawn(process.execPath,['-e',String.raw`
             const http=require('node:http');
             const server=http.createServer((req,res)=>{
-              if(['/download','/slow-download','/cancel-download'].includes(req.url)) {
+              if(['/download','/slow-download','/cancel-download','/held-download'].includes(req.url)) {
                 const slow=req.url!='/download',size=slow?2097152:524288;
                 res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="cloud-download.txt"','Content-Length':String(size)});
                 if(!slow)return res.end(Buffer.alloc(size,65));
-                let count=0;const timer=setInterval(()=>{res.write(Buffer.alloc(32768,65));count+=32768;if(count>=size)res.end()},30);res.on('close',()=>clearInterval(timer));return;
+                let count=0;const timer=setInterval(()=>{if(req.url==='/held-download'&&count>=32768)return;res.write(Buffer.alloc(32768,65));count+=32768;if(count>=size)res.end()},30);res.on('close',()=>clearInterval(timer));return;
               }
               res.setHeader('Content-Type','text/html; charset=utf-8');
               const query=new URL(req.url,'http://localhost').searchParams.get('q');
