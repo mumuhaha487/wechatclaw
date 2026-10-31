@@ -1,7 +1,7 @@
 /* QQClaw desktop surfaces. Preserve the PI layout with quieter workbench styling. */
 :root {
   --sidebar-width: 275px;
-  --panel-width: 242px;
+  --panel-width: 340px;
   --toolbar-height: 46px;
   --page: #ffffff;
   --input: #ffffff;
@@ -1618,6 +1618,7 @@ select:focus-visible {
 .progress-label { font-size: 11px; opacity: .65; margin-bottom: 5px; }
 .message-attachment { display: flex; align-items: center; gap: 12px; max-width: 100%; min-width: 0; text-align: left; padding: 12px 15px; margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius-surface); background: var(--tile); color: inherit; cursor: pointer; }
 .message-attachment > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.message-attachment .attachment-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 13px; font-weight: 400; }
 .message-attachment small { display: block; font-size: 11px; opacity: .6; margin-top: 4px; }
 .wechat-advanced { margin: 4px 0 18px; font-size: 12px; }
 .wechat-advanced summary { cursor: pointer; margin-bottom: 12px; }
@@ -1661,7 +1662,7 @@ select:focus-visible {
   .effort-control .picker-trigger { max-width: 66px; }
   .context-usage { display: none; }
 }
-.work-panel.browser-panel { display: flex; flex-direction: column; width: clamp(360px, 42vw, 620px); max-width: 62%; flex: 0 0 auto; padding: 0; overflow: hidden; background: var(--page); }
+.work-panel.browser-panel { display: flex; flex-direction: column; flex: 0 0 auto; padding: 0; overflow: hidden; background: var(--page); }
 .browser-tabs-bar { display: flex; align-items: center; gap: 2px; height: 45px; min-height: 45px; padding: 5px 8px 4px; border-bottom: 1px solid var(--line); background: var(--tile); }
 .browser-tabs { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .browser-tab { display: flex; align-items: center; min-width: 88px; max-width: 200px; flex: 1; height: 32px; border: 1px solid transparent; border-radius: 8px; color: var(--muted); }
@@ -1695,5 +1696,43 @@ select:focus-visible {
 .browser-tab .spinning { animation: browser-spin 1s linear infinite; }
 @keyframes browser-spin { to { transform: rotate(360deg); } }
 @keyframes browser-loading { 0% { opacity: .2; transform: scaleX(.25); } 50% { opacity: .8; } 100% { opacity: .2; transform: scaleX(1); } }
-@media (max-width: 1100px) { .work-panel.browser-panel { width: 380px; max-width: 56%; } .browser-tabs-bar > .icon-button { width: 25px; min-width: 25px; } }
-@media (max-width: 850px) { .work-panel.browser-panel { position: absolute; inset: 46px 8px 8px; width: auto; max-width: none; z-index: 12; border: 1px solid var(--line); border-radius: 12px; } }
+/* Leave a useful chat width. When space runs out the panel becomes an explicit
+   overlay with visible close/restore controls, rather than shrinking the chat. */
+.content-area { position: relative; container-type: inline-size; }
+.work-panel, .work-panel.browser-panel { display: block; width: min(var(--panel-width), max(280px, calc(100% - 400px))); max-width: none; flex-shrink: 0; }
+.work-panel.browser-panel { display: flex; }
+.work-panel.maximized, .work-panel.browser-panel.maximized { position: absolute; inset: 0; width: auto; max-width: none; border: 0; border-radius: 0; z-index: 12; }
+.panel-splitter { position: relative; width: 6px; flex: 0 0 6px; margin: 0 -3px; cursor: col-resize; z-index: 14; touch-action: none; outline-offset: -2px; }
+.panel-splitter::after { content: ""; position: absolute; inset: 0 2px; background: transparent; transition: background .12s; }
+.panel-splitter:hover::after, .panel-splitter:focus-visible::after, .resizing-panel .panel-splitter::after { background: var(--text); }
+.panel-splitter.hidden { display: none; }
+.resizing-panel, .resizing-panel * { cursor: col-resize !important; user-select: none !important; }
+.panel-header > strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.show-more-sessions { margin: 4px 14px 8px 31px; padding: 4px 8px; font-size: 12px; font-weight: 400; color: var(--muted); gap: 6px; }
+.show-more-sessions .icon { width: 12px; height: 12px; }
+.context-usage { border: 0; background: transparent; padding: 3px 5px; height: 28px; font-size: 11px; font-weight: 400; border-radius: 5px; white-space: nowrap; }
+.context-usage:hover { background: var(--hover); }
+.context-usage.unknown .context-ring { opacity: .4; }
+.context-menu button:disabled { opacity: 1; cursor: default; color: var(--muted); }
+.context-menu button:disabled:hover { background: transparent; }
+.browser-connection-note { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 12px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.browser-connection-note span { flex: 1; min-width: 0; }
+.browser-connection-note button { border: 0; padding: 2px 4px; font-size: 11px; font-weight: 400; background: transparent; color: var(--text); }
+.browser-loading-line { top: 128px; }
+.message-actions time { font-size: 11px; color: var(--muted); }
+.message-actions .message-model { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; opacity: .7; }
+.change-card { margin: 18px 0 12px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--tile); }
+.change-card > summary { display: flex; align-items: center; gap: 9px; padding: 13px 15px; cursor: pointer; list-style: none; font-size: 13px; }
+.change-card > summary strong { flex: 1; font-weight: 500; }
+.change-card > summary::-webkit-details-marker, .changed-file > summary::-webkit-details-marker { display: none; }
+.change-card > button { margin: 4px 10px 10px; font-size: 12px; font-weight: 400; gap: 5px; color: var(--text); background: transparent; }
+.change-list { border-top: 1px solid var(--line); }
+.changed-file > summary { display: flex; align-items: center; gap: 14px; padding: 11px 15px; font-size: 12px; cursor: pointer; list-style: none; }
+.changed-file > summary span:first-child { flex: 1; min-width: 0; }
+.changed-file > summary span:last-child { color: var(--muted); flex-shrink: 0; }
+.changed-file pre { max-width: 100%; max-height: 360px; overflow: auto; margin: 0; border-radius: 0; border-top: 1px solid var(--line); font-size: 11px; }
+.sidebar.collapsed { visibility: hidden; pointer-events: none; }
+@container (max-width: 719px) {
+  .work-panel, .work-panel.browser-panel { position: absolute; inset: 0; width: auto; max-width: none; z-index: 12; border: 0; border-radius: 0; }
+  .panel-splitter { display: none; }
+}

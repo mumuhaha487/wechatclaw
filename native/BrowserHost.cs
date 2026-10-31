@@ -55,7 +55,6 @@ internal sealed class BrowserHost {
             string profile = Value(p, "profile");
             if (!System.Text.RegularExpressions.Regex.IsMatch(profile, "^[0-9a-f]{32}$")) throw new Exception("浏览器用户目录无效。");
             session = new BrowserSession(owner, profile); sessions[owner] = session;
-            NewTab(session);
         }
         await session.Serial.WaitAsync();
         try {
@@ -65,13 +64,17 @@ internal sealed class BrowserHost {
                 if (tab == null) throw new Exception("浏览器标签页已关闭。");
                 if (action == "selectTab") session.Active = tab;
                 else {
-                    int index = session.Tabs.IndexOf(tab); session.Tabs.Remove(tab); tab.Web.Dispose();
+                    int index = session.Tabs.IndexOf(tab); session.Tabs.Remove(tab);
                     if (session.Active == tab) session.Active = session.Tabs.Count == 0 ? null : session.Tabs[Math.Min(index, session.Tabs.Count - 1)];
-                    if (session.Active == null) NewTab(session);
+                    tab.Web.Dispose();
                 }
             }
-            Layout(); Publish(session, action != "state");
+            // Empty sessions stay empty after the last tab closes. Only an
+            // explicit new tab or navigation creates a replacement page.
+            if (session.Active == null && action == "open") NewTab(session);
+            Layout(); Publish(session, action == "open" || action == "newTab");
             if (new [] { "state", "newTab", "selectTab", "closeTab" }.Contains(action)) return State(session, false);
+            if (session.Active == null) throw new Exception("没有打开的标签页，请先打开网页。");
             return await session.Active.Run(p);
         } finally { Publish(session, false); session.Serial.Release(); }
     }
@@ -82,11 +85,12 @@ internal sealed class BrowserHost {
     }
     private object State(BrowserSession s, bool reveal) {
         var tab = s.Active;
-        return new { owner = s.Owner, reveal = reveal, activeTab = tab.Id,
+        return new { owner = s.Owner, reveal = reveal, activeTab = tab == null ? "" : tab.Id,
             tabs = s.Tabs.Select(t => new { id = t.Id, title = t.Title, url = t.Url, loading = t.Loading }).ToArray(),
-            url = tab.Url, title = tab.Title, loading = tab.Loading, canGoBack = tab.CanGoBack, canGoForward = tab.CanGoForward, error = tab.Error };
+            url = tab == null ? "" : tab.Url, title = tab == null ? "" : tab.Title, loading = tab != null && tab.Loading,
+            canGoBack = tab != null && tab.CanGoBack, canGoForward = tab != null && tab.CanGoForward, error = tab == null ? "" : tab.Error };
     }
-    private void Publish(BrowserSession session, bool reveal) { if (session.Active != null) notify(State(session, reveal)); }
+    private void Publish(BrowserSession session, bool reveal) { notify(State(session, reveal)); }
     internal static string Value(Dictionary<string, object> p, string key) {
         object v; return p.TryGetValue(key, out v) && v != null ? Convert.ToString(v) : "";
     }

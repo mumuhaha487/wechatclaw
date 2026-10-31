@@ -41,13 +41,13 @@ import WebKit
         } }
     }
     func state(_ session: BrowserSession, reveal: Bool = false) -> [String: Any] {
-        let tab = session.active!
-        return ["owner": session.owner, "reveal": reveal, "activeTab": tab.id,
+        let tab = session.active
+        return ["owner": session.owner, "reveal": reveal, "activeTab": tab?.id ?? "",
                 "tabs": session.tabs.map { ["id": $0.id, "title": $0.web.title ?? "新标签页", "url": $0.url, "loading": $0.web.isLoading] as [String: Any] },
-                "url": tab.url, "title": tab.web.title ?? "新标签页", "loading": tab.web.isLoading,
-                "canGoBack": tab.web.canGoBack, "canGoForward": tab.web.canGoForward, "error": tab.errorText]
+                "url": tab?.url ?? "", "title": tab?.web.title ?? "", "loading": tab?.web.isLoading ?? false,
+                "canGoBack": tab?.web.canGoBack ?? false, "canGoForward": tab?.web.canGoForward ?? false, "error": tab?.errorText ?? ""]
     }
-    func publish(_ session: BrowserSession, reveal: Bool = false) { if session.active != nil { notify(state(session, reveal: reveal)) } }
+    func publish(_ session: BrowserSession, reveal: Bool = false) { notify(state(session, reveal: reveal)) }
     func newTab(_ session: BrowserSession) throws {
         guard session.tabs.count < 12 else { throw failure("最多打开 12 个标签页，请先关闭不用的页面。") }
         // macOS 13 lacks persistent stores by identifier. Share only the same
@@ -66,7 +66,7 @@ import WebKit
         if sessions[owner] == nil {
             let profile = p["profile"] as? String ?? ""
             guard profile.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else { throw failure("浏览器用户目录无效。") }
-            let session = BrowserSession(owner: owner, profile: profile); sessions[owner] = session; try newTab(session)
+            let session = BrowserSession(owner: owner, profile: profile); sessions[owner] = session
         }
         let previous = operations[owner], session = sessions[owner]!
         let operation = Task { @MainActor () throws -> Any in
@@ -79,16 +79,18 @@ import WebKit
                 let tab = session.tabs[index]
                 if action == "selectTab" { session.active = tab }
                 else {
-                    session.tabs.remove(at: index); tab.stop(); tab.web.removeFromSuperview()
+                    session.tabs.remove(at: index)
                     if session.active === tab { session.active = session.tabs.isEmpty ? nil : session.tabs[min(index, session.tabs.count - 1)] }
-                    if session.active == nil { try self.newTab(session) }
+                    tab.stop(); tab.web.removeFromSuperview()
                 }
             default: break
             }
-            self.layout(); self.publish(session, reveal: action != "state")
+            if session.active == nil && action == "open" { try self.newTab(session) }
+            self.layout(); self.publish(session, reveal: action == "open" || action == "newTab")
             if ["state", "newTab", "selectTab", "closeTab"].contains(action) { return self.state(session) }
-            do { return try await session.active.run(p) }
-            catch { session.active.errorText = error.localizedDescription; throw error }
+            guard let tab = session.active else { throw failure("没有打开的标签页，请先打开网页。") }
+            do { return try await tab.run(p) }
+            catch { tab.errorText = error.localizedDescription; throw error }
         }
         operations[owner] = operation
         return try await operation.value

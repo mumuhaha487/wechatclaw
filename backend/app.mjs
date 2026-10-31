@@ -9,7 +9,7 @@ import { validateBaseUrl } from "./adapter.mjs";
 import { parseActionBlocksSafe } from "./wechat-actions.mjs";
 import { buildPrompt } from "./wechat-format.mjs";
 import { sameWorkspace, workspaceKey } from "../shared/workspace.mjs";
-import { BrowserTools } from "./browser.mjs";
+import { BrowserViewer, officialBrowserStatus } from "./browser.mjs";
 
 export const EFFORTS = [
   "",
@@ -170,11 +170,7 @@ export class App {
       entry?.client.close();
       entry = {
         signature,
-        client: this.clientFactory({ executable, profile,
-          browser: new BrowserTools({ native: this.native, session,
-            onActivity: ({ action }) => this.emit("activity", { sessionId: session.id, text: `内置浏览器：${action}` }),
-          }),
-        }),
+        client: this.clientFactory({ executable, profile }),
         lastUsed: Date.now(),
       };
       this.clients.set(session.id, entry);
@@ -249,7 +245,7 @@ export class App {
       await this.store.save();
       if (this.cancelled.has(id) || this.closing)
         return await this.finish(session, "任务已停止。", taskKey);
-      session.runStats = { startedAt: Date.now(), tools: 0, actions: [] };
+      session.runStats = { startedAt: Date.now(), tools: 0, actions: [], changes: [] };
       const progressSeen = new Set();
       const reply = await client.answer(session, taskKey ? text : buildPrompt(text, [], "Web"), (event) => {
         const item = event.params?.item;
@@ -270,6 +266,12 @@ export class App {
         }
         if (event.method === "thread/tokenUsage/updated")
           session.tokenUsage = event.params.tokenUsage;
+        if (event.method === "item/completed" && item?.type === "fileChange" && item.status === "completed") {
+          for (const change of item.changes || []) {
+            const entry = { path: String(change.path || ""), kind: change.kind?.type || "update", diff: String(change.diff || "").slice(0, 200000) };
+            if (entry.path) session.runStats.changes.push(entry);
+          }
+        }
         if (event.method === "item/completed" && item?.type === "agentMessage" && item.phase === "commentary" && item.text?.trim()) {
           const progress = item.text.trim();
           if (!progressSeen.has(progress)) {
@@ -486,17 +488,17 @@ export class App {
         return this.continueDesktop(p);
       case "browser.open": {
         const session = this.getSession(p.sessionId);
-        const browser = (await this.client(session)).browser;
-        await browser.start();
+        const browser = new BrowserViewer({ native: this.native, session });
         return browser.call("open", { url: p.url || "https://www.google.com/" });
       }
       case "browser.command": {
         if (!["back", "forward", "reload", "stop", "newTab", "selectTab", "closeTab", "state"].includes(p.action)) throw new Error("不支持的浏览器操作。");
         const session = this.getSession(p.sessionId);
-        const browser = (await this.client(session)).browser;
-        await browser.start();
+        const browser = new BrowserViewer({ native: this.native, session });
         return browser.call(p.action, { tabId: String(p.tabId || "") });
       }
+      case "browser.officialStatus":
+        return officialBrowserStatus();
       case "attachment.reveal": {
         const session = this.getSession(p.sessionId);
         const message = session.messages[Number(p.message)];

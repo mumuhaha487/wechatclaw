@@ -99,8 +99,16 @@ jobs:
                       guard !BrowserHost.allowed("file:///etc/passwd"), !BrowserHost.allowed("https://qqclaw.local") else { throw failure("Browser accepted forbidden URL") }
                       let tabState = try await control("newTab") as! [String: Any]
                       guard (tabState["tabs"] as? [[String: Any]])?.count == 2 else { throw failure("Browser tab creation failed") }
+                      let single = try await control("closeTab", ["tabId": tabState["activeTab"]!]) as! [String: Any]
+                      guard (single["tabs"] as? [[String: Any]])?.count == 1 else { throw failure("Closing background tab failed") }
+                      let empty = try await control("closeTab", ["tabId": single["activeTab"]!]) as! [String: Any]
+                      guard (empty["tabs"] as? [[String: Any]])?.isEmpty == true, empty["activeTab"] as? String == "" else { throw failure("Last tab was recreated") }
+                      let stillEmpty = try await control("state") as! [String: Any]
+                      guard (stillEmpty["tabs"] as? [[String: Any]])?.isEmpty == true else { throw failure("Reading state created a ghost tab") }
+                      let reopened = try await control("newTab") as! [String: Any]
+                      guard (reopened["tabs"] as? [[String: Any]])?.count == 1 else { throw failure("First new tab created twice") }
                       browser.setView(["visible": false]); browserWindow.orderOut(nil)
-                      print("PASS: native WKWebView navigation, DOM snapshot, input, form submission, screenshot and URL restrictions")
+                      print("PASS: manual WKWebView preview, navigation, input, screenshot, last-tab close and empty-session state (not official extension automation)")
                       let first = try await host.startBackend()
                       _ = try await host.call(first, "snapshot")
                       print("PASS: native backend startup and small pipe response")

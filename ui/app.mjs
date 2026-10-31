@@ -9,6 +9,7 @@ import {
 } from "./controls.mjs";
 import { ModelCatalog } from "./model-catalog.mjs";
 import { sameWorkspace, workspaceKey } from "../shared/workspace.mjs";
+import { contextSnapshot } from "../shared/context-usage.mjs";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -91,7 +92,7 @@ function rpc(method, params = {}) {
 }
 let state = {
   settings: {
-    theme: "dark",
+    theme: "light",
     fontSize: 14,
     showStatus: true,
     defaultProvider: "local",
@@ -108,8 +109,10 @@ const ui = {
   active: viewStorage.getItem("active-session") || "",
   project: "",
   page: "",
-  panel: true,
-  sidebar: true,
+  panel: viewStorage.getItem("panel-open") === "true",
+  sidebar: viewStorage.getItem("sidebar-open") !== "false",
+  browserHidden: new Set(),
+  projectLimits: new Map(),
   expanded: new Set(),
   draft: "",
   overlay: "",
@@ -126,6 +129,7 @@ const ui = {
   busyAccounts: [],
   environment: null,
   runtime: null,
+  officialBrowser: null,
   startupError: "",
   environmentChecked: false,
   checkingEnvironment: false,
@@ -139,7 +143,7 @@ const ui = {
   approvals: new Map(),
   agentPermissions: new Map(),
   notifications: [],
-  panelPage: "",
+  panelPage: ["browser", "files", "review"].includes(viewStorage.getItem("panel-page")) ? viewStorage.getItem("panel-page") : "",
   panelData: null,
   panelSeq: 0,
 };
@@ -359,7 +363,7 @@ function sidebar() {
   return (
     '<aside class="sidebar' +
     (ui.sidebar ? "" : " collapsed") +
-    '"><div class="brand" data-drag><button class="brand-home" data-action="home"><span class="brand-mark">' +
+    '"' + (ui.sidebar ? "" : " inert") + '><div class="brand" data-drag><button class="brand-home" data-action="home"><span class="brand-mark">' +
     icon("logo") +
     "</span><strong>QQClaw</strong></button>" +
     ib("toggle-sidebar", "收起侧栏", "sidebar") +
@@ -371,6 +375,7 @@ function sidebar() {
       .slice(0, 6)
       .map((s) => sessionRow(s))
       .join("") +
+    (general.length > 6 ? '<button class="show-more-sessions" data-action="history">查看全部会话' + icon("down") + '</button>' : "") +
     '<div class="section-heading projects-heading">项目<div class="section-tools">' +
     ib("add-project", "添加项目", "plus") +
     "</div></div>" +
@@ -411,9 +416,9 @@ function sidebar() {
               "</div></div>" +
               (open
                 ? children
-                    .slice(0, 20)
+                    .slice(0, ui.projectLimits.get(p.id) || 20)
                     .map((s) => sessionRow(s, true))
-                    .join("")
+                    .join("") + (children.length > (ui.projectLimits.get(p.id) || 20) ? `<button class="show-more-sessions" data-action="project-show-more" data-id="${esc(p.id)}">展开显示 ${children.length - (ui.projectLimits.get(p.id) || 20)} 个会话${icon("down")}</button>` : "")
                 : "")
             );
           })
@@ -433,7 +438,7 @@ function sidebar() {
     ) +
     ib("history", "会话历史", "clock") +
     ib("notifications", "通知", "bell") +
-    '<button class="version" data-action="about">v0.3.10</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v0.3.11</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -445,8 +450,19 @@ function messages() {
       <div class="welcome-starters" aria-label="任务起点"><button data-action="suggest" data-text="梳理这个项目的结构和启动方式，先不要修改文件。">${icon("folder")}<span>了解项目结构</span></button><button data-action="suggest" data-text="检查当前项目中可能存在的错误，先列出问题和依据，不要直接修改。">${icon("review")}<span>检查代码中的问题</span></button></div></div>`;
   }
   const stream = ui.streams.get(s.id) || "";
-  return `${s.messages.map((m, index) => `<article class="message ${m.role}${m.kind === "progress" ? " progress-message" : ""}">${m.kind === "progress" ? '<div class="progress-label">过程进度</div>' : m.role === "assistant" && m.runStats ? runSummary(m.runStats) : ""}<div class="message-content">${m.role === "assistant" ? markdown(m.text) : esc(m.text)}</div>${(m.attachments || []).map((a, attachment) => `<button class="message-attachment" data-action="reveal-attachment" data-message="${index}" data-attachment="${attachment}" title="在文件夹中显示">${icon("file")}<span>${esc(a.label || a.path.split(/[\\/]/).pop())}<small>在文件夹中显示</small></span>${icon("external")}</button>`).join("")}${m.role === "assistant" && m.kind !== "progress" ? `<div class="message-actions">${ib("copy-message", "复制回复", "copy", `data-index="${index}"`)}<span>Codex${s.model ? ` · ${esc(s.model)}` : ""}</span></div>` : ""}</article>`).join("")}
+  return `${s.messages.map((m, index) => messageView(m, index, s)).join("")}
     ${s.busy ? `<div class="activity-row"><span class="spinner"></span>${esc(ui.activities.get(s.id) || "Codex 正在处理…")}</div>${ui.logs.get(s.id)?.length ? `<details class="activity-detail"><summary>查看工具活动 · ${ui.logs.get(s.id).length}</summary>${esc(ui.logs.get(s.id).slice(-12).join("\n"))}</details>` : ""}${stream ? `<article class="message assistant"><div class="message-content">${renderMarkdown(stream)}</div></article>` : ""}` : ""}`;
+}
+function messageView(m, index, s) {
+  const attachments = (m.attachments || []).map((a, attachment) => `<button class="message-attachment" data-action="reveal-attachment" data-message="${index}" data-attachment="${attachment}" title="${esc(a.label || a.path)} · 在文件夹中显示">${icon("file")}<span><span class="attachment-name">${esc(a.label || a.path.split(/[\\/]/).pop())}</span><small>在文件夹中显示</small></span>${icon("external")}</button>`).join("");
+  const assistant = m.role === "assistant" && m.kind !== "progress";
+  const time = m.at && !Number.isNaN(Date.parse(m.at)) ? `<time datetime="${esc(m.at)}" title="${esc(new Date(m.at).toLocaleString())}">${esc(new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time>` : "";
+  const changes = m.runStats?.changes || [];
+  return `<article class="message ${m.role}${m.kind === "progress" ? " progress-message" : ""}">
+    ${m.kind === "progress" ? '<div class="progress-label">过程进度</div>' : assistant && m.runStats ? runSummary(m.runStats) : ""}
+    <div class="message-content">${m.role === "assistant" ? markdown(m.text) : esc(m.text)}</div>${attachments}
+    ${changes.length ? `<details class="change-card"><summary>${icon("review")}<strong>已修改 ${new Set(changes.map(c => c.path)).size} 个文件</strong>${icon("down")}</summary><div class="change-list">${changes.map(c => `<details class="changed-file"><summary><span class="ellipsis" title="${esc(c.path)}">${esc(c.path)}</span><span>${esc({ add: "新增", delete: "删除", update: "修改" }[c.kind] || "修改")}</span></summary><pre>${esc(c.diff || "本次事件未提供补丁内容。")}</pre></details>`).join("")}</div><button data-action="panel-review">查看工作区更改${icon("external")}</button></details>` : ""}
+    ${assistant ? `<div class="message-actions">${ib("copy-message", "复制回复", "copy", `data-index="${index}"`)}${ib("message-menu", "回复菜单", "more", `data-id="${index}"`)}${time}<span class="message-model" title="${esc(s.model || "Codex")}">${esc(s.model || "Codex")}</span></div>` : ""}</article>`;
 }
 function composer() {
   const s = session(),
@@ -576,7 +592,7 @@ function workspace() {
     '</button>' +
     (s?.messages.length ? '</h1>' : '</span>') +
     '</div><div class="top-actions">' +
-    button("open-browser-window", "内置浏览器", "browser", "outline desktop-continue", `title="打开当前会话的内置浏览器" aria-label="打开内置浏览器"`) +
+    button("open-browser-window", "网页预览", "browser", "outline desktop-continue", `title="打开手动网页预览；官方扩展自动操作尚未接通" aria-label="打开网页预览"`) +
     '<div class="top-capsule">' +
     ib("new-session", "新建会话", "new") +
     ib("search", "搜索会话", "search") +
@@ -602,9 +618,16 @@ function workspace() {
     "</div>" +
     composer() +
     "</main>" +
-    (ui.panel ? workPanel() : "") +
+    (ui.panel ? panelSplitter() + workPanel() : "") +
     "</div></div>"
   );
+}
+function panelSplitter() {
+  return `<div class="panel-splitter${ui.panelMax ? " hidden" : ""}" role="separator" aria-label="调整工作面板宽度" aria-orientation="vertical" aria-valuemin="280" aria-valuemax="${Math.max(280, (document.querySelector(".content-area")?.clientWidth || innerWidth) - 400)}" aria-valuenow="${Number(viewStorage.getItem("panel-width")) || 340}" tabindex="0" title="拖动调整宽度，双击还原"></div>`;
+}
+function rememberPanel() {
+  viewStorage.setItem("panel-open", String(ui.panel));
+  viewStorage.setItem("panel-page", ui.panelPage);
 }
 const browserStates = new Map();
 let browserViewFrame = 0, browserViewSignature = "", observedBrowserViewport;
@@ -635,12 +658,13 @@ function browserPanel() {
   const b = browserStates.get(session()?.id) || {}, tabs = b.tabs || [];
   return `<aside class="work-panel browser-panel${ui.panelMax ? " maximized" : ""}">
     <div class="browser-tabs-bar"><div class="browser-tabs" role="tablist" aria-label="浏览器标签页">${tabs.length ? tabs.map(t => `<div class="browser-tab${t.id === b.activeTab ? " active" : ""}"><button role="tab" aria-selected="${t.id === b.activeTab}" data-action="browser-selectTab" data-id="${esc(t.id)}" title="${esc(t.title)}">${icon(t.loading ? "refresh" : "browser", t.loading ? "spinning" : "")}<span class="ellipsis">${esc(t.title || "新标签页")}</span></button>${ib("browser-closeTab", "关闭标签页", "close", `data-id="${esc(t.id)}"`)}</div>`).join("") : '<span class="browser-idle-tab">' + icon("browser") + '浏览器</span>'}</div>
-    ${ib("browser-newTab", "新建标签页", "plus")}${ib("maximize-panel", ui.panelMax ? "还原面板" : "展开面板", "expand")}${ib("toggle-panel", "收起浏览器", "panel")}</div>
+    ${ib("browser-newTab", "新建标签页", "plus")}${ib("maximize-panel", ui.panelMax ? "还原面板" : "展开面板", "expand")}${ib("toggle-panel", "收起浏览器", "panel")}${ib("close-panel", "关闭工作面板", "close")}</div>
     <div class="browser-toolbar"><div class="browser-navigation">${ib("browser-back", "后退", "back", b.canGoBack ? "" : "disabled")}${ib("browser-forward", "前进", "chevron", b.canGoForward ? "" : "disabled")}${ib(b.loading ? "browser-stop" : "browser-reload", b.loading ? "停止加载" : "刷新网页", b.loading ? "close" : "refresh", b.url ? "" : "disabled")}</div>
     <form id="browser-form" class="browser-address">${icon(b.url?.startsWith("https:") ? "shield" : "search")}<input id="browser-address" name="url" aria-label="网页地址或搜索" placeholder="搜索或输入网址" autocomplete="off" spellcheck="false" value="${esc(b.url || "")}"></form>
     ${ib("browser-external", "在系统浏览器打开", "external", b.url ? "" : "disabled")}</div>
+    <div class="browser-connection-note" role="status"><span>手动预览 · 官方扩展尚未接通</span><button data-action="runtime">配置</button></div>
     ${b.error ? `<div class="browser-error" role="status">${icon("info")}<span>${esc(b.error)}</span></div>` : ""}
-    <div id="browser-viewport" class="browser-viewport">${!b.url ? `<div class="browser-start">${icon("browser")}<strong>从这里打开网页</strong><span>输入网址或搜索内容，也可以直接让 Codex 浏览。</span><button class="outline" data-action="browser-google">${icon("search")}Google 搜索</button></div>` : ""}</div>
+    <div id="browser-viewport" class="browser-viewport">${!b.url ? `<div class="browser-start">${icon("browser")}<strong>网页预览</strong><span>输入网址或搜索内容。自动操作需接通官方 ChatGPT 扩展。</span><button class="outline" data-action="browser-google">${icon("search")}Google 搜索</button></div>` : ""}</div>
     ${b.loading ? '<div class="browser-loading-line"></div>' : ""}</aside>`;
 }
 function refreshBrowserPanel() {
@@ -665,8 +689,10 @@ function workPanel() {
       ] || "工作区") +
       "</strong>" +
       ib("panel-refresh", "刷新", "refresh") +
+      ib("maximize-panel", ui.panelMax ? "还原面板" : "展开面板", "expand") +
+      ib("close-panel", "关闭工作面板", "close") +
       "</div>"
-    : "<h3>新建</h3>";
+    : `<div class="panel-header"><strong>新建</strong>${ib("close-panel", "关闭工作面板", "close")}</div>`;
   let body = "";
   if (!ui.panelPage)
     body =
@@ -791,6 +817,10 @@ function modelSettings() {
 function projectSettings() {
   return `<h1>项目</h1><p class="modal-description">选择本地目录供 Codex 工作。微信账户的目录可在左下角「连接到微信」中单独设置。</p>${state.projects.map((p) => `<div class="provider-card"><div class="provider-symbol">${icon("folder")}</div><div class="grow"><strong>${esc(p.name)}</strong><p>${esc(p.workspace)}</p></div>${ib("open-project-folder", "打开目录", "external", `data-id="${p.id}"`)}${ib("remove-project", "从列表移除", "trash", `data-id="${p.id}"`)}</div>`).join("") || '<div class="settings-card empty-note">还没有项目。添加目录后，即可开始编程。</div>'}${button("add-project", "添加项目", "plus", "outline")}`;
 }
+function officialBrowserSettings() {
+  const status = ui.officialBrowser;
+  return `<h2>官方浏览器扩展</h2><div class="settings-card"><p class="setting-title">尚未接通官方扩展</p><p class="setting-description">${esc(status?.reason || "暂未获得官方扩展连接状态。")}</p>${(status?.browsers || []).map(b => `<div class="setting-row"><span class="grow">${esc(b.name)}</span><span class="muted">${b.installed ? "检测到官方扩展文件" : b.detection === "unknown" ? "安装情况未知" : "未检测到官方扩展文件"}</span></div>`).join("")}<p class="setting-description">安装检测不代表启用或授权成功。当前只能手动预览网页，微信和 QQClaw 的 Codex 会话尚不能通过官方扩展操作浏览器。</p><div class="row">${button("official-browser-store", "官方扩展安装入口", "external", "outline")}${button("official-browser-docs", "查看官方说明", "external", "outline")}</div></div>`;
+}
 function runtimeSettings() {
   const e = ui.environment;
   const r = ui.runtime;
@@ -806,10 +836,10 @@ function runtimeSettings() {
     <div class="runtime-setup-status" role="status">${icon(environmentReady() ? "check" : "info")}<span>${notice}</span></div>
     <h2>1. NodeJS</h2><div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">${r?.nodeReady ? `已检测到 Node.js ${esc(r.nodeVersion)}` : "尚未配置可用的 NodeJS"}</div><p class="setting-description">${esc(r?.nodeError || r?.nodePath || "需要 Node.js 22.13 或更新版本，包含 npm。下载安装后会自动检测。")}</p></div>${button("install-node", "前往官网下载", "external", "outline", installing ? "disabled" : "")}${ib("choose-node", isMac ? "手动选择 node" : "手动选择 node.exe", "folder", installing ? "disabled" : "")}</div></div>
     <h2>2. Codex</h2><div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">${e?.codexPath ? `Codex 已就绪 · ${sourceName}` : "尚未检测到 Codex"}</div><p class="setting-description">${esc(e?.codexPath || e?.error || (r?.nodeReady ? "可以使用 Desktop 附带的程序，也可以一键安装独立 CLI。" : "请先完成 NodeJS 安装，然后配置 Codex。"))}</p></div>${button("install-codex", installing ? "正在安装…" : "一键安装 CLI", "plus", "primary", !r?.nodeReady || installing ? "disabled" : "")}</div><div style="margin-top:19px" class="code-command">npm install -g @openai/codex</div><div class="row" style="margin-top:15px">${button("login-codex", "登录 Codex", "external", "outline", !e?.codexPath || installing ? "disabled" : "")}${button("codex-docs", "安装说明", "info", "outline")}</div></div>
-    <div class="settings-card"><label class="field"><span class="field-label">Codex 来源</span><select id="codex-source" ${!r?.nodeReady || installing || ui.savingCodexSource ? "disabled" : ""}>${[["auto", "自动检测（Desktop 优先，CLI 回退）"], ["desktop", "Desktop 附带的运行程序"], ["cli", "独立 Codex CLI"], ["custom", "手动指定程序"]].map(([value, label]) => `<option value="${value}" ${source === value ? "selected" : ""}>${label}</option>`).join("")}</select><small>内置浏览器由 QQClaw 提供，可直接从微信调用，无需 Desktop 或浏览器扩展。</small></label>${source === "custom" ? `<label class="field"><span class="field-label">Codex 程序路径</span><div class="field-row"><input id="codex-path" value="${esc(ui.codexPathDraft ?? state.settings.codexPath ?? "")}" placeholder="选择可用的 Codex 程序" ${installing || ui.savingCodexSource ? "disabled" : ""}>${button("choose-codex", "选择", "folder", "outline", installing || ui.savingCodexSource ? "disabled" : "")}</div></label>` : ""}${button("save-codex-source", ui.savingCodexSource ? "正在保存…" : "保存来源", "check", "outline", !r?.nodeReady || installing || ui.savingCodexSource ? "disabled" : "")}</div>
-    <div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">Codex Desktop · ${desktop?.installed ? "已检测到" : "未安装或未注册"}</div><p class="setting-description">可选：将对话副本接续到 Desktop。QQClaw 自带浏览器，无需安装 Desktop；副本后续回复不会同步回微信。</p></div>${button("open-desktop", "打开 Desktop", "external", "outline", !desktop?.installed ? "disabled" : "")}${button("install-desktop", "安装入口", "external", "outline")}</div></div>
+    <div class="settings-card"><label class="field"><span class="field-label">Codex 来源</span><select id="codex-source" ${!r?.nodeReady || installing || ui.savingCodexSource ? "disabled" : ""}>${[["auto", "自动检测（Desktop 优先，CLI 回退）"], ["desktop", "Desktop 附带的运行程序"], ["cli", "独立 Codex CLI"], ["custom", "手动指定程序"]].map(([value, label]) => `<option value="${value}" ${source === value ? "selected" : ""}>${label}</option>`).join("")}</select><small>运行程序来源不等于官方浏览器授权。官方扩展连接状态见下方。</small></label>${source === "custom" ? `<label class="field"><span class="field-label">Codex 程序路径</span><div class="field-row"><input id="codex-path" value="${esc(ui.codexPathDraft ?? state.settings.codexPath ?? "")}" placeholder="选择可用的 Codex 程序" ${installing || ui.savingCodexSource ? "disabled" : ""}>${button("choose-codex", "选择", "folder", "outline", installing || ui.savingCodexSource ? "disabled" : "")}</div></label>` : ""}${button("save-codex-source", ui.savingCodexSource ? "正在保存…" : "保存来源", "check", "outline", !r?.nodeReady || installing || ui.savingCodexSource ? "disabled" : "")}</div>
+    <div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">Codex Desktop · ${desktop?.installed ? "已检测到" : "未安装或未注册"}</div><p class="setting-description">可选：将对话副本接续到 Desktop；后续回复不会同步回微信。此入口不等于微信自动调用官方扩展。</p></div>${button("open-desktop", "打开 Desktop", "external", "outline", !desktop?.installed ? "disabled" : "")}${button("install-desktop", "安装入口", "external", "outline")}</div></div>
     <div class="settings-actions">${button("refresh-environment", ui.checkingEnvironment ? "正在检测…" : "重新检测", "refresh", "outline", ui.checkingEnvironment || installing ? "disabled" : "")}</div>
-    <h2>本地数据</h2><div class="settings-card"><div class="setting-row"><div><div class="setting-title">账户、设置与会话</div><p class="setting-description">${esc(e?.dataDir || r?.dataDir || (isMac ? "~/Library/Application Support/QQClaw" : "%LOCALAPPDATA%\\QQClaw"))}<br>${isMac ? "使用 macOS 钥匙串保护的密钥加密保存" : "使用 Windows 账户加密保存"}；关闭应用会停止微信接收。删除程序不会清除此目录。</p></div>${button("open-data", "打开目录", "folder", "outline")}</div></div>${isMac ? "" : `<div class="settings-card"><div class="setting-row"><div><div class="setting-title">WebView2 Runtime</div><p class="setting-description">${esc(r?.webview || "使用 Windows 系统组件")}</p></div>${button("install-webview", "安装入口", "external", "outline")}</div></div>`}
+    ${officialBrowserSettings()}<h2>本地数据</h2><div class="settings-card"><div class="setting-row"><div><div class="setting-title">账户、设置与会话</div><p class="setting-description">${esc(e?.dataDir || r?.dataDir || (isMac ? "~/Library/Application Support/QQClaw" : "%LOCALAPPDATA%\\QQClaw"))}<br>${isMac ? "使用 macOS 钥匙串保护的密钥加密保存" : "使用 Windows 账户加密保存"}；关闭应用会停止微信接收。删除程序不会清除此目录。</p></div>${button("open-data", "打开目录", "folder", "outline")}</div></div>${isMac ? "" : `<div class="settings-card"><div class="setting-row"><div><div class="setting-title">WebView2 Runtime</div><p class="setting-description">${esc(r?.webview || "使用 Windows 系统组件")}</p></div>${button("install-webview", "安装入口", "external", "outline")}</div></div>`}
     <h2>对话保存与恢复</h2><div class="settings-card"><p class="setting-title">Codex 原生历史</p><p class="setting-description">${esc(e?.codexHome || "启动后台后显示")}<br>已执行的会话由 Codex 持久化，可使用 codex resume 会话ID 继续；首次发送消息后才产生原生历史。是否显示在其他客户端的列表中由该客户端决定。</p></div>
     <div class="settings-card"><p class="setting-title">独立对话备份</p><p class="setting-description">${esc(e?.backupDir || "启动后台后显示")}<br>每次保存同步写入 JSON 和 Markdown，移除应用中的会话时仍保留。备份为可读文本，不包含账户凭证或 API 配置；附件保存路径，不复制文件本体。请将此目录和 Codex 用户目录一起纳入个人备份。</p>${e?.backupError ? `<p role="alert">${esc(e.backupError)}</p>` : ""}<div class="row" style="margin-top:15px">${button("open-conversations", "打开备份目录", "folder", "outline", !e ? "disabled" : "")}${button("restore-conversations", "恢复缺失对话", "refresh", "outline", !e ? "disabled" : "")}</div></div>`;
 }
@@ -817,7 +847,7 @@ function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.10 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.11 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
@@ -1050,6 +1080,7 @@ async function checkEnvironment(restart) {
       const p = state.projects.find((p) => sameWorkspace(p.workspace, session()?.workspace));
       if (p) ui.expanded.add(p.id);
       ui.environment = await rpc("environment");
+      ui.officialBrowser = await rpc("browser.officialStatus").catch(() => null);
       ui.startupError = ui.environment.error || "";
       if (!nodeWasReady && !ui.environment.codexPath)
         toast("NodeJS 环境配置成功，Codex 未检测到配置");
@@ -1124,6 +1155,8 @@ async function saveProvider() {
   toast("API 服务已保存，可在输入框或微信账户中选择。");
 }
 const external = {
+  "official-browser-store": "https://chromewebstore.google.com/detail/chatgpt/hehggadaopoacecdllhhajmbjkdcmajg",
+  "official-browser-docs": "https://developers.openai.com/codex/chrome-extension",
   "install-node": "https://nodejs.org/zh-cn/download",
   "install-desktop": "https://chatgpt.com/download",
   "install-webview": "https://developer.microsoft.com/microsoft-edge/webview2/",
@@ -1189,6 +1222,11 @@ async function action(name, element) {
         { label: "复制会话内容", icon: "copy", action: "copy-session", id },
         { label: "移除会话", icon: "trash", action: "remove-session", id },
       ]);
+    case "message-menu":
+      return showContext(element, [
+        { label: "复制回复", icon: "copy", action: "copy-message", id },
+        { label: "查看工作区更改", icon: "review", action: "panel-review" },
+      ]);
     case "rename-session": {
       ui.renameSession = id;
       ui.overlay = "rename";
@@ -1245,10 +1283,12 @@ async function action(name, element) {
       ui.panel = true;
       ui.panelPage = "";
       ui.panelMax = false;
+      rememberPanel();
       return render();
     case "maximize-panel":
       ui.panel = true;
       ui.panelMax = !ui.panelMax;
+      rememberPanel();
       return render();
     case "panel-review":
     case "panel-files":
@@ -1256,6 +1296,8 @@ async function action(name, element) {
       ui.panelPage = name.slice(6);
       ui.panel = true;
       ui.filePreview = null;
+      if (ui.panelPage === "browser") ui.browserHidden.delete(session()?.id);
+      rememberPanel();
       return loadPanel();
     case "panel-refresh":
       return loadPanel();
@@ -1296,7 +1338,7 @@ async function action(name, element) {
     case "open-browser-window": {
       if (!session()) await newSession();
       if (!session()) return;
-      ui.panel = true; ui.panelPage = "browser"; render();
+      ui.panel = true; ui.panelPage = "browser"; ui.browserHidden.delete(session().id); rememberPanel(); render();
       return rpc("browser.command", { sessionId: session().id, action: "state" });
     }
     case "browser-google":
@@ -1313,11 +1355,34 @@ async function action(name, element) {
       if (!session()) await newSession();
       if (session()) return rpc("browser.command", { sessionId: session().id, action: name.slice(8), tabId: id });
       return;
+    case "context-info": {
+      const stats = contextSnapshot(session()?.tokenUsage);
+      return showContext(element, [
+        { label: stats.percent === null ? "等待 Codex 报告当前上下文" : `已用 ${stats.percent.toFixed(1)}% · 剩余 ${(100 - stats.percent).toFixed(1)}%` },
+        { label: stats.used === null ? "当前 token：未知" : `当前 ${stats.used.toLocaleString()} tokens` },
+        { label: stats.window === null ? "窗口大小：未知" : `窗口 ${stats.window.toLocaleString()} tokens` },
+        { label: "统计来自最近一次请求，压缩后会回落" },
+      ]);
+    }
     case "toggle-sidebar":
       ui.sidebar = !ui.sidebar;
+      viewStorage.setItem("sidebar-open", String(ui.sidebar));
+      return render();
+    case "close-panel":
+      ui.panel = false;
+      ui.panelMax = false;
+      ui.browserHidden.add(session()?.id);
+      rememberPanel();
       return render();
     case "toggle-panel":
       ui.panel = !ui.panel;
+      ui.panelMax = false;
+      if (ui.panel) ui.browserHidden.delete(session()?.id);
+      else ui.browserHidden.add(session()?.id);
+      rememberPanel();
+      return render();
+    case "project-show-more":
+      ui.projectLimits.set(id, (ui.projectLimits.get(id) || 20) + 20);
       return render();
     case "add-project":
       return addProject();
@@ -1527,7 +1592,7 @@ async function action(name, element) {
       render();
       return renderOverlay();
     case "copy-message": {
-      const message = session()?.messages[Number(element.dataset.index)];
+      const message = session()?.messages[Number(element.dataset.index ?? id)];
       if (!message) return toast("该回复已不存在，请重新打开会话。");
       await copyText(message.text || "");
       return toast("已复制回复。");
@@ -1860,8 +1925,8 @@ function onEvent(event, data) {
   if (event === "browser-state") {
     browserStates.set(data.owner, data);
     if (data.owner !== session()?.id) return;
-    if (data.reveal && !ui.page && (!ui.panel || ui.panelPage !== "browser")) {
-      ui.panel = true; ui.panelPage = "browser"; render();
+    if (data.reveal && !ui.browserHidden.has(data.owner) && !ui.page && (!ui.panel || ui.panelPage !== "browser")) {
+      ui.panel = true; ui.panelPage = "browser"; rememberPanel(); render();
     } else refreshBrowserPanel();
   } else if (event === "approval") {
     const key = `${data.sessionId}:${data.requestId}`;
@@ -2005,8 +2070,8 @@ function showContext(anchor, items) {
   menu.innerHTML = items
     .map(
       (item) =>
-        '<button role="menuitem" data-action="' +
-        item.action +
+        '<button role="menuitem" ' + (item.action ? '' : 'disabled ') + 'data-action="' +
+        (item.action || "") +
         '" data-id="' +
         esc(item.id || "") +
         '">' +
@@ -2026,7 +2091,7 @@ function showContext(anchor, items) {
 document.addEventListener("click", (e) => {
   if (
     !e.target.closest(
-      '.row-more,.project-tools,.conversation-title,[data-action="composer-add"]',
+      '.row-more,.project-tools,.conversation-title,[data-action="composer-add"],[data-action="context-info"],[data-action="message-menu"]',
     )
   )
     document.querySelector(".context-menu")?.remove();
@@ -2104,6 +2169,66 @@ document.documentElement.style.setProperty(
   "--sidebar-width",
   (Number(viewStorage.getItem("sidebar-width")) || 275) + "px",
 );
+function resizePanel(value) {
+  const area = document.querySelector(".content-area");
+  const maximum = Math.max(280, Math.min(1200, (area?.clientWidth || innerWidth) - 400));
+  const width = Math.round(Math.max(280, Math.min(maximum, value)));
+  document.documentElement.style.setProperty("--panel-width", width + "px");
+  viewStorage.setItem("panel-width", String(width));
+  const splitter = document.querySelector(".panel-splitter");
+  splitter?.setAttribute("aria-valuenow", String(width));
+  splitter?.setAttribute("aria-valuemax", String(maximum));
+  scheduleBrowserView();
+}
+document.documentElement.style.setProperty("--panel-width", (Number(viewStorage.getItem("panel-width")) || 340) + "px");
+document.addEventListener("pointerdown", (event) => {
+  const splitter = event.target.closest(".panel-splitter");
+  if (!splitter || event.button !== 0) return;
+  event.preventDefault();
+  const area = document.querySelector(".content-area");
+  splitter.setPointerCapture(event.pointerId);
+  document.documentElement.classList.add("resizing-panel");
+  const move = (e) => resizePanel(area.getBoundingClientRect().right - e.clientX);
+  const done = () => {
+    splitter.removeEventListener("pointermove", move);
+    splitter.removeEventListener("pointerup", done);
+    splitter.removeEventListener("pointercancel", done);
+    splitter.removeEventListener("lostpointercapture", done);
+    window.removeEventListener("blur", done);
+    document.documentElement.classList.remove("resizing-panel");
+    if (splitter.hasPointerCapture(event.pointerId)) splitter.releasePointerCapture(event.pointerId);
+    scheduleBrowserView();
+  };
+  splitter.addEventListener("pointermove", move);
+  splitter.addEventListener("pointerup", done);
+  splitter.addEventListener("pointercancel", done);
+  splitter.addEventListener("lostpointercapture", done);
+  window.addEventListener("blur", done);
+});
+document.addEventListener("dblclick", (event) => {
+  if (event.target.closest(".panel-splitter")) resizePanel(340);
+});
+document.addEventListener("keydown", (event) => {
+  const splitter = event.target.closest(".panel-splitter,.sidebar-splitter");
+  if (splitter && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+    event.preventDefault();
+    const panel = splitter.classList.contains("panel-splitter"), step = event.shiftKey ? 64 : 16;
+    const current = panel ? document.querySelector(".work-panel").getBoundingClientRect().width : document.querySelector(".sidebar").getBoundingClientRect().width;
+    const value = event.key === "Home" ? (panel ? 280 : 220) : event.key === "End" ? (panel ? innerWidth : 520) : current + (event.key === "ArrowLeft" ? (panel ? step : -step) : (panel ? -step : step));
+    if (panel) resizePanel(value);
+    else { const width = Math.max(220, Math.min(520, value)); document.documentElement.style.setProperty("--sidebar-width", width + "px"); viewStorage.setItem("sidebar-width", String(width)); }
+    return;
+  }
+  if (!(isMac ? event.metaKey : event.ctrlKey) || ui.page || ui.overlay) return;
+  const key = event.key.toLowerCase();
+  if (key === "b") { event.preventDefault(); action(event.shiftKey ? "toggle-panel" : "toggle-sidebar").catch(e => toast(e.message)); }
+  if (key === "t") { event.preventDefault(); action("open-browser-window").then(() => action("browser-newTab")).catch(e => toast(e.message)); }
+  if (key === "w" && ui.panel && ui.panelPage === "browser") {
+    event.preventDefault();
+    const tab = browserStates.get(session()?.id)?.activeTab;
+    action(tab ? "browser-closeTab" : "close-panel", tab ? { dataset: { id: tab } } : undefined).catch(e => toast(e.message));
+  }
+});
 window.addEventListener("focus", () => {
   if (!environmentReady()) {
     if (ui.page === "runtime" && !ui.installingCodex) refreshEnvironment();
@@ -2145,24 +2270,10 @@ function runSummary(stats) {
   );
 }
 function contextUsage(s) {
-  const tokens = s?.tokenUsage;
-  if (!tokens?.modelContextWindow) return "";
-  const used = tokens.total?.totalTokens || tokens.last?.inputTokens || 0;
-  const percent = Math.min(
-    100,
-    Math.round((used / tokens.modelContextWindow) * 100),
-  );
-  return (
-    '<span class="context-usage" title="上下文已用 ' +
-    used.toLocaleString() +
-    " / " +
-    tokens.modelContextWindow.toLocaleString() +
-    ' tokens"><span class="context-ring" style="--context-percent:' +
-    percent +
-    '%"></span>' +
-    percent +
-    "%</span>"
-  );
+  const { used, window: capacity, percent } = contextSnapshot(s?.tokenUsage);
+  const title = percent === null ? "尚无可用的 Codex 当前上下文统计；第三方模型也可能不报告窗口大小。"
+    : `已用上下文 ${used.toLocaleString()} / ${capacity.toLocaleString()} tokens（${percent.toFixed(1)}%）；剩余 ${(100 - percent).toFixed(1)}%。依据 Codex 最近一次输入及输出统计，不使用历史累计。`;
+  return `<button class="context-usage${percent === null ? " unknown" : ""}" data-action="context-info" title="${esc(title)}" aria-label="${esc(title)}"><span class="context-ring" style="--context-percent:${percent ?? 0}%"></span>${percent === null ? "待统计" : `${percent.toFixed(1)}%`}</button>`;
 }
 
 document.addEventListener("submit", (event) => {
