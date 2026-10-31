@@ -73,8 +73,12 @@ jobs:
                       do { _ = try DesktopIntegration.url(["threadId": "https://invalid"]); throw failure("Invalid thread accepted") }
                       catch let error as NSError { guard error.localizedDescription.contains("会话 ID 无效") else { throw error } }
                       print("PASS: Desktop URL encoding and invalid thread rejection")
-                      let browser = BrowserHost(resources: host.resources)
+                      host.web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1000, height: 760))
+                      let browserWindow = NSWindow(contentRect: host.web.frame, styleMask: [.titled], backing: .buffered, defer: false)
+                      browserWindow.contentView = host.web; browserWindow.orderFront(nil)
+                      let browser = BrowserHost(resources: host.resources, parent: host.web) { _ in }
                       let owner = UUID().uuidString.lowercased()
+                      browser.setView(["owner": owner, "visible": true, "x": 0, "y": 0, "width": 1000, "height": 760, "viewportWidth": 1000, "viewportHeight": 760])
                       let fixture = env["QQCLAW_BROWSER_FIXTURE_URL"]!
                       func control(_ action: String, _ values: [String: Any] = [:]) async throws -> Any {
                           try await browser.handle(values.merging(["action": action, "owner": owner, "profile": String(repeating: "a", count: 32)]) { _, value in value })
@@ -93,7 +97,9 @@ jobs:
                       let screenshot = try await control("screenshot") as! [String: Any]
                       guard let encoded = screenshot["imageBase64"] as? String, let png = Data(base64Encoded: encoded), png.count > 100 else { throw failure("Native browser screenshot failed") }
                       guard !BrowserHost.allowed("file:///etc/passwd"), !BrowserHost.allowed("https://qqclaw.local") else { throw failure("Browser accepted forbidden URL") }
-                      browser.windows.values.forEach { $0.window.orderOut(nil) }
+                      let tabState = try await control("newTab") as! [String: Any]
+                      guard (tabState["tabs"] as? [[String: Any]])?.count == 2 else { throw failure("Browser tab creation failed") }
+                      browser.setView(["visible": false]); browserWindow.orderOut(nil)
                       print("PASS: native WKWebView navigation, DOM snapshot, input, form submission, screenshot and URL restrictions")
                       let first = try await host.startBackend()
                       _ = try await host.call(first, "snapshot")

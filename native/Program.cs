@@ -96,7 +96,7 @@ internal static class Program {
                         using (var source = entry.Open()) using (var destination = File.Create(target)) source.CopyTo(destination);
                     }
                 }
-                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.9");
+                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.10");
             }
             CleanupOldRuntimes(hash);
             SetDllDirectory(RuntimeDirectory);
@@ -219,6 +219,8 @@ internal sealed class DesktopWindow : Form {
                 else if (method == "window.drag") { if (WindowState != FormWindowState.Maximized) { ReleaseCapture(); SendMessage(Handle, 0xA1, new IntPtr(2), IntPtr.Zero); } }
                 else if (method == "window.resize") { int direction; if (WindowState != FormWindowState.Maximized && Int32.TryParse(Get(p, "direction"), out direction) && direction >= 1 && direction <= 8) { ReleaseCapture(); SendMessage(Handle, 0x112, new IntPtr(0xF000 + direction), IntPtr.Zero); } }
                 result = true;
+            } else if (method == "browser.view") {
+                GetBrowserHost().SetView(p); result = true;
             } else if (method == "dialog.folder") {
                 using (var dialog = new FolderBrowserDialog { Description = "选择 Codex 的工作目录", ShowNewFolderButton = true, SelectedPath = Get(p, "path") })
                     result = dialog.ShowDialog(this) == DialogResult.OK ? dialog.SelectedPath : null;
@@ -264,6 +266,9 @@ internal sealed class DesktopWindow : Form {
         }
     }
     private static string Quote(string text) { return "\"" + text.Replace("\"", "") + "\""; }
+    private BrowserHost GetBrowserHost() {
+        return browserHost ?? (browserHost = new BrowserHost(this, value => Post(new { kind = "event", @event = "browser-state", data = value })));
+    }
     private void OpenUrl(string url) {
         Uri uri; if (!Uri.TryCreate(url, UriKind.Absolute, out uri) || (uri.Scheme != "https" && uri.Scheme != "http")) throw new Exception("只能打开 HTTP 或 HTTPS 链接。");
         Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
@@ -294,7 +299,7 @@ internal sealed class DesktopWindow : Form {
                 }
             } catch (Exception failure) { error = failure.Message; }
         }
-        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.9", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
+        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.10", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
     }
     private Task<string> ReadNodeVersion(string node) { return ReadNodeVersion(node, 5); }
     private async Task<string> ReadNodeVersion(string node, int timeoutSeconds) {
@@ -397,7 +402,7 @@ internal sealed class DesktopWindow : Form {
                 if (Get(message, "method") == "browser.control") {
                     BeginInvoke(new Action(async delegate {
                         object browserResult = null; string browserError = null;
-                        try { browserHost = browserHost ?? new BrowserHost(this); browserResult = await browserHost.Handle(Params(message)); }
+                        try { browserResult = await GetBrowserHost().Handle(Params(message)); }
                         catch (Exception failure) { browserError = failure.Message; }
                         if (backend == owner) WriteBackend(new { kind = "nativeResponse", id = message["id"], result = browserResult, error = browserError });
                     }));

@@ -1,28 +1,94 @@
 import AppKit
 import WebKit
 
+@MainActor final class BrowserSession {
+    let owner: String, profile: String
+    var tabs: [BrowserWindow] = []
+    var active: BrowserWindow!
+    init(owner: String, profile: String) { self.owner = owner; self.profile = profile }
+}
+
 @MainActor final class BrowserHost {
-    let resources: URL
-    var windows: [String: BrowserWindow] = [:]
+    let resources: URL, parent: NSView
+    let notify: ([String: Any]) -> Void
+    var sessions: [String: BrowserSession] = [:]
     var stores: [String: WKWebsiteDataStore] = [:]
     var operations: [String: Task<Any, Error>] = [:]
-    init(resources: URL) { self.resources = resources }
+    var visibleOwner = "", visible = false, rectangle = NSRect.zero
+    init(resources: URL, parent: NSView, notify: @escaping ([String: Any]) -> Void) {
+        self.resources = resources; self.parent = parent; self.notify = notify
+    }
+    func setView(_ p: [String: Any]) {
+        visibleOwner = p["owner"] as? String ?? ""
+        let width = (p["viewportWidth"] as? NSNumber)?.doubleValue ?? 0
+        let height = (p["viewportHeight"] as? NSNumber)?.doubleValue ?? 0
+        visible = p["visible"] as? Bool == true && width > 0 && height > 0
+        if visible {
+            func number(_ key: String) -> Double { let n = (p[key] as? NSNumber)?.doubleValue ?? 0; return n.isFinite ? max(-10000, min(30000, n)) : 0 }
+            let sx = parent.bounds.width / width, sy = parent.bounds.height / height
+            let x = number("x") * sx, w = max(0, number("width") * sx), h = max(0, number("height") * sy)
+            let y = parent.isFlipped ? number("y") * sy : parent.bounds.height - (number("y") + number("height")) * sy
+            rectangle = NSRect(x: x, y: y, width: w, height: h).intersection(parent.bounds)
+        }
+        layout()
+    }
+    func layout() {
+        for (owner, session) in sessions { for tab in session.tabs {
+            let show = visible && owner == visibleOwner && session.active === tab && !rectangle.isEmpty
+            tab.web.frame = show ? rectangle : NSRect(x: -2000, y: 0, width: 1000, height: 760)
+            tab.web.isHidden = !show
+            if show { parent.addSubview(tab.web, positioned: .above, relativeTo: nil) }
+        } }
+    }
+    func state(_ session: BrowserSession, reveal: Bool = false) -> [String: Any] {
+        let tab = session.active!
+        return ["owner": session.owner, "reveal": reveal, "activeTab": tab.id,
+                "tabs": session.tabs.map { ["id": $0.id, "title": $0.web.title ?? "新标签页", "url": $0.url, "loading": $0.web.isLoading] as [String: Any] },
+                "url": tab.url, "title": tab.web.title ?? "新标签页", "loading": tab.web.isLoading,
+                "canGoBack": tab.web.canGoBack, "canGoForward": tab.web.canGoForward, "error": tab.errorText]
+    }
+    func publish(_ session: BrowserSession, reveal: Bool = false) { if session.active != nil { notify(state(session, reveal: reveal)) } }
+    func newTab(_ session: BrowserSession) throws {
+        guard session.tabs.count < 12 else { throw failure("最多打开 12 个标签页，请先关闭不用的页面。") }
+        // macOS 13 lacks persistent stores by identifier. Share only the same
+        // account's in-memory store; never borrow the app or system login store.
+        let store = stores[session.profile] ?? WKWebsiteDataStore.nonPersistent(); stores[session.profile] = store
+        let tab = BrowserWindow(resources: resources, store: store) { [weak self, weak session] in
+            guard let self, let session else { return }; self.publish(session)
+        }
+        parent.addSubview(tab.web); tab.web.isHidden = true
+        session.tabs.append(tab); session.active = tab
+    }
     func handle(_ p: [String: Any]) async throws -> Any {
         let owner = p["owner"] as? String ?? "", action = p["action"] as? String ?? ""
         guard UUID(uuidString: owner) != nil else { throw failure("浏览器会话无效。") }
-        if action == "stop" { windows[owner]?.stop(); return ["stopped": true] }
-        if windows[owner] == nil {
+        if action == "stop" { sessions[owner]?.tabs.forEach { $0.stop() }; return ["stopped": true] }
+        if sessions[owner] == nil {
             let profile = p["profile"] as? String ?? ""
             guard profile.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else { throw failure("浏览器用户目录无效。") }
-            // macOS 13 has no per-identifier persistent WKWebsiteDataStore API.
-            // Keep isolated account stores in memory; never share system logins.
-            let store = stores[profile] ?? WKWebsiteDataStore.nonPersistent(); stores[profile] = store
-            windows[owner] = BrowserWindow(resources: resources, store: store)
+            let session = BrowserSession(owner: owner, profile: profile); sessions[owner] = session; try newTab(session)
         }
-        let previous = operations[owner], window = windows[owner]!
+        let previous = operations[owner], session = sessions[owner]!
         let operation = Task { @MainActor () throws -> Any in
             _ = await previous?.result
-            return try await window.run(p)
+            defer { self.publish(session) }
+            switch action {
+            case "newTab": try self.newTab(session)
+            case "selectTab", "closeTab":
+                guard let index = session.tabs.firstIndex(where: { $0.id == p["tabId"] as? String }) else { throw failure("浏览器标签页已关闭。") }
+                let tab = session.tabs[index]
+                if action == "selectTab" { session.active = tab }
+                else {
+                    session.tabs.remove(at: index); tab.stop(); tab.web.removeFromSuperview()
+                    if session.active === tab { session.active = session.tabs.isEmpty ? nil : session.tabs[min(index, session.tabs.count - 1)] }
+                    if session.active == nil { try self.newTab(session) }
+                }
+            default: break
+            }
+            self.layout(); self.publish(session, reveal: action != "state")
+            if ["state", "newTab", "selectTab", "closeTab"].contains(action) { return self.state(session) }
+            do { return try await session.active.run(p) }
+            catch { session.active.errorText = error.localizedDescription; throw error }
         }
         operations[owner] = operation
         return try await operation.value
@@ -33,39 +99,28 @@ import WebKit
     }
 }
 
-@MainActor final class BrowserWindow: NSObject, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
-    let resources: URL, window: NSWindow, web: WKWebView
-    let address = NSTextField(string: ""), status = NSTextField(labelWithString: "QQClaw 内置浏览器")
+@MainActor final class BrowserWindow: NSObject, WKNavigationDelegate, WKUIDelegate {
+    let resources: URL, web: WKWebView
+    let id = UUID().uuidString.lowercased()
+    let changed: () -> Void
+    var errorText = ""
+    var url: String { web.url?.absoluteString == "about:blank" ? "" : web.url?.absoluteString ?? "" }
+    var observations: [NSKeyValueObservation] = []
     var navigation: CheckedContinuation<Void, Error>?, navigationToken: UUID?
-    init(resources: URL, store: WKWebsiteDataStore) {
-        self.resources = resources
+    init(resources: URL, store: WKWebsiteDataStore, changed: @escaping () -> Void) {
+        self.resources = resources; self.changed = changed
         let config = WKWebViewConfiguration(); config.websiteDataStore = store
-        // This view has no script-message handler or application URL scheme.
-        web = WKWebView(frame: .zero, configuration: config)
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 820), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        // No application URL scheme or script-message handler on page views.
+        web = WKWebView(frame: NSRect(x: -2000, y: 0, width: 1000, height: 760), configuration: config)
         super.init()
-        window.title = "QQClaw · 内置浏览器"; window.minSize = NSSize(width: 720, height: 480); window.isReleasedWhenClosed = false; window.delegate = self
         web.navigationDelegate = self; web.uiDelegate = self
-        address.placeholderString = "https://…"; address.target = self; address.action = #selector(openAddress)
-        let back = NSButton(title: "←", target: self, action: #selector(goBack))
-        let reload = NSButton(title: "↻", target: self, action: #selector(reloadPage))
-        let go = NSButton(title: "打开", target: self, action: #selector(openAddress))
-        let bar = NSStackView(views: [back, reload, address, go]); bar.orientation = .horizontal; bar.spacing = 8
-        let content = NSView(); window.contentView = content
-        for view in [bar, web, status] { view.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(view) }
-        NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 8), bar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -8), bar.topAnchor.constraint(equalTo: content.topAnchor, constant: 7), bar.heightAnchor.constraint(equalToConstant: 30),
-            web.leadingAnchor.constraint(equalTo: content.leadingAnchor), web.trailingAnchor.constraint(equalTo: content.trailingAnchor), web.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: 7), web.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -4),
-            status.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 8), status.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -8), status.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -4), status.heightAnchor.constraint(equalToConstant: 20),
-        ])
-        address.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        window.center()
+        observations = [web.observe(\.url, options: [.new]) { [weak self] _, _ in self?.changed() },
+                        web.observe(\.title, options: [.new]) { [weak self] _, _ in self?.changed() },
+                        web.observe(\.isLoading, options: [.new]) { [weak self] _, _ in self?.changed() },
+                        web.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in self?.changed() },
+                        web.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in self?.changed() }]
     }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { sender.orderOut(nil); return false }
-    @objc func openAddress() { Task { @MainActor in do { _ = try await run(["action": "open", "url": address.stringValue]) } catch { status.stringValue = error.localizedDescription } } }
-    @objc func goBack() { if web.canGoBack { web.goBack() } }
-    @objc func reloadPage() { web.reload() }
-    func stop() { web.stopLoading(); finishNavigation(.failure(failure("浏览器操作已停止。"))) }
+    func stop() { web.stopLoading(); finishNavigation(.failure(failure("浏览器操作已停止。"))); changed() }
     func finishNavigation(_ result: Result<Void, Error>) {
         let continuation = navigation; navigation = nil; navigationToken = nil; continuation?.resume(with: result)
     }
@@ -79,15 +134,15 @@ import WebKit
             }
         }
     }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { address.stringValue = web.url?.absoluteString ?? ""; window.title = "QQClaw · " + (web.title ?? "内置浏览器"); finishNavigation(.success(())) }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finishNavigation(.failure(error)) }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finishNavigation(.failure(error)) }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { errorText = ""; finishNavigation(.success(())); changed() }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { errorText = error.localizedDescription; finishNavigation(.failure(error)); changed() }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { errorText = error.localizedDescription; finishNavigation(.failure(error)); changed() }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         let value = action.request.url?.absoluteString ?? ""
         decisionHandler(value == "about:blank" || BrowserHost.allowed(value) ? .allow : .cancel)
     }
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-        if !response.canShowMIMEType { status.stringValue = "此版内置浏览器支持网页操作，下载请使用系统浏览器。" }
+        if !response.canShowMIMEType { errorText = "下载请在系统浏览器中完成。"; changed() }
         decisionHandler(response.canShowMIMEType ? .allow : .cancel)
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
@@ -107,8 +162,7 @@ import WebKit
         }
     }
     func run(_ p: [String: Any]) async throws -> Any {
-        window.makeKeyAndOrderFront(nil)
-        let action = p["action"] as? String ?? ""; status.stringValue = "正在执行：" + action
+        let action = p["action"] as? String ?? ""
         let result: Any
         switch action {
         case "open":
@@ -117,6 +171,10 @@ import WebKit
             try await navigate { web.load(URLRequest(url: url)) }; result = try await page(["action": "snapshot"])
         case "back":
             if web.canGoBack { try await navigate { web.goBack() } }; result = try await page(["action": "snapshot"])
+        case "forward":
+            if web.canGoForward { try await navigate { web.goForward() } }; result = try await page(["action": "snapshot"])
+        case "reload":
+            try await navigate { web.reload() }; result = try await page(["action": "snapshot"])
         case "screenshot":
             result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Any, Error>) in
                 web.takeSnapshot(with: nil) { image, error in
@@ -127,6 +185,6 @@ import WebKit
             }
         default: result = try await page(p)
         }
-        status.stringValue = "QQClaw 内置浏览器 · " + (web.url?.absoluteString ?? ""); return result
+        return result
     }
 }

@@ -433,7 +433,7 @@ function sidebar() {
     ) +
     ib("history", "会话历史", "clock") +
     ib("notifications", "通知", "bell") +
-    '<button class="version" data-action="about">v0.3.9</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v0.3.10</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -606,7 +606,56 @@ function workspace() {
     "</div></div>"
   );
 }
+const browserStates = new Map();
+let browserViewFrame = 0, browserViewSignature = "", observedBrowserViewport;
+const browserResizeObserver = new ResizeObserver(() => scheduleBrowserView());
+function scheduleBrowserView() {
+  if (browserViewFrame) return;
+  browserViewFrame = requestAnimationFrame(() => {
+    browserViewFrame = 0;
+    const viewport = $("browser-viewport");
+    if (viewport !== observedBrowserViewport) {
+      browserResizeObserver.disconnect();
+      if (viewport) browserResizeObserver.observe(viewport);
+      observedBrowserViewport = viewport;
+    }
+    const rect = viewport?.getBoundingClientRect();
+    const data = browserStates.get(session()?.id);
+    const blocked = !!document.querySelector(".overlay-backdrop,.picker-menu,.context-menu");
+    const value = { owner: session()?.id || "", visible: !!(rect?.width && rect?.height && !blocked && !ui.page && data?.url),
+      x: rect?.x || 0, y: rect?.y || 0, width: rect?.width || 0, height: rect?.height || 0,
+      viewportWidth: innerWidth, viewportHeight: innerHeight };
+    const signature = JSON.stringify(value);
+    if (signature === browserViewSignature) return;
+    browserViewSignature = signature;
+    rpc("browser.view", value).catch(() => { browserViewSignature = ""; });
+  });
+}
+function browserPanel() {
+  const b = browserStates.get(session()?.id) || {}, tabs = b.tabs || [];
+  return `<aside class="work-panel browser-panel${ui.panelMax ? " maximized" : ""}">
+    <div class="browser-tabs-bar"><div class="browser-tabs" role="tablist" aria-label="浏览器标签页">${tabs.length ? tabs.map(t => `<div class="browser-tab${t.id === b.activeTab ? " active" : ""}"><button role="tab" aria-selected="${t.id === b.activeTab}" data-action="browser-selectTab" data-id="${esc(t.id)}" title="${esc(t.title)}">${icon(t.loading ? "refresh" : "browser", t.loading ? "spinning" : "")}<span class="ellipsis">${esc(t.title || "新标签页")}</span></button>${ib("browser-closeTab", "关闭标签页", "close", `data-id="${esc(t.id)}"`)}</div>`).join("") : '<span class="browser-idle-tab">' + icon("browser") + '浏览器</span>'}</div>
+    ${ib("browser-newTab", "新建标签页", "plus")}${ib("maximize-panel", ui.panelMax ? "还原面板" : "展开面板", "expand")}${ib("toggle-panel", "收起浏览器", "panel")}</div>
+    <div class="browser-toolbar"><div class="browser-navigation">${ib("browser-back", "后退", "back", b.canGoBack ? "" : "disabled")}${ib("browser-forward", "前进", "chevron", b.canGoForward ? "" : "disabled")}${ib(b.loading ? "browser-stop" : "browser-reload", b.loading ? "停止加载" : "刷新网页", b.loading ? "close" : "refresh", b.url ? "" : "disabled")}</div>
+    <form id="browser-form" class="browser-address">${icon(b.url?.startsWith("https:") ? "shield" : "search")}<input id="browser-address" name="url" aria-label="网页地址或搜索" placeholder="搜索或输入网址" autocomplete="off" spellcheck="false" value="${esc(b.url || "")}"></form>
+    ${ib("browser-external", "在系统浏览器打开", "external", b.url ? "" : "disabled")}</div>
+    ${b.error ? `<div class="browser-error" role="status">${icon("info")}<span>${esc(b.error)}</span></div>` : ""}
+    <div id="browser-viewport" class="browser-viewport">${!b.url ? `<div class="browser-start">${icon("browser")}<strong>从这里打开网页</strong><span>输入网址或搜索内容，也可以直接让 Codex 浏览。</span><button class="outline" data-action="browser-google">${icon("search")}Google 搜索</button></div>` : ""}</div>
+    ${b.loading ? '<div class="browser-loading-line"></div>' : ""}</aside>`;
+}
+function refreshBrowserPanel() {
+  const panel = document.querySelector(".browser-panel");
+  if (panel) {
+    const focus = document.activeElement?.id === "browser-address";
+    const value = focus ? $("browser-address").value : "";
+    const start = focus ? $("browser-address").selectionStart : 0;
+    panel.outerHTML = browserPanel();
+    if (focus) { $("browser-address").value = value; $("browser-address").focus(); $("browser-address").setSelectionRange(start, start); }
+  }
+  scheduleBrowserView();
+}
 function workPanel() {
+  if (ui.panelPage === "browser") return browserPanel();
   const header = ui.panelPage
     ? '<div class="panel-header">' +
       ib("panel-new", "返回新建面板", "back") +
@@ -628,13 +677,6 @@ function workPanel() {
       '浏览器</button><button class="panel-action" data-action="panel-files">' +
       icon("folder") +
       "文件管理器</button>";
-  else if (ui.panelPage === "browser")
-    body =
-      '<form id="browser-form"><label class="field"><span class="field-label">打开网页</span><input name="url" aria-label="网页地址" placeholder="https://…" value="' +
-      esc(ui.browserUrl || "") +
-      '"></label>' +
-      button("open-browser", "在内置浏览器打开", "browser", "outline") +
-      "</form>";
   else if (ui.panelLoading) body = '<div class="panel-empty">正在读取…</div>';
   else if (ui.panelError)
     body = '<div class="panel-empty">' + esc(ui.panelError) + "</div>";
@@ -775,7 +817,7 @@ function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.9 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.10 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
@@ -1244,16 +1286,33 @@ async function action(name, element) {
       ui.filePreview = null;
       return render();
     case "open-browser": {
-      ui.browserUrl = $("browser-form").elements.url.value.trim();
+      let url = $("browser-form").elements.url.value.trim();
+      if (!url) return;
+      if (!/^https?:\/\//i.test(url)) url = /^[\w-]+(?:\.[\w-]+)+(?:[:/].*)?$/.test(url) || /^localhost[:/]/.test(url) ? `https://${url}` : `https://www.google.com/search?q=${encodeURIComponent(url)}`;
       if (!session()) await newSession();
       if (!session()) return;
-      return rpc("browser.open", { sessionId: session().id, url: ui.browserUrl });
+      return rpc("browser.open", { sessionId: session().id, url });
     }
     case "open-browser-window": {
       if (!session()) await newSession();
       if (!session()) return;
-      return rpc("browser.open", { sessionId: session().id });
+      ui.panel = true; ui.panelPage = "browser"; render();
+      return rpc("browser.command", { sessionId: session().id, action: "state" });
     }
+    case "browser-google":
+      if (!session()) await newSession();
+      if (session()) return rpc("browser.open", { sessionId: session().id, url: "https://www.google.com/" });
+      return;
+    case "browser-external": {
+      const url = browserStates.get(session()?.id)?.url;
+      if (url) return rpc("shell.open", { url });
+      return;
+    }
+    case "browser-back": case "browser-forward": case "browser-reload": case "browser-stop":
+    case "browser-newTab": case "browser-selectTab": case "browser-closeTab":
+      if (!session()) await newSession();
+      if (session()) return rpc("browser.command", { sessionId: session().id, action: name.slice(8), tabId: id });
+      return;
     case "toggle-sidebar":
       ui.sidebar = !ui.sidebar;
       return render();
@@ -1798,7 +1857,13 @@ document.addEventListener("keydown", (event) => {
   }
 });
 function onEvent(event, data) {
-  if (event === "approval") {
+  if (event === "browser-state") {
+    browserStates.set(data.owner, data);
+    if (data.owner !== session()?.id) return;
+    if (data.reveal && !ui.page && (!ui.panel || ui.panelPage !== "browser")) {
+      ui.panel = true; ui.panelPage = "browser"; render();
+    } else refreshBrowserPanel();
+  } else if (event === "approval") {
     const key = `${data.sessionId}:${data.requestId}`;
     ui.approvals.set(key, { ...data, key });
     toast("Codex 正在等待操作确认。");
@@ -2107,3 +2172,8 @@ document.addEventListener("submit", (event) => {
   else if (event.target.id === "provider-form")
     saveProvider().catch((e) => toast(e.message));
 });
+
+// Native web content must track the HTML viewport and hide beneath app menus.
+new MutationObserver(scheduleBrowserView).observe(document.body, { childList: true, subtree: true });
+window.addEventListener("resize", scheduleBrowserView);
+scheduleBrowserView();

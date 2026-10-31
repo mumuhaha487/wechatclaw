@@ -490,6 +490,13 @@ export class App {
         await browser.start();
         return browser.call("open", { url: p.url || "https://www.google.com/" });
       }
+      case "browser.command": {
+        if (!["back", "forward", "reload", "stop", "newTab", "selectTab", "closeTab", "state"].includes(p.action)) throw new Error("不支持的浏览器操作。");
+        const session = this.getSession(p.sessionId);
+        const browser = (await this.client(session)).browser;
+        await browser.start();
+        return browser.call(p.action, { tabId: String(p.tabId || "") });
+      }
       case "attachment.reveal": {
         const session = this.getSession(p.sessionId);
         const message = session.messages[Number(p.message)];

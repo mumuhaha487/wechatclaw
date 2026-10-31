@@ -1629,3 +1629,41 @@ select:focus-visible {
 :root[data-platform="darwin"] .resize-edge { display: none; }
 :root[data-platform="darwin"] code,
 :root[data-platform="darwin"] pre { font-family: Menlo, Monaco, monospace; }
+
+/* Browser chrome stays in the workbench; only page pixels use a native view. */
+.work-panel.browser-panel { display: flex; flex-direction: column; width: clamp(360px, 42vw, 620px); max-width: 62%; flex: 0 0 auto; padding: 0; overflow: hidden; background: var(--page); }
+.browser-tabs-bar { display: flex; align-items: center; gap: 2px; height: 45px; min-height: 45px; padding: 5px 8px 4px; border-bottom: 1px solid var(--line); background: var(--tile); }
+.browser-tabs { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.browser-tab { display: flex; align-items: center; min-width: 88px; max-width: 200px; flex: 1; height: 32px; border: 1px solid transparent; border-radius: 8px; color: var(--muted); }
+.browser-tab.active { background: var(--page); border-color: var(--line); color: var(--text); box-shadow: 0 1px 2px #00000004; }
+.browser-tab > button[role="tab"] { flex: 1; min-width: 0; padding: 0 6px 0 9px; height: 30px; gap: 7px; border: 0; background: transparent; border-radius: 7px; font-size: 12px; font-weight: 400; }
+.browser-tab .icon { width: 14px; height: 14px; flex-shrink: 0; }
+.browser-tab > .icon-button { width: 23px; height: 23px; min-width: 23px; margin-right: 3px; }
+.browser-tabs-bar > .icon-button { width: 28px; height: 28px; min-width: 28px; }
+.browser-idle-tab { display: flex; align-items: center; gap: 8px; padding: 0 9px; font-size: 12px; }
+.browser-idle-tab .icon { width: 15px; height: 15px; }
+.browser-toolbar { display: flex; align-items: center; gap: 7px; min-height: 55px; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+.browser-navigation { display: flex; align-items: center; gap: 1px; }
+.browser-toolbar .icon-button { width: 28px; min-width: 28px; height: 30px; border-radius: 50%; }
+.browser-toolbar .icon { width: 17px; height: 17px; }
+.browser-toolbar .icon-button:disabled { opacity: .28; background: transparent; }
+.browser-address { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; height: 35px; padding: 0 11px; margin: 0; border: 1px solid var(--line); border-radius: 22px; background: var(--page); box-shadow: 0 1px 4px #00000003; }
+.browser-address:focus-within { border-color: var(--focus); }
+.browser-address > .icon { width: 13px; height: 13px; color: var(--muted); flex-shrink: 0; }
+.browser-address input { width: 100%; min-width: 0; height: 31px; padding: 0; outline: none; border: 0; background: transparent; color: var(--text); font-size: 12px; text-overflow: ellipsis; }
+.browser-address input:focus-visible { outline: 0; }
+.browser-viewport { position: relative; flex: 1; min-height: 0; background: #fff; margin: 0 0 8px; }
+.browser-start { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; width: 100%; height: 100%; min-height: 200px; padding: 24px; text-align: center; background: var(--page); }
+.browser-start > .icon { width: 34px; height: 34px; margin-bottom: 3px; color: var(--muted); stroke-width: 1; }
+.browser-start strong { font-size: 14px; font-weight: 500; }
+.browser-start > span { font-size: 12px; color: var(--muted); line-height: 1.7; max-width: 230px; }
+.browser-start button { margin-top: 8px; font-size: 12px; }
+.browser-error { display: flex; align-items: center; gap: 7px; padding: 8px 12px; font-size: 12px; color: var(--muted); background: var(--tile); }
+.browser-error .icon { width: 15px; height: 15px; flex-shrink: 0; }
+.browser-loading-line { position: absolute; top: 98px; left: 0; right: 0; height: 2px; pointer-events: none; background: linear-gradient(90deg, transparent, var(--green), transparent); animation: browser-loading 1.4s ease-in-out infinite; }
+.work-panel.browser-panel.maximized { width: auto; max-width: none; }
+.browser-tab .spinning { animation: browser-spin 1s linear infinite; }
+@keyframes browser-spin { to { transform: rotate(360deg); } }
+@keyframes browser-loading { 0% { opacity: .2; transform: scaleX(.25); } 50% { opacity: .8; } 100% { opacity: .2; transform: scaleX(1); } }
+@media (max-width: 1100px) { .work-panel.browser-panel { width: 380px; max-width: 56%; } .browser-tabs-bar > .icon-button { width: 25px; min-width: 25px; } }
+@media (max-width: 850px) { .work-panel.browser-panel { position: absolute; inset: 46px 8px 8px; width: auto; max-width: none; z-index: 12; border: 1px solid var(--line); border-radius: 12px; } }

@@ -51,7 +51,14 @@ export class BrowserTools {
     // selected automatic execution. Never change another MCP server's policy.
     const mode = ["auto", "workspace-write"].includes(this.session.permission) ? "approve" : "prompt";
     const tools = ["click", "fill", "press", "select"].map((name) => `${name}={approval_mode="${mode}"}`).join(",");
-    return { args: ["-c", `mcp_servers.qqclaw_browser={url=${JSON.stringify(url)},bearer_token_env_var="QQCLAW_BROWSER_MCP_TOKEN",startup_timeout_sec=10,tool_timeout_sec=60,tools={${tools}}}`], env: { QQCLAW_BROWSER_MCP_TOKEN: this.token } };
+    // Desktop plugins require their parent app's access host. They cannot run
+    // in this standalone app-server, even when inherited from CODEX_HOME.
+    // CLI override keys must NOT contain literal quotes around plugin IDs.
+    const isolated = ["browser", "unified-computer-use", "chrome", "computer-use"]
+      .flatMap((name) => ["-c", `plugins.${name}@openai-bundled.enabled=false`]);
+    // Supply a valid disabled transport even on a clean Codex installation.
+    isolated.push("-c", 'mcp_servers.node_repl={enabled=false,command="node"}');
+    return { args: [...isolated, "-c", `mcp_servers.qqclaw_browser={url=${JSON.stringify(url)},bearer_token_env_var="QQCLAW_BROWSER_MCP_TOKEN",startup_timeout_sec=10,tool_timeout_sec=60,tools={${tools}}}`], env: { QQCLAW_BROWSER_MCP_TOKEN: this.token } };
   }
   async handle(req, res) {
     const expected = Buffer.from(`Bearer ${this.token}`), actual = Buffer.from(String(req.headers.authorization || ""));
@@ -66,7 +73,7 @@ export class BrowserTools {
     if (message.id == null) { res.writeHead(202); res.end(); return; }
     let result, error;
     switch (message.method) {
-      case "initialize": result = { protocolVersion: message.params?.protocolVersion || "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "QQClaw Browser", version: "0.3.9" }, instructions: "这是 QQClaw 自带浏览器，独立于 Codex Desktop。所有操作仅针对当前会话的浏览器。" }; break;
+      case "initialize": result = { protocolVersion: message.params?.protocolVersion || "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "QQClaw Browser", version: "0.3.10" }, instructions: "这是 QQClaw 自带浏览器，独立于 Codex Desktop。所有操作仅针对当前会话的浏览器。" }; break;
       case "ping": result = {}; break;
       case "tools/list": result = { tools: BROWSER_TOOLS.filter((entry) => this.session.permission !== "read-only" || entry.annotations.readOnlyHint) }; break;
       case "tools/call":
