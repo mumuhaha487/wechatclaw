@@ -146,7 +146,7 @@ internal sealed class BrowserTab {
     private bool closed;
     private bool downloadNavigation;
     private TaskCompletionSource<bool> navigation;
-    private ulong navigationId;
+    internal ulong NavigationId;
     private readonly BrowserDownloads downloads;
     private readonly string owner;
     internal BrowserTab(Form parent, string profile, Action changed, BrowserDownloads downloads, string owner) {
@@ -162,14 +162,14 @@ internal sealed class BrowserTab {
         Web.CoreWebView2.Settings.AreDevToolsEnabled = false;
         Web.CoreWebView2.Settings.IsStatusBarEnabled = false;
         Web.CoreWebView2.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e) {
-            navigationId = e.NavigationId;
+            NavigationId = e.NavigationId;
             if (e.Uri != "about:blank" && !BrowserHost.Allowed(e.Uri)) { e.Cancel = true; Error = "已阻止不支持的链接。"; }
             else { Loading = true; Error = ""; downloadNavigation = false; }
             changed();
         };
         Web.CoreWebView2.NavigationCompleted += async delegate(object sender, CoreWebView2NavigationCompletedEventArgs e) {
             if (!e.IsSuccess && !stopping) await Task.Delay(200);
-            if (Web.IsDisposed || e.NavigationId != navigationId) return;
+            if (Web.IsDisposed || e.NavigationId != NavigationId) return;
             Loading = false; Error = e.IsSuccess || stopping || downloadNavigation ? "" : "网页未能加载：" + e.WebErrorStatus; changed();
         };
         Web.CoreWebView2.SourceChanged += delegate { changed(); };
@@ -253,6 +253,8 @@ internal sealed class BrowserDownloadRecord {
     internal CoreWebView2DownloadOperation Operation;
     internal BrowserTab Source;
     internal bool Cancelled;
+    internal ulong NavigationId;
+    internal EventHandler<object> StateChanged;
 }
 
 internal sealed class BrowserDownloads {
@@ -302,14 +304,13 @@ internal sealed class BrowserDownloads {
     internal void Start(CoreWebView2DownloadStartingEventArgs args, BrowserTab source, string owner) {
         if (storageError != "") throw new Exception(storageError);
         var operation = args.DownloadOperation;
-        // WebView2 can replace an operation during a network retry without
-        // terminating its earlier wrapper. Keep one active request per URL/tab;
-        // an explicit repeat also restarts that request rather than orphaning it.
-        var item = items.Find(entry => entry.Source == source && entry.url == operation.Uri && entry.status == "running");
+        // A retry may provide a fresh .NET wrapper for the same native download.
+        // Do not cancel that wrapper: it cancels the replacement as well.
+        var item = items.Find(entry => entry.Source == source && entry.url == operation.Uri && entry.NavigationId == source.NavigationId && entry.status == "running");
         bool fresh = item == null;
         if (fresh) { item = new BrowserDownloadRecord { id = Guid.NewGuid().ToString("D"), owner = owner, at = DateTime.UtcNow.ToString("o"), status = "running" }; items.Add(item); }
-        else { var prior = item.Operation; item.Operation = null; if (prior != null) prior.Cancel(); }
-        item.name = Filename(args.ResultFilePath); item.url = operation.Uri; item.error = ""; item.received = 0; item.total = Total(operation); item.Operation = operation; item.Source = source;
+        else if (item.Operation != null && item.StateChanged != null) item.Operation.StateChanged -= item.StateChanged;
+        item.name = Filename(args.ResultFilePath); item.url = operation.Uri; item.error = ""; item.received = 0; item.total = Total(operation); item.Operation = operation; item.Source = source; item.NavigationId = source.NavigationId;
         try {
             string directory = Path.Combine(DirectoryRoot(), Guid.NewGuid().ToString("D")); Directory.CreateDirectory(directory);
             item.path = Path.Combine(directory, item.name); Save();
@@ -319,7 +320,8 @@ internal sealed class BrowserDownloads {
             source.ReleaseDownloadView(); Publish(); throw;
         }
         args.ResultFilePath = item.path; args.Handled = true;
-        operation.StateChanged += delegate { if (Object.ReferenceEquals(item.Operation, operation)) { Update(item); Publish(); } };
+        item.StateChanged = delegate { if (Object.ReferenceEquals(item.Operation, operation)) { Update(item); Publish(); } };
+        operation.StateChanged += item.StateChanged;
         Publish();
     }
     private bool Update(BrowserDownloadRecord item) {
@@ -330,6 +332,8 @@ internal sealed class BrowserDownloads {
         if (operation.State != CoreWebView2DownloadState.InProgress) {
             item.status = operation.State == CoreWebView2DownloadState.Completed ? "completed" : item.Cancelled || operation.InterruptReason == CoreWebView2DownloadInterruptReason.UserCanceled ? "cancelled" : "interrupted";
             item.error = item.status == "interrupted" ? "下载中断：" + operation.InterruptReason : "";
+            if (item.StateChanged != null) operation.StateChanged -= item.StateChanged;
+            item.StateChanged = null;
             var source = item.Source; item.Source = null; item.Operation = null;
             try { Save(); } catch { }
             source.ReleaseDownloadView(); changed = true;
