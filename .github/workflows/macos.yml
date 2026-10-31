@@ -252,7 +252,11 @@ jobs:
                       guard (try ranges.handle(["action": "clear", "range": "hour"])["items"] as? [[String: Any]])?.count == 2,
                             (try ranges.handle(["action": "clear", "range": "day"])["items"] as? [[String: Any]])?.count == 1,
                             (try ranges.handle(["action": "clear", "range": "all"])["items"] as? [[String: Any]])?.isEmpty == true else { throw failure("History clear ranges incorrect") }
-                      let many: [[String: Any]] = (0..<500).map { index in ["id": UUID().uuidString.lowercased(), "url": fixture + "page-" + String(index), "title": "History sample", "at": timestamp - Int64(index * 1000)] }
+                      let many: [[String: Any]] = (0..<500).map { index -> [String: Any] in
+                          let address = fixture + "page-" + String(index)
+                          let visitedAt = timestamp - Int64(index * 1000)
+                          return ["id": UUID().uuidString.lowercased(), "url": address, "title": "History sample", "at": visitedAt]
+                      }
                       let manyText = String(decoding: try JSONSerialization.data(withJSONObject: many), as: UTF8.self)
                       try Data(try historyVault.handle("vault.encrypt", manyText).utf8).write(to: historyCheckFile, options: .atomic)
                       let bounded = BrowserHistory(directory: historyChecks) { _ in }; bounded.visit(fixture + "newest", title: "Newest")
