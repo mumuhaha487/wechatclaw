@@ -11,6 +11,15 @@ export class PanelTabs {
     group.selected = key;
     return true;
   }
+  move(owner, key, target, after = false) {
+    const group = this.group(owner), tab = group.tabs.find(tab => tab.key === key);
+    if (!tab || key === target || !group.tabs.some(tab => tab.key === target)) return false;
+    const before = group.tabs.map(tab => tab.key).join("\0");
+    group.tabs.splice(group.tabs.indexOf(tab), 1);
+    const index = group.tabs.findIndex(tab => tab.key === target);
+    group.tabs.splice(index + Number(after), 0, tab);
+    return before !== group.tabs.map(tab => tab.key).join("\0");
+  }
   openFile(owner, file) {
     const group = this.group(owner), key = `file:${file}`;
     let tab = group.tabs.find(tab => tab.key === key);

@@ -84,6 +84,7 @@ jobs:
           import fs from 'node:fs/promises';
           import path from 'node:path';
           import {execFileSync,spawn} from 'node:child_process';
+          import {build} from 'esbuild';
           const root = process.env.GITHUB_WORKSPACE;
           const temporary = await fs.mkdtemp(path.join(process.env.RUNNER_TEMP, 'qqclaw-verify-'));
           const run = (exe, args, options={}) => execFileSync(exe, args, {encoding:'utf8',timeout:180000,...options});
@@ -107,6 +108,28 @@ jobs:
           const source = await fs.readFile(path.join(root,'native/macos/QQClaw.swift'),'utf8');
           const bootstrap = source.indexOf('@main struct QQClawMain');
           if (bootstrap < 0) throw new Error('Native entrypoint missing');
+          const tabActions = await build({entryPoints:[path.join(root,'ui/panel-tab-actions.mjs')],bundle:true,write:false,format:'iife',globalName:'QQClawTabActions',target:'safari16.4'});
+          const tabHTML = '<!doctype html><div class="work-tabs-bar"><div class="browser-tabs" data-owner="one">'+['A','B'].map(name=>'<div data-tab-key="file:'+name+'"><button role="tab" data-action="panel-select-tab" data-key="file:'+name+'">'+name+'</button></div>').join('')+'</div></div><script>'+tabActions.outputFiles[0].text.replaceAll('</script','<\\/script')+'</script><script>'+String.raw`
+            (async()=>{
+              const tabs=['A','B'].map(name=>({key:'file:'+name,kind:'file',file:name+'.txt'})),closed=[];let owner='one';
+              const assert=(value,message)=>{if(!value)throw Error(message)};
+              const actions=new QQClawTabActions.PanelTabActions({context:()=>({owner,tabs,selected:'file:A',tool:false,workspace:'/tmp',url:()=>''}),close:(from,values)=>closed.push({from,keys:values.map(t=>t.key)}),move:()=>{},copy:()=>{},reveal:()=>{},external:()=>{},changed:()=>{},error:error=>{window.__tabActionsDone=error.message}});
+              const a=document.querySelector('[data-key="file:A"]'),b=document.querySelector('[data-key="file:B"]');
+              a.focus();a.dispatchEvent(new KeyboardEvent('keydown',{key:'F10',shiftKey:true,bubbles:true}));
+              assert(actions.menu?.querySelectorAll('button').length===5,'WebKit Shift+F10 did not open tab menu');
+              assert(actions.menu.querySelectorAll('button:disabled').length===0,'WebKit menu enabled state wrong');
+              actions.menu.querySelector('button').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+              assert(!actions.menu&&document.activeElement===a,'WebKit Escape/focus restoration failed');
+              b.dispatchEvent(new MouseEvent('contextmenu',{clientX:20,clientY:30,bubbles:true}));
+              assert(actions.menu?.querySelectorAll('button:disabled').length===1,'WebKit last-tab right-close gate failed');
+              actions.menu.querySelectorAll('button')[1].click();await Promise.resolve();
+              assert(closed.length===1&&closed[0].from==='one'&&closed[0].keys.join()==='file:A','WebKit batch close lost owner or target');
+              b.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true}));owner='two';actions.refresh();
+              assert(!actions.menu&&closed.length===1,'WebKit old-owner menu remained actionable');
+              window.__tabActionsDone='passed';
+            })().catch(error=>{window.__tabActionsDone=error.message});
+          `+'</script>';
+          const tabHTML64=Buffer.from(tabHTML).toString('base64');
           // Only this temporary verifier replaces main. The shipped .app is unchanged.
           const main = String.raw`
           @main struct VerifyMain {
@@ -167,6 +190,15 @@ jobs:
                       guard searchEvents.contains("search"), searchEvents.contains("find-message") else { throw failure("Native search/find actions did not reach WebKit bridge") }
                       print("PASS: AppKit global search/current-chat find shortcuts, session gate and command dispatch")
                       print("PASS: AppKit file/view/help menus, setup gating, checked state, font limits and WebKit command dispatch")
+                      host.web.loadHTMLString(String(decoding: Data(base64Encoded: "${tabHTML64}")!, as: UTF8.self), baseURL: nil)
+                      var tabActionsResult = ""
+                      for _ in 0..<100 {
+                          tabActionsResult = (try? await host.web.evaluateJavaScript("window.__tabActionsDone || ''")) as? String ?? ""
+                          if !tabActionsResult.isEmpty { break }
+                          try await Task.sleep(nanoseconds: 50_000_000)
+                      }
+                      guard tabActionsResult == "passed" else { throw failure("WebKit tab-actions component: " + tabActionsResult) }
+                      print("PASS: real WebKit tab-actions component keyboard/context menus, focus, disabled items and batch-close owner isolation (not full app GUI or trusted pointer gestures)")
                       let browserWindow = NSWindow(contentRect: host.web.frame, styleMask: [.titled], backing: .buffered, defer: false)
                       browserWindow.contentView = host.web; browserWindow.orderFront(nil)
                       host.window = browserWindow

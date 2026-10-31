@@ -17,6 +17,7 @@ import { groupChanges } from "../shared/change-stats.mjs";
 import { reviewView } from "../shared/review-view.mjs";
 import { ApplicationMenu } from "./application-menu.mjs";
 import { PanelTabs, workspaceFileReference } from "./panel-tabs.mjs";
+import { PanelTabActions } from "./panel-tab-actions.mjs";
 import { ViewPreferences } from "./view-preferences.mjs";
 import { ConversationView } from "./conversation-view.mjs";
 import { SessionSearch, MessageFind } from "./message-search.mjs";
@@ -534,7 +535,7 @@ function sidebar() {
         icon("folder") +
         "打开项目</button>") +
     '</div><div class="side-footer">' +
-    '<button class="version" data-action="about">v0.3.21</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v0.3.22</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -757,8 +758,66 @@ function rememberPanel() {
 }
 const browserStates = new Map();
 const closingBrowserTabs = new Map();
+const creatingBrowserTabs = new Set();
 const panelTabs = new PanelTabs();
 const panelOwner = () => JSON.stringify([ui.active, workspaceKey(session()?.workspace || project()?.workspace)]);
+const panelTabActions = new PanelTabActions({
+  context: () => !ui.page && !ui.overlay && ui.panel && environmentReady() ? {
+    owner: panelOwner(), workspace: session()?.workspace || project()?.workspace,
+    ...panelTabs.group(panelOwner()), tool: !["file", "browser"].includes(ui.panelPage),
+    url: tab => browserStates.get(session()?.id)?.tabs?.find(value => value.id === tab.id)?.url || "",
+  } : null,
+  close: closePanelTabs,
+  move: (owner, key, target, after) => {
+    if (owner !== panelOwner()) return;
+    rememberPanelTabScroll();
+    if (panelTabs.move(owner, key, target, after)) render();
+  },
+  copy: text => copyText(text),
+  reveal: (workspace, file) => rpc("workspace.reveal", { workspace, file }),
+  external: url => rpc("shell.open", { url }),
+  changed: scheduleBrowserView,
+  error: error => toast(error.message),
+});
+async function closePanelTabs(owner, tabs) {
+  const group = panelTabs.group(owner), [id, workspace] = JSON.parse(owner);
+  const target = state.sessions.find(s => s.id === id && workspaceKey(s.workspace) === workspace);
+  for (const tab of tabs) {
+    if (!group.tabs.includes(tab)) continue;
+    const current = owner === panelOwner();
+    if (current) ui.panelIntent++;
+    const selected = group.selected === tab.key && current && ["file", "browser"].includes(ui.panelPage);
+    if (tab.kind === "browser" && tab.id) {
+      if (!target) continue;
+      if (!closingBrowserTabs.has(owner)) closingBrowserTabs.set(owner, new Set());
+      closingBrowserTabs.get(owner).add(tab.id);
+    }
+    if (current) rememberDocumentScroll();
+    panelTabs.close(owner, tab.key);
+    if (selected) applyPanelTab();
+    if (current) { rememberPanel(); render(); }
+    if (tab.kind !== "browser" || !tab.id) continue;
+    try {
+      const data = await rpc("browser.command", { sessionId: target.id, action: "closeTab", tabId: tab.id });
+      updateBrowserState(data);
+      if (owner === panelOwner() && ui.panelPage === "browser") {
+        const next = panelTabs.selected(owner);
+        if (next?.id && next.id !== data.activeTab) {
+          const selected = await rpc("browser.command", { sessionId: target.id, action: "selectTab", tabId: next.id });
+          updateBrowserState(selected);
+        }
+      }
+    } catch (error) {
+      closingBrowserTabs.get(owner)?.delete(tab.id);
+      try { updateBrowserState(await rpc("browser.command", { sessionId: target.id, action: "state" })); } catch {}
+      throw error;
+    } finally {
+      const closing = closingBrowserTabs.get(owner);
+      closing?.delete(tab.id);
+      if (!closing?.size) closingBrowserTabs.delete(owner);
+    }
+  }
+}
 function rememberPanelTabScroll() {
   const strip = document.querySelector(".work-tabs-bar .browser-tabs");
   if (strip) panelTabs.group(strip.dataset.owner).scrollLeft = strip.scrollLeft;
@@ -803,7 +862,7 @@ function panelTabsBar() {
   const tool = { files: "文件管理器", review: "审阅" }[ui.panelPage];
   return `<div class="browser-tabs-bar work-tabs-bar"><div class="browser-tabs" data-owner="${esc(panelOwner())}" role="tablist" aria-label="工作面板标签">${tool ? `<div class="browser-tab active tool-tab"><button role="tab" aria-selected="true" data-action="panel-current">${icon(ui.panelPage === "files" ? "folder" : "review")}<span class="ellipsis">${tool}</span></button>${ib("panel-close-tool", "关闭当前标签", "close")}</div>` : ""}${group.tabs.map(tab => {
     const active = !tool && ui.panelPage && group.selected === tab.key;
-    return `<div class="browser-tab${active ? " active" : ""}" data-tab-key="${esc(tab.key)}"><button role="tab" aria-selected="${Boolean(active)}" data-action="panel-select-tab" data-key="${esc(tab.key)}" title="${esc(tab.file || tab.name)}">${icon(tab.loading ? "refresh" : tab.kind === "file" ? "file" : "browser", tab.loading ? "spinning" : "")}<span class="ellipsis">${esc(tab.name)}</span></button>${ib("panel-close-tab", "关闭标签页", "close", `data-key="${esc(tab.key)}"`)}</div>`;
+    return `<div class="browser-tab${active ? " active" : ""}" data-tab-key="${esc(tab.key)}"><button role="tab" aria-selected="${Boolean(active)}" tabindex="${active ? 0 : -1}" data-action="panel-select-tab" data-key="${esc(tab.key)}" title="${esc(tab.file || tab.name)}">${icon(tab.loading ? "refresh" : tab.kind === "file" ? "file" : "browser", tab.loading ? "spinning" : "")}<span class="ellipsis">${esc(tab.name)}</span></button>${ib("panel-close-tab", "关闭标签页", "close", `data-key="${esc(tab.key)}"`)}</div>`;
   }).join("")}${!tool && !group.tabs.length ? '<span class="browser-idle-tab">新建</span>' : ""}</div>${ib("panel-add-tab", "新建标签页", "plus")}${ib("maximize-panel", ui.panelMax ? "还原面板" : "展开面板", "expand")}${ib("toggle-panel", "收起工作面板", "panel")}${ib("close-panel", "关闭工作面板", "close")}</div>`;
 }
 async function loadFileTab(tab, owner = panelOwner(), workspace = session()?.workspace || project()?.workspace) {
@@ -856,10 +915,11 @@ function scheduleBrowserView() {
 }
 function browserPanel() {
   const b = browserStates.get(session()?.id) || {};
+  const tab = panelTabs.selected(panelOwner()), creating = creatingBrowserTabs.has(session()?.id);
   return `<aside class="work-panel browser-panel${ui.panelMax ? " maximized" : ""}">
     ${panelTabsBar()}
     <div class="browser-toolbar"><div class="browser-navigation">${ib("browser-back", "后退", "back", b.canGoBack ? "" : "disabled")}${ib("browser-forward", "前进", "chevron", b.canGoForward ? "" : "disabled")}${ib(b.loading ? "browser-stop" : "browser-reload", b.loading ? "停止加载" : "刷新网页", b.loading ? "close" : "refresh", b.url ? "" : "disabled")}</div>
-    <form id="browser-form" class="browser-address">${icon(b.url?.startsWith("https:") ? "shield" : "search")}<input id="browser-address" name="url" aria-label="网页地址或搜索" placeholder="搜索或输入网址" autocomplete="off" spellcheck="false" value="${esc(b.url || "")}"></form>
+    <form id="browser-form" class="browser-address">${icon(b.url?.startsWith("https:") ? "shield" : "search")}<input id="browser-address" name="url" data-owner="${esc(panelOwner())}" data-key="${esc(tab?.key)}" aria-label="网页地址或搜索" placeholder="${creating ? "正在创建标签页…" : "搜索或输入网址"}" autocomplete="off" spellcheck="false" maxlength="8192" ${creating ? "disabled" : ""} value="${esc(tab?.addressDraft ?? b.url ?? "")}"></form>
     ${ib("browser-external", "在系统浏览器打开", "external", b.url ? "" : "disabled")}</div>
     <div class="browser-connection-note" role="status"><span>手动预览 · 官方扩展尚未接通</span><button data-action="runtime">配置</button></div>
     ${b.error ? `<div class="browser-error" role="status">${icon("info")}<span>${esc(b.error)}</span></div>` : ""}
@@ -894,10 +954,13 @@ function updateBrowserState(data) {
     }
     scheduleBrowserView();
   }
+  panelTabActions.refresh();
 }
 async function runBrowserCommand(command, params = {}) {
   if (!session()) await newSession();
   const target = session(); if (!target) return;
+  if (command === "newTab" && creatingBrowserTabs.has(target.id)) return;
+  if (command === "newTab") creatingBrowserTabs.add(target.id);
   const owner = panelOwner(), activate = command === "open" || command === "newTab";
   const intent = activate ? ++ui.panelIntent : ui.panelIntent;
   if (activate) {
@@ -912,6 +975,11 @@ async function runBrowserCommand(command, params = {}) {
     // error remains in the owning tab; don't toast a cancelled navigation here.
     if (owner !== panelOwner() || intent !== ui.panelIntent) return;
     throw error;
+  } finally {
+    if (command === "newTab") {
+      creatingBrowserTabs.delete(target.id);
+      if (owner === panelOwner()) refreshBrowserPanel();
+    }
   }
   updateBrowserState(data);
   if (activate && owner === panelOwner() && intent === ui.panelIntent && ui.panel && !ui.page) {
@@ -923,13 +991,15 @@ function refreshBrowserPanel() {
   const panel = document.querySelector(".browser-panel");
   if (panel) {
     rememberPanelTabScroll();
-    const focus = document.activeElement?.id === "browser-address";
-    const value = focus ? $("browser-address").value : "";
+    const input = $("browser-address"), focus = document.activeElement === input;
+    const identity = focus ? JSON.stringify([input.dataset.owner, input.dataset.key]) : "";
     const start = focus ? $("browser-address").selectionStart : 0;
     panel.outerHTML = browserPanel();
     restorePanelTabScroll();
-    if (focus) { $("browser-address").value = value; $("browser-address").focus(); $("browser-address").setSelectionRange(start, start); }
+    const next = $("browser-address");
+    if (focus && identity === JSON.stringify([next.dataset.owner, next.dataset.key])) { next.focus(); next.setSelectionRange(start, start); }
   }
+  panelTabActions.refresh();
   scheduleBrowserView();
 }
 function workPanel() {
@@ -1085,7 +1155,7 @@ function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.21 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.22 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
@@ -1183,6 +1253,7 @@ function render() {
     documentScroll.scrollTop = ui.filePreview.scrollTop || 0; documentScroll.scrollLeft = ui.filePreview.scrollLeft || 0;
   }
   restorePanelTabScroll();
+  panelTabActions.refresh();
   if (environmentReady()) viewStorage.patch({ "active-session": ui.active, "active-project": ui.project || session()?.workspace || "",
     "sidebar-open": String(ui.sidebar), "expanded-projects": JSON.stringify([...ui.expanded]) });
   hydrateAttachments();
@@ -1740,35 +1811,8 @@ async function action(name, element) {
       return;
     }
     case "panel-close-tab": {
-      ui.panelIntent++;
-      const owner = panelOwner(), group = panelTabs.group(owner), tab = group.tabs.find(tab => tab.key === element.dataset.key);
-      if (!tab) return;
-      const selected = group.selected === tab.key && ["file", "browser"].includes(ui.panelPage), s = session();
-      if (tab.kind === "browser" && tab.id) {
-        if (!closingBrowserTabs.has(owner)) closingBrowserTabs.set(owner, new Set());
-        closingBrowserTabs.get(owner).add(tab.id);
-      }
-      rememberDocumentScroll(); panelTabs.close(owner, tab.key);
-      if (selected) applyPanelTab();
-      rememberPanel(); render();
-      if (tab.kind === "browser" && tab.id && s) {
-        try {
-          const data = await rpc("browser.command", { sessionId: s.id, action: "closeTab", tabId: tab.id });
-          updateBrowserState(data);
-          if (owner === panelOwner() && ui.panelPage === "browser") {
-            const next = panelTabs.selected(owner);
-            if (next?.id && next.id !== data.activeTab) return runBrowserCommand("selectTab", { tabId: next.id });
-          }
-        } catch (error) {
-          closingBrowserTabs.get(owner)?.delete(tab.id);
-          try { updateBrowserState(await rpc("browser.command", { sessionId: s.id, action: "state" })); } catch {}
-          throw error;
-        } finally {
-          const closing = closingBrowserTabs.get(owner);
-          closing?.delete(tab.id);
-          if (!closing?.size) closingBrowserTabs.delete(owner);
-        }
-      }
+      const owner = panelOwner(), tab = panelTabs.group(owner).tabs.find(tab => tab.key === element.dataset.key);
+      if (tab) return closePanelTabs(owner, [tab]);
       return;
     }
     case "panel-add-tab":
@@ -1817,8 +1861,10 @@ async function action(name, element) {
         (ui.panelData?.directory || "").split(/[\\/]/).slice(0, -1).join("/"),
       );
     case "open-browser": {
+      if (creatingBrowserTabs.has(session()?.id)) return;
       let url = $("browser-form").elements.url.value.trim();
       if (!url) return;
+      const tab = panelTabs.selected(panelOwner()); if (tab) delete tab.addressDraft;
       if (!/^https?:\/\//i.test(url)) url = /^[\w-]+(?:\.[\w-]+)+(?:[:/].*)?$/.test(url) || /^localhost[:/]/.test(url) ? `https://${url}` : `https://www.google.com/search?q=${encodeURIComponent(url)}`;
       return runBrowserCommand("open", { url });
     }
@@ -2272,6 +2318,10 @@ document.addEventListener("dblclick", (event) => {
 });
 document.addEventListener("input", (event) => {
   const el = event.target;
+  if (el.id === "browser-address") {
+    const tab = panelTabs.group(el.dataset.owner).tabs.find(tab => tab.key === el.dataset.key);
+    if (tab?.kind === "browser") tab.addressDraft = el.value;
+  }
   if (el.id === "codex-path") ui.codexPathDraft = el.value;
   if (el.id === "composer-input") {
     ui.draft = el.value;

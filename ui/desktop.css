@@ -1845,6 +1845,13 @@ select:focus-visible {
 .work-tabs-bar { flex: 0 0 auto; }
 .work-tabs-bar .browser-tab { flex: 0 0 auto; min-width: 100px; max-width: 190px; }
 .work-tabs-bar .browser-tab > button[role="tab"] { max-width: 158px; }
+.work-tabs-bar .browser-tab { position: relative; }
+.work-tabs-bar .tab-dragging { opacity: .45; }
+.work-tabs-bar .tab-drop-before::before, .work-tabs-bar .tab-drop-after::after { content: ""; position: absolute; width: 2px; inset-block: 3px; background: var(--text); border-radius: 2px; pointer-events: none; }
+.work-tabs-bar .tab-drop-before::before { left: -3px; }
+.work-tabs-bar .tab-drop-after::after { right: -3px; }
+.reordering-panel-tabs, .reordering-panel-tabs * { cursor: grabbing !important; user-select: none !important; }
+.panel-tab-menu { max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; }
 .panel-content-toolbar { display: flex; justify-content: flex-end; padding: 4px 10px; flex: 0 0 auto; }
 .tabbed-panel > .file-path, .tabbed-panel > .review-note { margin: 10px 12px; flex: 0 0 auto; }
 .tabbed-panel > .file-row { padding: 6px 12px; flex: 0 0 auto; }
