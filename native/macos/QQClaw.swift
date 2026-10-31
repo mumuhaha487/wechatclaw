@@ -79,7 +79,7 @@ enum Runtime {
     }
 }
 
-final class Vault {
+final class Vault: Sendable {
     let account: String
     init(directory: URL) { account = SHA256.hash(data: Data(directory.path.utf8)).map { String(format: "%02x", $0) }.joined() }
     func key(create: Bool) throws -> SymmetricKey {
@@ -122,7 +122,9 @@ final class Resources: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 }
 
-final class Backend {
+// Requests/forwarded are main-actor owned; pipe writes use writer, and the
+// cross-queue lifecycle flags and byte counter are protected by lock.
+final class Backend: @unchecked Sendable {
     let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
     let writer = DispatchQueue(label: "com.qqclaw.backend.write"), lock = NSLock()
     var queuedBytes = 0
@@ -224,7 +226,12 @@ final class Backend {
             panel.allowsMultipleSelection = false; panel.canCreateDirectories = panel.canChooseDirectories
             panel.title = p["title"] as? String ?? (panel.canChooseDirectories ? "选择 Codex 的工作目录" : "选择文件")
             if !path.isEmpty { panel.directoryURL = URL(fileURLWithPath: path) }
-            return await withCheckedContinuation { continuation in panel.beginSheetModal(for: window) { response in continuation.resume(returning: response == .OK ? (panel.url?.path as Any? ?? NSNull()) : NSNull()) } }
+            let selected: Any = await withCheckedContinuation { (continuation: CheckedContinuation<Any, Never>) in
+                panel.beginSheetModal(for: window) { response in
+                    continuation.resume(returning: response == .OK ? (panel.url?.path as Any? ?? NSNull()) : NSNull())
+                }
+            }
+            return selected
         case "shell.open":
             guard let text = p["url"] as? String, let url = URL(string: text), ["https", "http"].contains(url.scheme ?? "") else { throw failure("只能打开 HTTP 或 HTTPS 链接。") }
             NSWorkspace.shared.open(url); return true
