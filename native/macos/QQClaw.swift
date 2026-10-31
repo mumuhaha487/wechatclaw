@@ -214,12 +214,14 @@ final class Backend: @unchecked Sendable {
     }
 }
 
-@MainActor final class Host: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
+@MainActor final class Host: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate, NSMenuItemValidation {
     var window: NSWindow!, web: WKWebView!, backend: Backend?, starting: Task<Backend, Error>?
     var data: URL!, resources: URL!, vault: Vault!, lockFD: Int32 = -1
     var quitting = false, allowQuit = false, restarting = false, installing = false
     var requestSequence = 0
     var browserHost: BrowserHost?
+    var menuAvailable = false, menuReady = false, menuSidebar = true, menuPanel = false
+    var menuFont = 14
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             let env = ProcessInfo.processInfo.environment
@@ -254,16 +256,47 @@ final class Backend: @unchecked Sendable {
         } catch { alert(error.localizedDescription); NSApp.terminate(nil) }
     }
     func makeMenu() {
-        let menu = NSMenu(), app = NSMenu(), edit = NSMenu(), windows = NSMenu()
+        let menu = NSMenu(), app = NSMenu(), file = NSMenu(), edit = NSMenu(), view = NSMenu(), windows = NSMenu(), help = NSMenu()
+        func command(_ parent: NSMenu, _ title: String, _ name: String, _ key: String = "") {
+            let item = NSMenuItem(title: title, action: #selector(menuCommand(_:)), keyEquivalent: key)
+            item.target = self; item.representedObject = name; parent.addItem(item)
+        }
+        func section(_ title: String, _ submenu: NSMenu) {
+            let root = NSMenuItem(title: title, action: nil, keyEquivalent: ""); root.submenu = submenu; menu.addItem(root)
+        }
         let appRoot = NSMenuItem(); appRoot.submenu = app; menu.addItem(appRoot)
-        app.addItem(withTitle: "关于 QQClaw", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        command(app, "关于 QQClaw", "about")
+        command(app, "设置…", "settings", ",")
         app.addItem(.separator()); app.addItem(withTitle: "隐藏 QQClaw", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(withTitle: "退出 QQClaw", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        let editRoot = NSMenuItem(title: "编辑", action: nil, keyEquivalent: ""); editRoot.submenu = edit; menu.addItem(editRoot)
+        section("文件", file)
+        command(file, "新聊天", "new-session", "n"); command(file, "打开项目…", "add-project", "o")
+        command(file, "打开工作目录", "open-folder"); file.addItem(.separator()); command(file, "配置运行环境…", "runtime")
+        section("编辑", edit)
         for (name, action, key) in [("撤销", "undo:", "z"), ("重做", "redo:", "Z"), ("剪切", "cut:", "x"), ("复制", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] { edit.addItem(withTitle: name, action: Selector(action), keyEquivalent: key) }
-        let windowRoot = NSMenuItem(title: "窗口", action: nil, keyEquivalent: ""); windowRoot.submenu = windows; menu.addItem(windowRoot)
+        section("视图", view)
+        command(view, "侧栏", "toggle-sidebar", "b"); command(view, "工作面板", "toggle-panel", "B")
+        command(view, "展开工作面板", "maximize-panel"); command(view, "网页预览", "open-browser-window"); view.addItem(.separator())
+        command(view, "增大字号", "font-increase", "="); command(view, "减小字号", "font-decrease", "-"); command(view, "默认字号", "font-reset", "0")
+        section("窗口", windows)
         windows.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        NSApp.mainMenu = menu; NSApp.windowsMenu = windows
+        section("帮助", help)
+        command(help, "项目与使用说明", "source-project"); command(help, "Codex 文档", "codex-docs"); command(help, "官方浏览器扩展说明", "official-browser-docs")
+        NSApp.mainMenu = menu; NSApp.windowsMenu = windows; NSApp.helpMenu = help
+    }
+    @objc func menuCommand(_ sender: NSMenuItem) {
+        guard validateMenuItem(sender), let name = sender.representedObject as? String else { return }
+        event("menu-action", ["action": name])
+    }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard let name = item.representedObject as? String else { return true }
+        if name == "toggle-sidebar" { item.state = menuSidebar ? .on : .off }
+        if name == "toggle-panel" { item.state = menuPanel ? .on : .off }
+        if ["runtime", "source-project", "codex-docs", "official-browser-docs"].contains(name) { return menuAvailable }
+        if name == "font-increase" { return menuReady && menuFont < 20 }
+        if name == "font-decrease" { return menuReady && menuFont > 12 }
+        if name == "font-reset" { return menuReady && menuFont != 14 }
+        return menuReady
     }
     func alert(_ text: String) { let alert = NSAlert(); alert.messageText = "QQClaw"; alert.informativeText = text; alert.runModal() }
     func post(_ value: Any) { guard let text = try? jsonText(value) else { return }; web?.evaluateJavaScript("window.__qqclawReceive(\(text))", completionHandler: nil) }
@@ -283,6 +316,11 @@ final class Backend: @unchecked Sendable {
     func handle(_ method: String, _ p: [String: Any]) async throws -> Any? {
         let path = p["path"] as? String ?? ""
         switch method {
+        case "window.menuState":
+            menuAvailable = true; menuReady = p["ready"] as? Bool == true
+            menuSidebar = p["sidebar"] as? Bool == true; menuPanel = p["panel"] as? Bool == true
+            menuFont = p["fontSize"] as? Int ?? 14
+            return true
         case "window.theme":
             let dark = p["theme"] as? String == "dark"
             let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)

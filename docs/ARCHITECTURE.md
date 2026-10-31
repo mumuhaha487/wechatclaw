@@ -1,3 +1,5 @@
+0.3.16 补充：ui/application-menu.mjs 管理 Windows 菜单、焦点及剪贴板异步目标核对；ui/render-frame.mjs 在同一草稿刷新时保留输入节点及祖先的 DOM 连接，避免清空原生撤销记录。ui/app.mjs 提供外侧应用导航。Windows clipboard.read 仅对应用 UI 开放；Mac 使用 AppKit 菜单及原生 Edit responder chain，window.menuState 同步门禁/勾选/字号边界，menu-action 交给现有 UI action。
+
 0.3.15 补充：shared/review-view.mjs 核对会话、工作区和快照身份；review.remember 将任务审阅位置和面板开关写入既有加密 Store。UI 从后台恢复，Windows/macOS 均不依赖 localStorage 保存该位置；切换会话或面板会清除旧任务选择。
 
 0.3.14 补充：backend/checkpoints.mjs 保存加密文件快照和恢复事务；shared/change-stats.mjs 提供真实行数。backend/app.mjs 管理工作目录锁、checkpoint.review/restore RPC、重启恢复和后续 Codex 上下文。ui/app.mjs 显示更改卡片和消息对应的前后文件内容，详情及限制见 result.md。

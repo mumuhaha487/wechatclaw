@@ -96,7 +96,7 @@ internal static class Program {
                         using (var source = entry.Open()) using (var destination = File.Create(target)) source.CopyTo(destination);
                     }
                 }
-                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.15");
+                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.16");
             }
             CleanupOldRuntimes(hash);
             SetDllDirectory(RuntimeDirectory);
@@ -239,6 +239,23 @@ internal sealed class DesktopWindow : Form {
             } else if (method == "dialog.executable") {
                 using (var dialog = new OpenFileDialog { Title = Get(p, "title", "选择可执行文件"), Filter = "程序文件|*.exe;*.cmd;*.js|全部文件|*.*" })
                     result = dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
+            } else if (method == "clipboard.read") {
+                if (Clipboard.ContainsFileDropList()) {
+                    var files = Clipboard.GetFileDropList();
+                    if (files.Count > 8) throw new Exception("每条消息最多添加 8 个附件。");
+                    var paths = new List<string>(); foreach (string file in files) paths.Add(file);
+                    result = new { files = paths.ToArray() };
+                } else if (Clipboard.ContainsText()) {
+                    var text = Clipboard.GetText();
+                    if (text.Length > 4000000) throw new Exception("剪贴板文本过大，请保存为文件后添加。");
+                    result = new { text = text };
+                } else if (Clipboard.ContainsImage()) {
+                    using (var image = Clipboard.GetImage()) using (var memory = new MemoryStream()) {
+                        image.Save(memory, System.Drawing.Imaging.ImageFormat.Png);
+                        if (memory.Length > 20 * 1024 * 1024) throw new Exception("剪贴板图片超过 20 MiB。");
+                        result = new { image = new { data = Convert.ToBase64String(memory.ToArray()) } };
+                    }
+                } else result = new { text = "" };
             } else if (method == "desktop.status") { result = DesktopIntegration.Status(); }
             else if (method == "desktop.open") { result = DesktopIntegration.Open(p); }
             else if (method == "shell.open") { OpenUrl(Get(p, "url")); result = true; }
@@ -308,7 +325,7 @@ internal sealed class DesktopWindow : Form {
                 }
             } catch (Exception failure) { error = failure.Message; }
         }
-        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.15", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
+        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.16", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
     }
     private Task<string> ReadNodeVersion(string node) { return ReadNodeVersion(node, 5); }
     private async Task<string> ReadNodeVersion(string node, int timeoutSeconds) {

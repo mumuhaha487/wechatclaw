@@ -1,3 +1,4 @@
+import { renderFrame } from "./render-frame.mjs";
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
 import { icon } from "./icons.mjs";
@@ -14,6 +15,7 @@ import { AttachmentPreviews } from "./attachments.mjs";
 import { NavigationHistory } from "./navigation.mjs";
 import { groupChanges } from "../shared/change-stats.mjs";
 import { reviewView } from "../shared/review-view.mjs";
+import { ApplicationMenu } from "./application-menu.mjs";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -182,6 +184,16 @@ const session = () => state.sessions.find((s) => s.id === ui.active);
 const previews = new AttachmentPreviews(rpc);
 const navigation = new NavigationHistory();
 const draftKey = () => ui.active || `new:${workspaceKey(project()?.workspace || "")}`;
+const applicationMenu = new ApplicationMenu({
+  state: () => ({ ready: environmentReady(), workspace: project()?.workspace, fontSize: state.settings.fontSize,
+    sidebar: ui.sidebar, panel: ui.panel, isMac, draftKey: draftKey() }),
+  dispatch: name => action(name), readClipboard: () => rpc("clipboard.read"), copy: copyText, error: error => toast(error.message),
+  pasteAttachments: async value => {
+    if (value.files) return addAttachments(value.files, true);
+    const bytes = Uint8Array.from(atob(value.image.data), c => c.charCodeAt(0));
+    return addAttachments([new File([bytes], "粘贴的图片.png", { type: "image/png" })]);
+  },
+});
 function rememberDraft() {
   const key = draftKey();
   const entry = ui.drafts.get(key) || { pending: 0 };
@@ -396,6 +408,15 @@ const resizeEdges = () =>
         `<div class="resize-edge ${key}" data-resize="${value}"></div>`,
     )
     .join("");
+function applicationRail() {
+  const item = (name, title, ico, active = false, attrs = "") => ib(name, title, ico, `${attrs} ${active ? 'aria-current="page"' : ""}`, active ? "active" : "");
+  return `<nav class="application-rail" aria-label="应用导航栏">
+    ${item("return", "工作台", "home", !ui.page)}${item("history", "最近会话", "clock")}${item("notifications", "任务通知", "bell", false, ui.notifications.length ? `data-count="${ui.notifications.length}"` : "")}
+    <span class="grow"></span>${item("wechat", "连接到微信", "wechat", false, state.accounts.some(a => a.connected) ? 'data-connected="true"' : "")}${item("settings", "设置", "settings", Boolean(ui.page))}</nav>`;
+}
+function applicationFrame(content) {
+  return `<div class="application-frame">${isMac ? "" : `<header class="application-titlebar" data-drag>${navigationButtons()}${ib("toggle-sidebar", ui.sidebar ? "收起侧栏" : "显示侧栏", "sidebar", environmentReady() ? "" : "disabled")}${applicationMenu.bar()}<span class="grow"></span>${windowButtons()}</header>`}<div class="application-body">${environmentReady() ? applicationRail() : ""}<div class="application-main">${content}</div></div></div>`;
+}
 function sidebar() {
   const sessionRow = (item, nested = false) =>
     '<div class="session-row' +
@@ -439,7 +460,7 @@ function sidebar() {
     '"' + (ui.sidebar ? "" : " inert") + '><div class="brand" data-drag><button class="brand-home" data-action="home"><span class="brand-mark">' +
     icon("logo") +
     "</span><strong>QQClaw</strong></button>" +
-    ib("toggle-sidebar", "收起侧栏", "sidebar") +
+    (isMac ? ib("toggle-sidebar", "收起侧栏", "sidebar") : "") +
     '</div><div class="side-body"><div class="section-heading">会话<div class="section-tools">' +
     ib("new-session", "新建会话", "new") +
     ib("search", "搜索会话", "search") +
@@ -500,18 +521,7 @@ function sidebar() {
         icon("folder") +
         "打开项目</button>") +
     '</div><div class="side-footer">' +
-    ib("settings", "设置", "settings") +
-    ib(
-      "wechat",
-      "连接到微信",
-      "wechat",
-      "",
-      "wechat-trigger" +
-        (state.accounts.some((a) => a.connected) ? " connected" : ""),
-    ) +
-    ib("history", "会话历史", "clock") +
-    ib("notifications", "通知", "bell") +
-    '<button class="version" data-action="about">v0.3.15</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v0.3.16</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -675,8 +685,8 @@ function workspace() {
     missing = ui.startupError || (ui.environment && !ui.environment.codexPath);
   return (
     '<div class="workspace"><header class="topbar" data-drag>' +
-    navigationButtons() +
-    (!ui.sidebar ? ib("toggle-sidebar", "显示侧栏", "sidebar") : "") +
+    (isMac ? navigationButtons() : "") +
+    (isMac && !ui.sidebar ? ib("toggle-sidebar", "显示侧栏", "sidebar") : "") +
     '<div class="breadcrumb"><span class="project-crumb">' +
     icon("folder") +
     '<span class="ellipsis">' +
@@ -699,7 +709,6 @@ function workspace() {
     ib("maximize-panel", "展开工作面板", "expand") +
     ib("toggle-panel", "显示或隐藏工作面板", "panel") +
     "</div>" +
-    windowButtons() +
     "</header>" +
     (missing
       ? '<div class="setup-banner">' +
@@ -948,7 +957,7 @@ function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.15 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.16 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
@@ -970,9 +979,12 @@ function settings() {
     })
     .join(
       "",
-    )}<button class="settings-back" data-action="return">${icon("back")}返回应用</button></aside><div class="settings-main"><div class="settings-titlebar" data-drag>${navigationButtons()}${windowButtons()}</div><main class="settings-content"><div class="settings-inner">${({ general: generalSettings, models: modelSettings, projects: projectSettings, runtime: runtimeSettings, about: aboutSettings }[ui.page] || generalSettings)()}</div></main></div></div>`;
+    )}<button class="settings-back" data-action="return">${icon("back")}返回应用</button></aside><div class="settings-main"><div class="settings-titlebar" data-drag>${isMac ? navigationButtons() : ""}</div><main class="settings-content"><div class="settings-inner">${({ general: generalSettings, models: modelSettings, projects: projectSettings, runtime: runtimeSettings, about: aboutSettings }[ui.page] || generalSettings)()}</div></main></div></div>`;
 }
 function render() {
+  if (ui.composing) { ui.compositionRenderPending = true; return; }
+  const composerKey = draftKey();
+  if ($("composer-input")?.dataset.draftKey === composerKey) rememberDraft();
   if (ui.reviewTarget && (ui.reviewTarget.sessionId !== ui.active || !reviewView(ui.reviewTarget, state.sessions))) {
     invalidatePanel();
     if (ui.panelPage === "review") ui.panelPage = "";
@@ -998,11 +1010,21 @@ function render() {
       : 0;
   ui.lastSettingsPage = ui.page;
   closePicker();
-  $("app").innerHTML =
-    (!environmentReady() && ui.page !== "runtime" ? setupGate() : ui.page
-      ? settings()
-      : `<div class="app-shell">${sidebar()}${workspace()}</div>`) +
-    resizeEdges();
+  renderFrame($("app"), (!environmentReady() && ui.page !== "runtime" ? setupGate() : applicationFrame(ui.page
+    ? settings() : `<div class="app-shell">${sidebar()}${workspace()}</div>`)) + resizeEdges(), composerKey, ui.draft);
+  const nextEditor = $("composer-input");
+  if (nextEditor) {
+    $("composer-input").dataset.draftKey = composerKey;
+    rememberDraft();
+  }
+  applicationMenu.afterRender();
+  if (isMac) {
+    const menuState = JSON.stringify({ ready: environmentReady(), sidebar: ui.sidebar, panel: ui.panel, fontSize: state.settings.fontSize });
+    if (menuState !== ui.nativeMenuState) {
+      ui.nativeMenuState = menuState;
+      rpc("window.menuState", JSON.parse(menuState)).catch(() => { ui.nativeMenuState = undefined; });
+    }
+  }
   applyTheme();
   for (const detail of document.querySelectorAll("details[data-detail-key]")) detail.open = ui.detailStates.get(detail.dataset.detailKey) || false;
   enhancePickers($("app"));
@@ -1309,6 +1331,7 @@ async function saveProvider() {
   toast("API 服务已保存，可在输入框或微信账户中选择。");
 }
 const external = {
+  "source-project": "https://github.com/mumuhaha487/wechatclaw",
   "official-browser-store": "https://chromewebstore.google.com/detail/chatgpt/hehggadaopoacecdllhhajmbjkdcmajg",
   "official-browser-docs": "https://developers.openai.com/codex/chrome-extension",
   "install-node": "https://nodejs.org/zh-cn/download",
@@ -1323,10 +1346,20 @@ async function action(name, element) {
   if (!environmentReady() && !name.startsWith("window.") && ![
     "runtime", "refresh-environment", "choose-node", "choose-codex", "save-codex-source", "open-desktop", "install-desktop",
     "install-node", "install-webview", "install-codex", "codex-docs", "login-codex", "open-data", "open-conversations", "restore-conversations",
+    "app-menu", "app-command", "source-project", "official-browser-docs",
   ].includes(name)) return;
   if (external[name]) return rpc("shell.open", { url: external[name] });
   if (name.startsWith("window.")) return rpc(name);
   switch (name) {
+    case "app-menu":
+      return applicationMenu.open(element.dataset.menu);
+    case "app-command":
+      return applicationMenu.execute(element.dataset.command);
+    case "font-increase":
+    case "font-decrease":
+    case "font-reset":
+      state = await rpc("settings.save", { fontSize: name === "font-reset" ? 14 : Math.max(12, Math.min(20, state.settings.fontSize + (name === "font-increase" ? 1 : -1))) });
+      return render();
     case "navigate-back":
     case "navigate-forward": {
       const location = navigation.go(name === "navigate-back" ? -1 : 1);
@@ -2028,6 +2061,17 @@ document.addEventListener("input", (event) => {
     $("session-search")?.setSelectionRange(start, start);
   }
 });
+document.addEventListener("compositionstart", event => {
+  if (event.target.id === "composer-input") ui.composing = true;
+});
+document.addEventListener("compositionend", event => {
+  if (event.target.id !== "composer-input") return;
+  ui.composing = false;
+  if (ui.compositionRenderPending) {
+    ui.compositionRenderPending = false;
+    setTimeout(render, 0);
+  }
+});
 document.addEventListener("paste", event => {
   if (event.target.id !== "composer-input" || !environmentReady()) return;
   const files = [...(event.clipboardData?.items || [])].filter(item => item.kind === "file").map(item => item.getAsFile()).filter(Boolean);
@@ -2173,6 +2217,11 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     newSession().catch((e) => toast(e.message));
   }
+  if ((isMac ? event.metaKey : event.ctrlKey) && ["o", ",", "+", "=", "-", "0"].includes(event.key.toLowerCase())) {
+    event.preventDefault();
+    action(({ o: "add-project", ",": "settings", "+": "font-increase", "=": "font-increase", "-": "font-decrease", "0": "font-reset" })[event.key.toLowerCase()]).catch(error => toast(error.message));
+    return;
+  }
   if ((isMac ? event.metaKey : event.ctrlKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
     action("search").catch((e) => toast(e.message));
@@ -2188,7 +2237,9 @@ document.addEventListener("keydown", (event) => {
   }
 });
 function onEvent(event, data) {
-  if (event === "browser-state") {
+  if (event === "menu-action") {
+    action(data.action).catch(error => toast(error.message));
+  } else if (event === "browser-state") {
     browserStates.set(data.owner, data);
     if (data.owner !== session()?.id) return;
     if (data.reveal && !ui.browserHidden.has(data.owner) && !ui.page && (!ui.panel || ui.panelPage !== "browser")) {
@@ -2357,7 +2408,7 @@ function showContext(anchor, items) {
 document.addEventListener("click", (e) => {
   if (
     !e.target.closest(
-      '.row-more,.project-tools,.conversation-title,[data-action="composer-add"],[data-action="context-info"],[data-action="message-menu"]',
+      '.row-more,.project-tools,.conversation-title,[data-action="composer-add"],[data-action="context-info"],[data-action="message-menu"],[data-action="app-menu"],.application-menu-popup',
     )
   )
     document.querySelector(".context-menu")?.remove();
@@ -2429,8 +2480,9 @@ document.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   const splitter = e.target.closest(".sidebar-splitter");
   splitter.setPointerCapture(e.pointerId);
+  const left = splitter.closest(".sidebar").getBoundingClientRect().left;
   const move = (event) => {
-    const width = Math.max(220, Math.min(520, event.clientX));
+    const width = Math.max(220, Math.min(520, event.clientX - left));
     document.documentElement.style.setProperty("--sidebar-width", width + "px");
     viewStorage.setItem("sidebar-width", String(width));
   };

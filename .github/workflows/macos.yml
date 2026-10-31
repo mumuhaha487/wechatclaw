@@ -135,6 +135,31 @@ jobs:
                       catch let error as NSError { guard error.localizedDescription.contains("会话 ID 无效") else { throw error } }
                       print("PASS: Desktop URL encoding and invalid thread rejection")
                       host.web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1000, height: 760))
+                      host.web.loadHTMLString("<!doctype html><script>window.__menuReady=true</script>", baseURL: nil)
+                      var menuPageReady = false
+                      for _ in 0..<100 {
+                          if (try? await host.web.evaluateJavaScript("window.__menuReady === true")) as? Bool == true { menuPageReady = true; break }
+                          try await Task.sleep(nanoseconds: 50_000_000)
+                      }
+                      guard menuPageReady else { throw failure("Native menu test page did not load") }
+                      host.makeMenu()
+                      func menuCommand(_ name: String, _ menu: NSMenu? = NSApp.mainMenu) -> NSMenuItem? {
+                          for item in menu?.items ?? [] {
+                              if item.representedObject as? String == name { return item }
+                              if let found = menuCommand(name,item.submenu) { return found }
+                          }
+                          return nil
+                      }
+                      guard let newChat = menuCommand("new-session"), let runtimeMenu = menuCommand("runtime"), let sidebarMenu = menuCommand("toggle-sidebar"), let panelMenu = menuCommand("toggle-panel"), let increaseMenu = menuCommand("font-increase") else { throw failure("Native application menu commands missing") }
+                      _ = try await host.handle("window.menuState",["ready":false,"sidebar":true,"panel":false,"fontSize":14])
+                      guard !host.validateMenuItem(newChat), host.validateMenuItem(runtimeMenu) else { throw failure("Native setup menu gate failed") }
+                      _ = try await host.handle("window.menuState",["ready":true,"sidebar":true,"panel":false,"fontSize":20])
+                      guard host.validateMenuItem(newChat), host.validateMenuItem(sidebarMenu), sidebarMenu.state == .on, host.validateMenuItem(panelMenu), panelMenu.state == .off, !host.validateMenuItem(increaseMenu) else { throw failure("Native menu enabled/check state failed") }
+                      _ = try await host.web.evaluateJavaScript("window.__menuEvents=[];window.__qqclawReceive=value=>window.__menuEvents.push(value)")
+                      host.menuCommand(newChat)
+                      let dispatched = try await host.web.evaluateJavaScript("JSON.stringify(window.__menuEvents)") as? String ?? ""
+                      guard dispatched.contains("menu-action"), dispatched.contains("new-session") else { throw failure("Native menu action did not reach WebKit bridge") }
+                      print("PASS: AppKit file/view/help menus, setup gating, checked state, font limits and WebKit command dispatch")
                       let browserWindow = NSWindow(contentRect: host.web.frame, styleMask: [.titled], backing: .buffered, defer: false)
                       browserWindow.contentView = host.web; browserWindow.orderFront(nil)
                       host.window = browserWindow
