@@ -1,3 +1,5 @@
+0.3.20 当前外观：白色为主、黑色为辅，整体亮色。backend/store.mjs 的默认 light 与 appearanceVersion=4 迁移、ui 初始 state/HTML、Windows Form/WebView2 以及 Mac AppKit/WebKit 初始外观保持一致；后续用户主动选色保留。输入框增高前后调用 captureReading/restoreReading，已到底时继续跟随，历史阅读保留锚点。以下补充按版本保留，旧深色描述不覆盖最新偏好。
+
 0.3.19 补充：ui/conversation-view.mjs 负责用户长消息折叠、会话目录和阅读位置。render 前根据真实 DOM 的会话 ID 捕获阅读锚点，render 后测量八行边界并恢复同一消息的相对位置；切换会话分别记忆。目录只读取用户消息，DOM 使用 textContent，跳转核对会话、索引及原消息文本/时间。ResizeObserver 处理容器变化，关闭/切换时恢复入口状态；展示状态不写入会话正文或模型设置，不跨进程。
 
 0.3.18 补充：shared/view-preferences.mjs 校验布局白名单与实体引用；ui/view-preferences.mjs 仅在首次迁移读取网页存储，后续通过 view.remember 保存加密布局。拖动宽度暂存并在释放/失焦时提交；键盘调整按目标宽度计算。App 按会话序列化手动网页操作，定向停止绕过导航队列，removingSessions 阻止移除期间新任务；正常退出等待会话移除操作。两端原生 dispose 停止导航、释放子视图并移除会话，Mac 额外释放 KVO 观察器。UI 过滤关闭中的标签状态，失败后读取真实原生状态恢复。文件/网页标签和草稿仍不跨重启。
