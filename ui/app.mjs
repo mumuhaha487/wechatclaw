@@ -705,7 +705,7 @@ function workspace() {
     p = project(),
     missing = ui.startupError || (ui.environment && !ui.environment.codexPath);
   return (
-    '<div class="workspace"><header class="topbar" data-drag>' +
+    '<div class="workspace"><div class="content-area workspace-split"><section class="conversation-pane"><header class="topbar" data-drag>' +
     (isMac ? navigationButtons() : "") +
     (isMac && !ui.sidebar ? ib("toggle-sidebar", "显示侧栏", "sidebar") : "") +
     '<div class="breadcrumb"><span class="project-crumb">' +
@@ -743,17 +743,17 @@ function workspace() {
         "</div>"
       : "") +
     (s?.desktopCopy ? '<div class="setup-banner desktop-handoff-note">' + icon("info") + '<span>已保存 Desktop 对话副本。Desktop 的后续回复不会同步回此会话或微信。</span></div>' : "") +
-    '<div class="content-area"><main class="chat-column"><div class="chat-scroll" id="chat-scroll" data-session="' + esc(s?.id || "") + '">' +
+    '<main class="chat-column"><div class="chat-scroll" id="chat-scroll" data-session="' + esc(s?.id || "") + '">' +
     messages() +
     "</div>" +
     composer() +
-    "</main>" +
+    "</main></section>" +
     (ui.panel ? panelSplitter() + workPanel() : "") +
     "</div></div>"
   );
 }
 function panelSplitter() {
-  return `<div class="panel-splitter${ui.panelMax ? " hidden" : ""}" role="separator" aria-label="调整工作面板宽度" aria-orientation="vertical" aria-valuemin="280" aria-valuemax="${Math.max(280, (document.querySelector(".content-area")?.clientWidth || innerWidth) - 400)}" aria-valuenow="${Number(viewStorage.getItem("panel-width")) || 340}" tabindex="0" title="拖动调整宽度，双击还原"></div>`;
+  return `<div class="panel-splitter${ui.panelMax ? " hidden" : ""}" role="separator" aria-label="调整工作面板宽度" aria-orientation="vertical" aria-valuemin="280" aria-valuemax="${Math.max(280, (document.querySelector(".content-area")?.clientWidth || innerWidth) - 400)}" aria-valuenow="${Number(viewStorage.getItem("panel-width")) || defaultPanelWidth()}" tabindex="0" title="拖动调整宽度，双击还原默认比例"></div>`;
 }
 function rememberPanel() {
   viewStorage.patch({ "panel-open": String(ui.panel), "panel-page": ui.panelPage === "file" ? "" : ui.panelPage,
@@ -905,6 +905,7 @@ function scheduleBrowserView() {
   if (browserViewFrame) return;
   browserViewFrame = requestAnimationFrame(() => {
     browserViewFrame = 0;
+    syncPanelDimensions();
     const viewport = $("browser-viewport");
     if (viewport !== observedBrowserViewport) {
       browserResizeObserver.disconnect();
@@ -1454,7 +1455,7 @@ async function checkEnvironment(restart) {
         ui.panelMax = viewStorage.getItem("panel-maximized") === "true";
         ui.expanded = new Set(JSON.parse(viewStorage.getItem("expanded-projects") || "[]"));
         document.documentElement.style.setProperty("--sidebar-width", (viewStorage.getItem("sidebar-width") || 275) + "px");
-        document.documentElement.style.setProperty("--panel-width", (viewStorage.getItem("panel-width") || 340) + "px");
+        applyPanelWidth();
       }
       if (!ui.reviewHydrated) {
         const saved = reviewView(initial.reviewView, state.sessions);
@@ -2839,7 +2840,22 @@ function resizePanel(value, persist = true) {
   splitter?.setAttribute("aria-valuemax", String(maximum));
   scheduleBrowserView();
 }
-document.documentElement.style.setProperty("--panel-width", (Number(viewStorage.getItem("panel-width")) || 340) + "px");
+function defaultPanelWidth() {
+  const maximum = Math.max(280, (document.querySelector(".content-area")?.clientWidth || innerWidth) - 400);
+  return Math.round(Math.max(280, Math.min(560, maximum, innerWidth * .287)));
+}
+function applyPanelWidth() {
+  const saved = Number(viewStorage.getItem("panel-width"));
+  document.documentElement.style.setProperty("--panel-width", saved > 0 ? saved + "px" : "clamp(280px, 28.7vw, 560px)");
+}
+function resetPanelWidth() { viewStorage.removeItem("panel-width"); applyPanelWidth(); scheduleBrowserView(); }
+function syncPanelDimensions() {
+  const splitter = document.querySelector(".panel-splitter"), panel = document.querySelector(".work-panel"), area = document.querySelector(".content-area");
+  if (!splitter || !panel || !area) return;
+  splitter.setAttribute("aria-valuenow", String(Math.round(panel.getBoundingClientRect().width)));
+  splitter.setAttribute("aria-valuemax", String(Math.max(280, Math.min(1200, area.clientWidth - 400))));
+}
+applyPanelWidth();
 document.addEventListener("pointerdown", (event) => {
   const splitter = event.target.closest(".panel-splitter");
   if (!splitter || event.button !== 0) return;
@@ -2866,7 +2882,7 @@ document.addEventListener("pointerdown", (event) => {
   window.addEventListener("blur", done);
 });
 document.addEventListener("dblclick", (event) => {
-  if (event.target.closest(".panel-splitter")) resizePanel(340);
+  if (event.target.closest(".panel-splitter")) resetPanelWidth();
 });
 document.addEventListener("keydown", (event) => {
   const tabButton = event.target.closest('.work-tabs-bar [data-action="panel-select-tab"]');

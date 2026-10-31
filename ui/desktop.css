@@ -60,7 +60,7 @@
 @media (max-width: 620px) { .download-row { gap: 8px; padding: 12px; } .download-actions { flex-direction: column; } }
 :root {
   --sidebar-width: 275px;
-  --panel-width: 340px;
+  --panel-width: clamp(280px, 28.7vw, 560px);
   --toolbar-height: 46px;
   --page: #ffffff;
   --input: #ffffff;
@@ -1780,6 +1780,12 @@ select:focus-visible {
 /* Leave a useful chat width. When space runs out the panel becomes an explicit
    overlay with visible close/restore controls, rather than shrinking the chat. */
 .content-area { position: relative; container-type: inline-size; }
+.conversation-pane { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; }
+.workspace-split { margin-top: 0; }
+.conversation-pane > .topbar { height: auto; min-height: 46px; padding: 6px 10px 6px 12px; border-bottom: 1px solid var(--line); }
+.conversation-pane > .chat-column { min-height: 0; }
+.conversation-pane .top-actions { flex-wrap: wrap; justify-content: flex-end; }
+.conversation-pane .top-capsule { margin-right: 0; }
 .work-panel, .work-panel.browser-panel { display: block; width: min(var(--panel-width), max(280px, calc(100% - 400px))); max-width: none; flex-shrink: 0; }
 .work-panel.browser-panel { display: flex; }
 .work-panel.maximized, .work-panel.browser-panel.maximized { position: absolute; inset: 0; width: auto; max-width: none; border: 0; border-radius: 0; z-index: 12; }
