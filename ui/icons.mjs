@@ -1,4 +1,5 @@
 const paths = {
+  outline: '<circle cx="5" cy="6" r="1.4"/><circle cx="5" cy="12" r="1.4"/><circle cx="5" cy="18" r="1.4"/><path d="M10 6h10m-10 6h7m-7 6h10"/>',
   home: '<path d="m3 10 9-7 9 7v11h-6v-7H9v7H3Z"/>',
   more: '<circle cx="5" cy="12" r=".6"/><circle cx="12" cy="12" r=".6"/><circle cx="19" cy="12" r=".6"/>',
   expand: '<path d="M14 3h7v7M21 3l-7 7M10 21H3v-7m0 7 7-7"/>',

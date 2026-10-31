@@ -18,6 +18,7 @@ import { reviewView } from "../shared/review-view.mjs";
 import { ApplicationMenu } from "./application-menu.mjs";
 import { PanelTabs, workspaceFileReference } from "./panel-tabs.mjs";
 import { ViewPreferences } from "./view-preferences.mjs";
+import { ConversationView } from "./conversation-view.mjs";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -190,6 +191,7 @@ const pages = [
 const session = () => state.sessions.find((s) => s.id === ui.active);
 const previews = new AttachmentPreviews(rpc);
 const navigation = new NavigationHistory();
+const conversationView = new ConversationView({ sessions: () => state.sessions, current: session, root: () => $("chat-scroll") });
 const draftKey = () => ui.active || `new:${workspaceKey(project()?.workspace || "")}`;
 const applicationMenu = new ApplicationMenu({
   state: () => ({ ready: environmentReady(), workspace: project()?.workspace, fontSize: state.settings.fontSize,
@@ -528,7 +530,7 @@ function sidebar() {
         icon("folder") +
         "打开项目</button>") +
     '</div><div class="side-footer">' +
-    '<button class="version" data-action="about">v0.3.18</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v0.3.19</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -554,9 +556,9 @@ function messageView(m, index, s) {
   }).join("");
   const assistant = m.role === "assistant" && m.kind !== "progress";
   const time = m.at && !Number.isNaN(Date.parse(m.at)) ? `<time datetime="${esc(m.at)}" title="${esc(new Date(m.at).toLocaleString())}">${esc(new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time>` : "";
-  return `<article class="message ${m.role}${m.kind === "progress" ? " progress-message" : ""}">
+  return `<article class="message ${m.role}${m.kind === "progress" ? " progress-message" : ""}" data-message-index="${index}" tabindex="-1">
     ${m.kind === "progress" ? '<div class="progress-label">过程进度</div>' : assistant && m.runStats ? runSummary(m.runStats, `${s.id}-${index}`) : ""}
-    ${m.role === "user" ? attachments : ""}<div class="message-content">${m.role === "assistant" ? markdown(m.text) : esc(m.text)}</div>${m.role === "user" ? "" : attachments}
+    ${m.role === "user" ? attachments : ""}<div class="message-content${m.role === "user" ? " user-message-content" : ""}">${m.role === "user" ? `<div class="user-message-text${conversationView.expanded(s.id, index, m.text) ? "" : " is-collapsed"}" id="message-text-${index}">${esc(m.text)}</div><button class="message-expand" data-action="toggle-message" data-index="${index}" aria-expanded="${conversationView.expanded(s.id, index, m.text)}" aria-controls="message-text-${index}" hidden><span>显示更多</span>${icon("down")}</button>` : m.role === "assistant" ? markdown(m.text) : esc(m.text)}</div>${m.role === "user" ? "" : attachments}
     ${changeCard(m, index, s)}
     ${assistant ? `<div class="message-actions">${ib("copy-message", "复制回复", "copy", `data-index="${index}"`)}${ib("message-menu", "回复菜单", "more", `data-id="${index}"`)}${time}<span class="message-model" title="${esc(s.model || "Codex")}">${esc(s.model || "Codex")}</span></div>` : ""}</article>`;
 }
@@ -716,6 +718,7 @@ function workspace() {
     ib("new-session", "新建会话", "new") +
     ib("search", "搜索会话", "search") +
     "</div>" +
+    ib("conversation-outline", "会话目录", "outline", `aria-haspopup="dialog" aria-expanded="false" ${s?.messages.some(m => m.role === "user") ? "" : "disabled"}`) +
     ib("panel-new", "新建面板", "plus") +
     ib("maximize-panel", "展开工作面板", "expand") +
     ib("toggle-panel", "显示或隐藏工作面板", "panel") +
@@ -731,7 +734,7 @@ function workspace() {
         "</div>"
       : "") +
     (s?.desktopCopy ? '<div class="setup-banner desktop-handoff-note">' + icon("info") + '<span>已保存 Desktop 对话副本。Desktop 的后续回复不会同步回此会话或微信。</span></div>' : "") +
-    '<div class="content-area"><main class="chat-column"><div class="chat-scroll" id="chat-scroll">' +
+    '<div class="content-area"><main class="chat-column"><div class="chat-scroll" id="chat-scroll" data-session="' + esc(s?.id || "") + '">' +
     messages() +
     "</div>" +
     composer() +
@@ -1077,7 +1080,7 @@ function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.18 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.19 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
@@ -1122,11 +1125,7 @@ function render() {
   const focusId = active?.id;
   const start = active?.selectionStart,
     end = active?.selectionEnd;
-  const scroll = $("chat-scroll");
-  const atBottom =
-    !scroll ||
-    scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 90;
-  const oldScroll = scroll?.scrollTop || 0;
+  conversationView.captureReading();
   const settingsScroll =
     ui.lastSettingsPage === ui.page
       ? document.querySelector(".settings-content")?.scrollTop || 0
@@ -1149,6 +1148,7 @@ function render() {
     }
   }
   applyTheme();
+  conversationView.refresh();
   for (const detail of document.querySelectorAll("details[data-detail-key]")) detail.open = ui.detailStates.get(detail.dataset.detailKey) || false;
   enhancePickers($("app"));
   if ($("composer-input")) $("composer-input").style.height = `${Math.min(180, Math.max(60, $("composer-input").scrollHeight))}px`;
@@ -1163,10 +1163,7 @@ function render() {
         $(focusId).setSelectionRange(start, end);
       } catch {}
   }
-  if ($("chat-scroll"))
-    $("chat-scroll").scrollTop = atBottom
-      ? $("chat-scroll").scrollHeight
-      : oldScroll;
+  conversationView.restoreReading();
   if (document.querySelector(".settings-content"))
     document.querySelector(".settings-content").scrollTop = settingsScroll;
   const documentScroll = document.querySelector(".document-scroll");
@@ -1500,6 +1497,11 @@ async function action(name, element) {
   if (external[name]) return rpc("shell.open", { url: external[name] });
   if (name.startsWith("window.")) return rpc(name);
   switch (name) {
+    case "toggle-message":
+      return conversationView.toggleMessage(Number(element.dataset.index));
+    case "conversation-outline":
+      closePicker(); applicationMenu.close();
+      return conversationView.toggleOutline();
     case "app-menu":
       return applicationMenu.open(element.dataset.menu);
     case "app-command":
@@ -2634,7 +2636,7 @@ function showContext(anchor, items) {
 document.addEventListener("click", (e) => {
   if (
     !e.target.closest(
-      '.row-more,.project-tools,.conversation-title,[data-action="composer-add"],[data-action="panel-add-tab"],[data-action="context-info"],[data-action="message-menu"],[data-action="app-menu"],.application-menu-popup',
+      '.row-more,.project-tools,.conversation-title,[data-action="composer-add"],[data-action="panel-add-tab"],[data-action="context-info"],[data-action="message-menu"],[data-action="app-menu"],.application-menu-popup,.conversation-outline,[data-action="conversation-outline"]',
     )
   )
     document.querySelector(".context-menu")?.remove();
