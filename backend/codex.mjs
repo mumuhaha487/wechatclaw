@@ -135,13 +135,11 @@ export class CodexClient extends EventEmitter {
         if (!p) return;
         clearTimeout(p.timer);
         this.pending.delete(message.id);
-        message.error
-          ? p.reject(
-              new Error(
-                safeError(message.error.message, [this.profile.apiKey]),
-              ),
-            )
-          : p.resolve(message.result);
+        if (message.error) {
+          const error = new Error(safeError(message.error.message, [this.profile.apiKey]));
+          error.rpcCode = message.error.code;
+          p.reject(error);
+        } else p.resolve(message.result);
       } else if (message.id != null && message.method) {
         const mcpApproval = message.method === "mcpServer/elicitation/request" &&
           message.params?._meta?.codex_approval_kind === "mcp_tool_call" &&

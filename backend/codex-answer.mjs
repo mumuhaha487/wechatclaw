@@ -11,7 +11,8 @@ export async function answerTurns(client, session, turnParams, onEvent, { goal, 
     try { current = await client.readGoal(session); }
     catch (error) {
       const missingThread = /^no rollout found for thread id |^thread not found/i.test(error.message);
-      if (goal?.resume || goal && !missingThread || !missingThread && !/method not found|unknown method|goals feature is disabled/i.test(error.message)) throw error;
+      const unsupported = error.rpcCode === -32601 || /method not found|unknown method|unsupported method|unknown variant.*thread\/goal\/get|goals feature is disabled/i.test(error.message);
+      if (goal?.resume || !missingThread && (goal || !unsupported)) throw error;
       current = null;
     }
     if (goal?.resume && !current) throw new Error("Codex中没有可继续的目标，请重新设置。");
