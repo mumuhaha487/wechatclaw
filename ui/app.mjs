@@ -22,6 +22,7 @@ import { ViewPreferences } from "./view-preferences.mjs";
 import { ConversationView } from "./conversation-view.mjs";
 import { SessionSearch, MessageFind } from "./message-search.mjs";
 import { BrowserDownloads } from "./browser-downloads.mjs";
+import { BrowserHistory } from "./browser-history.mjs";
 import { version as appVersion } from "../package.json";
 
 const $ = (id) => document.getElementById(id);
@@ -760,6 +761,9 @@ function rememberPanel() {
 }
 const browserStates = new Map();
 const browserDownloads = new BrowserDownloads({ rpc, ready: () => environmentReady(), changed: () => scheduleBrowserView() });
+const browserHistory = new BrowserHistory({ rpc, ready: () => environmentReady(), changed: () => scheduleBrowserView(),
+  navigate: url => { const tab = panelTabs.selected(panelOwner()); if (tab) delete tab.addressDraft; return runBrowserCommand("open", { url }); },
+  error: error => toast(error.message) });
 const closingBrowserTabs = new Map();
 const creatingBrowserTabs = new Set();
 const panelTabs = new PanelTabs();
@@ -926,7 +930,7 @@ function browserPanel() {
     ${panelTabsBar()}
     <div class="browser-toolbar"><div class="browser-navigation">${ib("browser-back", "后退", "back", b.canGoBack ? "" : "disabled")}${ib("browser-forward", "前进", "chevron", b.canGoForward ? "" : "disabled")}${ib(b.loading ? "browser-stop" : "browser-reload", b.loading ? "停止加载" : "刷新网页", b.loading ? "close" : "refresh", b.url ? "" : "disabled")}</div>
     <form id="browser-form" class="browser-address">${icon(b.url?.startsWith("https:") ? "shield" : "search")}<input id="browser-address" name="url" data-owner="${esc(panelOwner())}" data-key="${esc(tab?.key)}" aria-label="网页地址或搜索" placeholder="${creating ? "正在创建标签页…" : "搜索或输入网址"}" autocomplete="off" spellcheck="false" maxlength="8192" ${creating ? "disabled" : ""} value="${esc(tab?.addressDraft ?? b.url ?? "")}"></form>
-    ${ib("browser-downloads", "下载", "download")}${ib("browser-external", "在系统浏览器打开", "external", b.url ? "" : "disabled")}</div>
+    ${ib("browser-history", "浏览记录", "clock")}${ib("browser-downloads", "下载", "download")}${ib("browser-external", "在系统浏览器打开", "external", b.url ? "" : "disabled")}</div>
     <div class="browser-connection-note" role="status"><span>手动预览 · 官方扩展尚未接通</span><button data-action="runtime">配置</button></div>
     ${b.error ? `<div class="browser-error" role="status">${icon("info")}<span>${esc(b.error)}</span></div>` : ""}
     <div id="browser-viewport" class="browser-viewport">${!b.url ? `<div class="browser-start">${icon("browser")}<strong>网页预览</strong><span>输入网址或搜索内容。自动操作需接通官方 ChatGPT 扩展。</span><button class="outline" data-action="browser-google">${icon("search")}Google 搜索</button></div>` : ""}</div>
@@ -1006,6 +1010,7 @@ function refreshBrowserPanel() {
     if (focus && identity === JSON.stringify([next.dataset.owner, next.dataset.key])) { next.focus(); next.setSelectionRange(start, start); }
   }
   panelTabActions.refresh();
+  browserHistory.refresh();
   scheduleBrowserView();
 }
 function workPanel() {
@@ -1133,7 +1138,7 @@ function projectSettings() {
 }
 function officialBrowserSettings() {
   const status = ui.officialBrowser;
-  return `<h2>官方浏览器扩展</h2><div class="settings-card"><p class="setting-title">尚未接通官方扩展</p><p class="setting-description">${esc(status?.reason || "暂未获得官方扩展连接状态。")}</p>${(status?.browsers || []).map(b => `<div class="setting-row"><span class="grow">${esc(b.name)}</span><span class="muted">${b.installed ? "检测到官方扩展文件" : b.detection === "unknown" ? "安装情况未知" : "未检测到官方扩展文件"}</span></div>`).join("")}<p class="setting-description">安装检测不代表启用或授权成功。当前只能手动预览网页，微信和 QQClaw 的 Codex 会话尚不能通过官方扩展操作浏览器。</p><div class="row">${button("official-browser-store", "官方扩展安装入口", "external", "outline")}${button("official-browser-docs", "查看官方说明", "external", "outline")}</div></div>`;
+  return `<h2>网页预览</h2><div class="settings-card"><div class="setting-row"><div class="grow"><p class="setting-title">本机浏览记录与下载</p><p class="setting-description">浏览记录只包含本软件访问的网页；清除记录不会删除登录状态、下载文件或聊天。</p></div></div><div class="row">${button("browser-history", "浏览记录", "clock", "outline")}${button("browser-downloads", "下载", "download", "outline")}</div></div><h2>官方浏览器扩展</h2><div class="settings-card"><p class="setting-title">尚未接通官方扩展</p><p class="setting-description">${esc(status?.reason || "暂未获得官方扩展连接状态。")}</p>${(status?.browsers || []).map(b => `<div class="setting-row"><span class="grow">${esc(b.name)}</span><span class="muted">${b.installed ? "检测到官方扩展文件" : b.detection === "unknown" ? "安装情况未知" : "未检测到官方扩展文件"}</span></div>`).join("")}<p class="setting-description">安装检测不代表启用或授权成功。当前只能手动预览网页，微信和 QQClaw 的 Codex 会话尚不能通过官方扩展操作浏览器。</p><div class="row">${button("official-browser-store", "官方扩展安装入口", "external", "outline")}${button("official-browser-docs", "查看官方说明", "external", "outline")}</div></div>`;
 }
 function runtimeSettings() {
   const e = ui.environment;
@@ -1264,6 +1269,7 @@ function render() {
     "sidebar-open": String(ui.sidebar), "expanded-projects": JSON.stringify([...ui.expanded]) });
   hydrateAttachments();
   browserDownloads.refresh();
+  browserHistory.refresh();
 }
 function defaultConnection() {
   return {
@@ -1583,8 +1589,11 @@ async function action(name, element) {
   if (external[name]) return rpc("shell.open", { url: external[name] });
   if (name.startsWith("window.")) return rpc(name);
   switch (name) {
+    case "browser-history":
+      closePicker(); applicationMenu.close(); browserDownloads.close();
+      return browserHistory.show(element);
     case "browser-downloads":
-      closePicker(); applicationMenu.close();
+      closePicker(); applicationMenu.close(); browserHistory.close(); browserHistory.dismissSuggestions();
       return browserDownloads.show(element);
     case "toggle-message":
       return conversationView.toggleMessage(Number(element.dataset.index));
@@ -2550,6 +2559,8 @@ function onEvent(event, data) {
     updateBrowserState(data);
   } else if (event === "browser-downloads") {
     browserDownloads.update(data);
+  } else if (event === "browser-history") {
+    browserHistory.update(data);
   } else if (event === "approval") {
     const key = `${data.sessionId}:${data.requestId}`;
     ui.approvals.set(key, { ...data, key });

@@ -23,8 +23,10 @@ internal sealed class BrowserHost {
     private Rectangle bounds = new Rectangle(-2000, 0, 1000, 760);
     private bool visible;
     internal readonly BrowserDownloads Downloads;
-    internal BrowserHost(Form parent, Action<object> notify, Action<object> downloadNotify = null) {
+    internal readonly BrowserHistory History;
+    internal BrowserHost(Form parent, Action<object> notify, Action<object> downloadNotify = null, Action<object> historyNotify = null) {
         this.parent = parent; this.notify = notify; Downloads = new BrowserDownloads(downloadNotify ?? delegate { });
+        History = new BrowserHistory(historyNotify ?? delegate { });
     }
     internal void SetView(Dictionary<string, object> p) {
         visibleOwner = Value(p, "owner");
@@ -101,7 +103,7 @@ internal sealed class BrowserHost {
     }
     private void NewTab(BrowserSession session) {
         if (session.Tabs.Count >= 12) throw new Exception("最多打开 12 个标签页，请先关闭不用的页面。");
-        var tab = new BrowserTab(parent, session.Profile, () => Publish(session, false), Downloads, session.Owner);
+        var tab = new BrowserTab(parent, session.Profile, () => Publish(session, false), Downloads, session.Owner, History);
         session.Tabs.Add(tab); session.Active = tab;
     }
     private object State(BrowserSession s, bool reveal) {
@@ -118,6 +120,76 @@ internal sealed class BrowserHost {
     internal static bool Allowed(string value) {
         Uri uri;
         return Uri.TryCreate(value, UriKind.Absolute, out uri) && (uri.Scheme == "http" || uri.Scheme == "https") && String.IsNullOrEmpty(uri.UserInfo) && !String.Equals(uri.Host, "qqclaw.local", StringComparison.OrdinalIgnoreCase);
+    }
+}
+internal sealed class BrowserHistoryRecord {
+    public string id { get; set; }
+    public string url { get; set; }
+    public string title { get; set; }
+    public long at { get; set; }
+}
+// A separate, bounded user history, never injected into model input. Page views
+// call Visit only after a successful top-level load; downloads/errors stay out.
+internal sealed class BrowserHistory {
+    private List<BrowserHistoryRecord> items = new List<BrowserHistoryRecord>();
+    private readonly string file = Path.Combine(Program.DataDirectory, "browser-history.json");
+    private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = 16 * 1024 * 1024 };
+    private readonly Action<object> notify;
+    private string storageError = "";
+    private long revision;
+    internal BrowserHistory(Action<object> notify) {
+        this.notify = notify;
+        try {
+            if (Directory.Exists(file)) throw new Exception("历史记录位置是目录。");
+            if (File.Exists(file)) {
+                var bytes = ProtectedData.Unprotect(Convert.FromBase64String(File.ReadAllText(file)), Encoding.UTF8.GetBytes("QQClaw/browser-history/v1"), DataProtectionScope.CurrentUser);
+                var saved = json.Deserialize<List<BrowserHistoryRecord>>(Encoding.UTF8.GetString(bytes));
+                if (saved == null || saved.Count > 500 || saved.Any(item => item == null || String.IsNullOrEmpty(item.id) || item.at <= 0 || item.title == null || item.title.Length > 256 || Normalize(item.url) == null || Normalize(item.url) != item.url) || saved.Select(item => item.id).Distinct().Count() != saved.Count || saved.Select(item => item.url).Distinct().Count() != saved.Count) throw new Exception("历史记录格式无效。");
+                items = saved.OrderByDescending(item => item.at).ToList();
+            }
+        } catch { storageError = "无法读取加密浏览记录，原文件已保留。请使用原系统账户检查数据目录后重启。"; }
+    }
+    private static string Normalize(string value) {
+        if (String.IsNullOrEmpty(value) || value.Length > 8192 || !BrowserHost.Allowed(value)) return null;
+        try { var uri = new UriBuilder(value) { Fragment = "" }; var result = uri.Uri.AbsoluteUri; return result.Length <= 8192 ? result : null; } catch { return null; }
+    }
+    private static long Now() { return (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds; }
+    internal void Visit(string value, string title) {
+        var url = Normalize(value); if (url == null || storageError != "") return;
+        var original = items; var previous = items.Find(item => item.url == url);
+        title = new string((title ?? "").Where(c => !Char.IsControl(c)).ToArray()).Trim();
+        if (title.Length > 256) title = title.Substring(0, Char.IsHighSurrogate(title[255]) ? 255 : 256);
+        var record = new BrowserHistoryRecord { id = previous == null ? Guid.NewGuid().ToString("D") : previous.id, url = url, title = title == "" ? new Uri(url).Host : title, at = Now() };
+        items = new [] { record }.Concat(items.Where(item => item.url != url)).Take(500).ToList();
+        try { Save(); } catch { items = original; }
+        notify(State());
+    }
+    private void Save() {
+        var temporary = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try {
+            var bytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(json.Serialize(items)), Encoding.UTF8.GetBytes("QQClaw/browser-history/v1"), DataProtectionScope.CurrentUser);
+            Directory.CreateDirectory(Program.DataDirectory); File.WriteAllText(temporary, Convert.ToBase64String(bytes));
+            if (File.Exists(file)) File.Replace(temporary, file, null); else File.Move(temporary, file);
+        } catch { storageError = "浏览记录保存失败，原记录已保留。请检查磁盘空间和数据目录权限后重启。"; throw new Exception(storageError); }
+        finally { try { if (File.Exists(temporary)) File.Delete(temporary); } catch { } }
+    }
+    internal object State() { return new { revision = ++revision, items = items.ToArray(), storageError = storageError }; }
+    internal object Handle(Dictionary<string, object> p) {
+        var action = BrowserHost.Value(p, "action"); if (action == "state") return State();
+        if (storageError != "") throw new Exception(storageError);
+        var original = items;
+        if (action == "remove") {
+            string id = BrowserHost.Value(p, "id");
+            if (!items.Any(item => item.id == id)) throw new Exception("该浏览记录已不存在。");
+            items = items.Where(item => item.id != id).ToList();
+        } else if (action == "clear") {
+            string range = BrowserHost.Value(p, "range");
+            if (!new [] { "hour", "day", "all" }.Contains(range)) throw new Exception("清除时间范围无效。");
+            long since = range == "all" ? 0 : Now() - (range == "hour" ? 3600000L : 86400000L);
+            items = items.Where(item => item.at < since).ToList();
+        } else throw new Exception("不支持的浏览记录操作。");
+        try { Save(); } catch { items = original; notify(State()); throw; }
+        var state = State(); notify(state); return state;
     }
 }
 internal sealed class BrowserSession {
@@ -148,10 +220,11 @@ internal sealed class BrowserTab {
     private TaskCompletionSource<bool> navigation;
     internal ulong NavigationId;
     private readonly BrowserDownloads downloads;
+    private readonly BrowserHistory history;
     private readonly string owner;
-    internal BrowserTab(Form parent, string profile, Action changed, BrowserDownloads downloads, string owner) {
+    internal BrowserTab(Form parent, string profile, Action changed, BrowserDownloads downloads, string owner, BrowserHistory history) {
         this.profile = profile; this.changed = changed;
-        this.downloads = downloads; this.owner = owner;
+        this.downloads = downloads; this.owner = owner; this.history = history;
         Web.Bounds = new Rectangle(-2000, 0, 1000, 760); parent.Controls.Add(Web);
     }
     private async Task Initialize() {
@@ -170,6 +243,7 @@ internal sealed class BrowserTab {
         Web.CoreWebView2.NavigationCompleted += async delegate(object sender, CoreWebView2NavigationCompletedEventArgs e) {
             if (!e.IsSuccess && !stopping) await Task.Delay(200);
             if (Web.IsDisposed || e.NavigationId != NavigationId) return;
+            if (e.IsSuccess && !closed && !downloadNavigation) history.Visit(Url, Title);
             Loading = false; Error = e.IsSuccess || stopping || downloadNavigation ? "" : "网页未能加载：" + e.WebErrorStatus; changed();
         };
         Web.CoreWebView2.SourceChanged += delegate { changed(); };

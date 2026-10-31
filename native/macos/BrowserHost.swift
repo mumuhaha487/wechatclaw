@@ -1,6 +1,71 @@
 import AppKit
 import WebKit
 
+private struct BrowserHistoryRecord: Codable {
+    let id: String, url: String, title: String
+    let at: Int64
+    var value: [String: Any] { ["id": id, "url": url, "title": title, "at": at] }
+}
+@MainActor final class BrowserHistory {
+    private let directory: URL, file: URL, vault: Vault, notify: ([String: Any]) -> Void
+    private var items: [BrowserHistoryRecord] = [], storageError = ""
+    private var revision: Int64 = 0
+    init(directory: URL, notify: @escaping ([String: Any]) -> Void) {
+        self.directory = directory; file = directory.appendingPathComponent("browser-history.json"); vault = Vault(directory: directory); self.notify = notify
+        do {
+            if FileManager.default.fileExists(atPath: file.path) {
+                let text = try vault.handle("vault.decrypt", String(contentsOf: file, encoding: .utf8))
+                let saved = try JSONDecoder().decode([BrowserHistoryRecord].self, from: Data(text.utf8))
+                guard saved.count <= 500, saved.allSatisfy({ !$0.id.isEmpty && $0.at > 0 && $0.title.utf16.count <= 512 && Self.normalize($0.url) == $0.url }), Set(saved.map(\.id)).count == saved.count, Set(saved.map(\.url)).count == saved.count else { throw failure("历史记录格式无效。") }
+                items = saved.sorted { $0.at > $1.at }
+            }
+        } catch { storageError = "无法读取加密浏览记录，原文件已保留。请解锁原系统账户的钥匙串、检查数据目录后重启。" }
+    }
+    private static func normalize(_ value: String) -> String? {
+        guard !value.isEmpty, value.utf16.count <= 8192, BrowserHost.allowed(value), var components = URLComponents(string: value) else { return nil }
+        components.fragment = nil
+        guard let result = components.url?.absoluteString, result.utf16.count <= 8192 else { return nil }; return result
+    }
+    private static var now: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+    func visit(_ value: String, title: String) {
+        guard let url = Self.normalize(value), storageError.isEmpty else { return }
+        let original = items, previous = items.first { $0.url == url }
+        let cleanTitle = title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.prefix(256).map(String.init).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        let record = BrowserHistoryRecord(id: previous?.id ?? UUID().uuidString.lowercased(), url: url, title: cleanTitle.isEmpty ? (URL(string: url)?.host ?? url) : cleanTitle, at: Self.now)
+        items = Array(([record] + items.filter { $0.url != url }).prefix(500))
+        do { try save() } catch { items = original }
+        notify(state())
+    }
+    private func save() throws {
+        do {
+            let text = String(decoding: try JSONEncoder().encode(items), as: UTF8.self)
+            let encrypted = try vault.handle("vault.encrypt", text)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data(encrypted.utf8).write(to: file, options: .atomic)
+        } catch { storageError = "浏览记录保存失败，原记录已保留。请检查磁盘空间和数据目录权限后重启。"; throw failure(storageError) }
+    }
+    func state() -> [String: Any] { revision += 1; return ["revision": revision, "items": items.map(\.value), "storageError": storageError] }
+    func handle(_ p: [String: Any]) throws -> [String: Any] {
+        let action = p["action"] as? String ?? ""
+        if action == "state" { return state() }
+        guard storageError.isEmpty else { throw failure(storageError) }
+        let original = items
+        switch action {
+        case "remove":
+            guard let id = p["id"] as? String, items.contains(where: { $0.id == id }) else { throw failure("该浏览记录已不存在。") }
+            items.removeAll { $0.id == id }
+        case "clear":
+            let range = p["range"] as? String ?? ""
+            guard ["hour", "day", "all"].contains(range) else { throw failure("清除时间范围无效。") }
+            let since: Int64 = range == "all" ? 0 : Self.now - (range == "hour" ? 3_600_000 : 86_400_000)
+            items.removeAll { $0.at >= since }
+        default: throw failure("不支持的浏览记录操作。")
+        }
+        do { try save() } catch { items = original; notify(state()); throw error }
+        let value = state(); notify(value); return value
+    }
+}
+
 @MainActor final class BrowserSession {
     var revision: Int64 = 0
     var disposed = false
@@ -14,14 +79,16 @@ import WebKit
     let resources: URL, parent: NSView
     let notify: ([String: Any]) -> Void
     let downloads: BrowserDownloads
+    let history: BrowserHistory
     var sessions: [String: BrowserSession] = [:]
     var stores: [String: WKWebsiteDataStore] = [:]
     var operations: [String: Task<Any, Error>] = [:]
     var visibleOwner = "", visible = false, rectangle = NSRect.zero
-    init(resources: URL, parent: NSView, data: URL? = nil, downloadNotify: (([String: Any]) -> Void)? = nil, notify: @escaping ([String: Any]) -> Void) {
+    init(resources: URL, parent: NSView, data: URL? = nil, downloadNotify: (([String: Any]) -> Void)? = nil, historyNotify: (([String: Any]) -> Void)? = nil, notify: @escaping ([String: Any]) -> Void) {
         self.resources = resources; self.parent = parent; self.notify = notify
         let directory = data ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("QQClaw")
         downloads = BrowserDownloads(directory: directory, notify: downloadNotify ?? { _ in })
+        history = BrowserHistory(directory: directory, notify: historyNotify ?? { _ in })
     }
     func setView(_ p: [String: Any]) {
         visibleOwner = p["owner"] as? String ?? ""
@@ -59,7 +126,7 @@ import WebKit
         // macOS 13 lacks persistent stores by identifier. Share only the same
         // account's in-memory store; never borrow the app or system login store.
         let store = stores[session.profile] ?? WKWebsiteDataStore.nonPersistent(); stores[session.profile] = store
-        let tab = BrowserWindow(resources: resources, store: store, downloads: downloads, owner: session.owner) { [weak self, weak session] in
+        let tab = BrowserWindow(resources: resources, store: store, downloads: downloads, history: history, owner: session.owner) { [weak self, weak session] in
             guard let self, let session else { return }; self.publish(session)
         }
         parent.addSubview(tab.web); tab.web.isHidden = true
@@ -130,14 +197,16 @@ import WebKit
     let id = UUID().uuidString.lowercased()
     let changed: () -> Void
     let downloads: BrowserDownloads, owner: String
+    let history: BrowserHistory
     var closed = false, downloadNavigation = false
     var errorText = ""
     var url: String { web.url?.absoluteString == "about:blank" ? "" : web.url?.absoluteString ?? "" }
     var observations: [NSKeyValueObservation] = []
     var navigation: CheckedContinuation<Void, Error>?, navigationToken: UUID?
-    init(resources: URL, store: WKWebsiteDataStore, downloads: BrowserDownloads, owner: String, changed: @escaping () -> Void) {
+    init(resources: URL, store: WKWebsiteDataStore, downloads: BrowserDownloads, history: BrowserHistory, owner: String, changed: @escaping () -> Void) {
         self.resources = resources; self.changed = changed
         self.downloads = downloads; self.owner = owner
+        self.history = history
         let config = WKWebViewConfiguration(); config.websiteDataStore = store
         // No application URL scheme or script-message handler on page views.
         web = WKWebView(frame: NSRect(x: -2000, y: 0, width: 1000, height: 760), configuration: config)
@@ -167,7 +236,10 @@ import WebKit
             }
         }
     }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { errorText = ""; finishNavigation(.success(())); changed() }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if !closed && !downloadNavigation { history.visit(url, title: web.title ?? "") }
+        errorText = ""; finishNavigation(.success(())); changed()
+    }
     private func downloadPolicyError(_ error: Error) -> Bool {
         let value = error as NSError
         return downloadNavigation && (value.code == NSURLErrorCancelled || (value.domain == "WebKitErrorDomain" && value.code == 102))

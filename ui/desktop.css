@@ -1,4 +1,42 @@
 /* White desktop surfaces with black text; an optional dark theme is retained. */
+.browser-history-backdrop { z-index: 151; display: grid; place-items: center; padding: 16px; }
+.browser-history-dialog { display: flex; flex-direction: column; width: min(660px, 100%); max-height: calc(100dvh - 32px); min-width: 0; background: var(--page); color: var(--text); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 48px #0002; overflow: hidden; }
+.browser-history-dialog > header { display: flex; align-items: flex-start; gap: 4px; padding: 20px 20px 8px; }
+.browser-history-dialog > header > div { flex: 1; min-width: 0; }
+.browser-history-dialog h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+.browser-history-summary { font-size: 12px; color: var(--muted); margin: 0; }
+.browser-history-note, .browser-history-error { margin: 0; padding: 8px 20px 12px; font-size: 12px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
+.browser-history-error { color: var(--text); }
+.browser-history-search { display: block; padding: 0 20px 12px; }
+.browser-history-search .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.browser-history-search input { width: 100%; background: var(--input); border: 1px solid var(--line); padding: 9px 10px; border-radius: 6px; }
+.browser-history-list { overflow: auto; min-height: 0; border-block: 1px solid var(--line); }
+.browser-history-row { display: flex; min-width: 0; gap: 8px; padding: 5px 16px; align-items: flex-start; border-bottom: 1px solid var(--line); }
+.browser-history-row:last-child { border-bottom: 0; }
+.browser-history-open { flex: 1; min-width: 0; padding: 10px 4px; text-align: left; }
+.browser-history-open:hover { background: var(--tile); }
+.browser-history-open strong { display: block; font-size: 13px; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }
+.browser-history-open small { display: block; font-size: 11px; line-height: 1.6; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.browser-history-open time { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); }
+.browser-history-row > .icon-button { flex: 0 0 auto; margin-top: 9px; }
+.browser-history-dialog > footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 12px 20px; }
+.browser-history-clear { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
+.browser-history-clear select { border: 1px solid var(--line); background: var(--input); padding: 6px; font-size: 12px; }
+.browser-history-confirm { border-top: 1px solid var(--line); padding: 12px 20px; flex-shrink: 0; }
+.browser-history-confirm p { font-size: 12px; line-height: 1.6; margin: 0 0 10px; overflow-wrap: anywhere; }
+.browser-history-confirm > div { display: flex; justify-content: flex-end; gap: 8px; }
+.browser-history-dialog [hidden] { display: none; }
+.browser-suggestions { z-index: 149; padding: 4px; overflow: auto; background: var(--page); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px #0002; }
+.browser-suggestions .browser-history-note { padding: 10px; font-size: 12px; }
+.browser-history-option { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; text-align: left; border-radius: 5px; }
+.browser-history-option:hover, .browser-history-option[aria-selected="true"] { background: var(--hover); }
+.browser-history-option > .icon { flex: 0 0 auto; color: var(--muted); }
+.browser-history-option > span { min-width: 0; flex: 1; }
+.browser-history-option strong, .browser-history-option small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.6; }
+.browser-history-option strong { font-size: 12px; font-weight: 500; }
+.browser-history-option small { font-size: 11px; color: var(--muted); }
+.browser-history-all { display: block; width: 100%; padding: 10px; border-top: 1px solid var(--line); text-align: left; font-size: 12px; }
+.browser-history-all:hover { background: var(--hover); }
 .downloads-backdrop { z-index: 150; display: grid; place-items: center; padding: 16px; }
 .downloads-dialog { display: flex; flex-direction: column; width: min(640px, 100%); max-height: calc(100dvh - 32px); min-width: 0; background: var(--page); color: var(--text); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 48px #0002; overflow: hidden; }
 .downloads-dialog > header { display: flex; justify-content: space-between; align-items: flex-start; padding: 20px 20px 10px; gap: 12px; flex: 0 0 auto; }

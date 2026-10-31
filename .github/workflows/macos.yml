@@ -227,6 +227,41 @@ jobs:
                       guard found else { throw failure("Native browser form submission failed") }
                       let screenshot = try await control("screenshot") as! [String: Any]
                       guard let encoded = screenshot["imageBase64"] as? String, let png = Data(base64Encoded: encoded), png.count > 100 else { throw failure("Native browser screenshot failed") }
+                      let browsing = browser.history.state()["items"] as! [[String: Any]]
+                      guard browsing.count == 2, browsing.contains(where: { $0["url"] as? String == fixture && $0["title"] as? String == "QQClaw Browser Check" }), browsing[0]["title"] as? String == "Search Result" else { throw failure("Successful top-level navigation history not recorded") }
+                      _ = try await control("open", ["url": fixture + "#section"])
+                      let revisited = browser.history.state()["items"] as! [[String: Any]]
+                      guard revisited.count == 2, revisited[0]["url"] as? String == fixture else { throw failure("History did not deduplicate fragment/revisit") }
+                      let historyDirectory = host.data.appendingPathComponent("download-verification")
+                      let historyFile = historyDirectory.appendingPathComponent("browser-history.json")
+                      let encryptedHistory = try String(contentsOf: historyFile, encoding: .utf8)
+                      guard !encryptedHistory.contains("QQClaw Browser Check"), !encryptedHistory.contains(fixture) else { throw failure("Browsing history leaked cleartext") }
+                      let reloadedHistory = BrowserHistory(directory: historyDirectory) { _ in }
+                      guard (reloadedHistory.state()["items"] as? [[String: Any]])?.count == 2 else { throw failure("Encrypted browsing history reload failed") }
+                      _ = try browser.history.handle(["action": "remove", "id": revisited[0]["id"]!])
+                      guard (browser.history.state()["items"] as? [[String: Any]])?.count == 1 else { throw failure("History remove did not persist") }
+                      print("PASS: real WebKit navigation history, final URL/title, revisit deduplication, encrypted reload and deletion")
+                      let historyChecks = host.data.appendingPathComponent("browsing-history-checks")
+                      try FileManager.default.createDirectory(at: historyChecks, withIntermediateDirectories: true)
+                      let historyVault = Vault(directory: historyChecks), historyCheckFile = historyChecks.appendingPathComponent("browser-history.json")
+                      let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
+                      let samples: [[String: Any]] = [0, 7_200_000, 172_800_000].enumerated().map { index, age in ["id": UUID().uuidString.lowercased(), "url": fixture + "age-" + String(index), "title": "Range sample", "at": timestamp - Int64(age)] }
+                      let sampleText = String(decoding: try JSONSerialization.data(withJSONObject: samples), as: UTF8.self)
+                      try Data(try historyVault.handle("vault.encrypt", sampleText).utf8).write(to: historyCheckFile, options: .atomic)
+                      let ranges = BrowserHistory(directory: historyChecks) { _ in }
+                      guard (try ranges.handle(["action": "clear", "range": "hour"])["items"] as? [[String: Any]])?.count == 2,
+                            (try ranges.handle(["action": "clear", "range": "day"])["items"] as? [[String: Any]])?.count == 1,
+                            (try ranges.handle(["action": "clear", "range": "all"])["items"] as? [[String: Any]])?.isEmpty == true else { throw failure("History clear ranges incorrect") }
+                      let many: [[String: Any]] = (0..<500).map { index in ["id": UUID().uuidString.lowercased(), "url": fixture + "page-" + String(index), "title": "History sample", "at": timestamp - Int64(index * 1000)] }
+                      let manyText = String(decoding: try JSONSerialization.data(withJSONObject: many), as: UTF8.self)
+                      try Data(try historyVault.handle("vault.encrypt", manyText).utf8).write(to: historyCheckFile, options: .atomic)
+                      let bounded = BrowserHistory(directory: historyChecks) { _ in }; bounded.visit(fixture + "newest", title: "Newest")
+                      let boundedItems = bounded.state()["items"] as! [[String: Any]]
+                      guard boundedItems.count == 500, boundedItems[0]["title"] as? String == "Newest", !boundedItems.contains(where: { $0["url"] as? String == fixture + "page-499" }) else { throw failure("History bound/order incorrect") }
+                      try Data("corrupt-history".utf8).write(to: historyCheckFile, options: .atomic)
+                      let corruptHistory = BrowserHistory(directory: historyChecks) { _ in }; corruptHistory.visit(fixture, title: "Must not overwrite")
+                      guard !(corruptHistory.state()["storageError"] as? String ?? "").isEmpty, try String(contentsOf: historyCheckFile, encoding: .utf8) == "corrupt-history" else { throw failure("Corrupt history silently replaced") }
+                      print("PASS: browsing history hour/day/all ranges, 500-URL bound and corrupt-file preservation (isolated fixtures)")
                       guard !BrowserHost.allowed("file:///etc/passwd"), !BrowserHost.allowed("https://qqclaw.local") else { throw failure("Browser accepted forbidden URL") }
                       let tabState = try await control("newTab") as! [String: Any]
                       guard (tabState["tabs"] as? [[String: Any]])?.count == 2 else { throw failure("Browser tab creation failed") }

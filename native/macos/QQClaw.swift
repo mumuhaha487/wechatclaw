@@ -335,10 +335,11 @@ final class Backend: @unchecked Sendable {
         case "window.maximize": window.zoom(nil); return true
         case "window.close": NSApp.terminate(nil); return true
         case "window.drag", "window.resize": return true // Native titlebar and resize handles.
-        case "browser.view", "browser.control", "browser.downloads":
-            if browserHost == nil { browserHost = BrowserHost(resources: resources, parent: web, data: data, downloadNotify: { [weak self] value in self?.event("browser-downloads", value) }) { [weak self] value in self?.event("browser-state", value) } }
+        case "browser.view", "browser.control", "browser.downloads", "browser.history":
+            if browserHost == nil { browserHost = BrowserHost(resources: resources, parent: web, data: data, downloadNotify: { [weak self] value in self?.event("browser-downloads", value) }, historyNotify: { [weak self] value in self?.event("browser-history", value) }) { [weak self] value in self?.event("browser-state", value) } }
             if method == "browser.view" { browserHost!.setView(p); return true }
             if method == "browser.downloads" { return try browserHost!.downloads.handle(p) }
+            if method == "browser.history" { return try browserHost!.history.handle(p) }
             return try await browserHost!.handle(p)
         case "desktop.status": return DesktopIntegration.status()
         case "desktop.open": return try await DesktopIntegration.open(p)
