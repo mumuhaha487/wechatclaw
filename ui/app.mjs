@@ -145,6 +145,7 @@ const ui = {
   desktopHandoff: false,
   search: "",
   loading: false,
+  sending: false,
   approvals: new Map(),
   agentPermissions: new Map(),
   notifications: [],
@@ -1203,30 +1204,37 @@ async function updateComposer(change) {
 }
 async function send() {
   const text = ui.draft.trim();
-  if ((!text && !ui.attachments.length) || !environmentReady() || ui.drafts.get(draftKey())?.pending) return;
+  if (ui.sending || (!text && !ui.attachments.length) || !environmentReady() || ui.drafts.get(draftKey())?.pending) return;
   const attachments = [...ui.attachments], sourceKey = draftKey();
-  if (!session()) await newSession();
-  if (!session()) return;
-  ui.draft = "";
-  ui.attachments = [];
-  ui.drafts.delete(sourceKey);
-  rememberDraft();
-  const targetId = ui.active;
-  if (!session()?.busy) {
-    ui.streams.delete(ui.active);
-    ui.logs.delete(ui.active);
-  }
-  render();
+  let targetId, cleared = false;
+  ui.sending = true;
   try {
+    if (!session()) await newSession();
+    if (!session()) return;
+    targetId = ui.active;
+    ui.draft = "";
+    ui.attachments = [];
+    ui.drafts.delete(sourceKey);
+    rememberDraft();
+    cleared = true;
+    if (!session()?.busy) {
+      ui.streams.delete(ui.active);
+      ui.logs.delete(ui.active);
+    }
+    render();
     await rpc("chat.send", { sessionId: targetId, text, attachments: attachments.map(a => a.id) });
   } catch (e) {
-    if (targetId === ui.active) {
-      ui.draft = text + (ui.draft ? "\n" + ui.draft : "");
-      ui.attachments = [...attachments, ...ui.attachments];
-      rememberDraft();
-    } else ui.drafts.set(targetId, { text, attachments, pending: 0 });
-    render();
+    if (cleared) {
+      const newer = (targetId === ui.active ? rememberDraft() : ui.drafts.get(targetId)) || { text: "", attachments: [], pending: 0 };
+      newer.text = text + (newer.text ? "\n" + newer.text : "");
+      newer.attachments.unshift(...attachments);
+      ui.drafts.set(targetId, newer);
+      if (targetId === ui.active) restoreDraft();
+    }
     throw e;
+  } finally {
+    ui.sending = false;
+    render();
   }
 }
 async function saveProvider() {
