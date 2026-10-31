@@ -1914,10 +1914,10 @@ async function action(name, element) {
       ui.goalSaving = true; renderOverlay();
       try {
         // Keeping the objective resumes its native accounting; only a changed
-        // objective is submitted as a replacement user task.
+        // objective replaces the native goal without replaying a user turn.
         if (editor.objective.trim() === s.goal?.objective && s.goal.status !== "complete")
           await rpc("goal.resume", { sessionId: s.id, tokenBudget: goal.tokenBudget });
-        else await rpc("chat.send", { sessionId: s.id, text: goal.objective, goal: true, tokenBudget: goal.tokenBudget });
+        else await rpc("goal.set", { sessionId: s.id, objective: goal.objective, tokenBudget: goal.tokenBudget });
         if (editor === ui.goalEditor) { ui.overlay = ""; renderOverlay(); }
       } finally { ui.goalSaving = false; if (ui.overlay === "goal") renderOverlay(); }
       return;

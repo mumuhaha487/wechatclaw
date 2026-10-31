@@ -10,7 +10,11 @@ export async function answerTurns(client, session, turnParams, onEvent, { goal, 
   if (client.active) throw new Error("这个会话已有运行中的任务。");
   let current = goalSnapshot(session.goal, session.threadId);
   if (goal || prepare && session.threadId) {
-    try { current = await client.readGoal(session); }
+    try {
+      current = await client.readGoal(session);
+      if (!current || current.objective !== session.goal?.objective || current.createdAt !== session.goal?.createdAt) session.goalMessageIndex = undefined;
+      session.goal = current;
+    }
     catch (error) {
       const missingThread = /^no rollout found for thread id |^thread not found/i.test(error.message);
       const unsupported = error.rpcCode === -32601 || /method not found|unknown method|unsupported method|unknown variant.*thread\/goal\/get|goals feature is disabled/i.test(error.message);
@@ -157,6 +161,24 @@ export async function answerTurns(client, session, turnParams, onEvent, { goal, 
         else settleIdle();
         return;
       }
+      const activateGoal = async () => {
+        const revision = goalRevision;
+        const snapshot = await client.writeGoal(session, {
+          ...(goal.resume ? {} : { objective: goal.objective }), status: "active",
+          ...(goal.tokenBudget !== undefined ? { tokenBudget: goal.tokenBudget } : {}),
+        });
+        if (!settled && revision === goalRevision) acceptGoal(snapshot);
+      };
+      if (goal?.controlOnly) {
+        // Setting an existing message as a goal and resuming are native goal
+        // mutations. Do not replay their original user turn or send a duplicate
+        // "continue" input; Codex schedules the goal continuation itself.
+        if (!goal.resume || active.goal?.status !== "active" || goal.tokenBudget !== undefined) await activateGoal();
+        if (settled) return;
+        starting = false;
+        if (active.interrupted) await client.interrupt();
+        settleIdle(); return;
+      }
       if (active.turnId) {
         // The native goal resumed before the explicit input arrived. Steer
         // that real turn once; starting a second turn would lose its ownership.
@@ -168,12 +190,7 @@ export async function answerTurns(client, session, turnParams, onEvent, { goal, 
       }
       for (const event of early.splice(0)) listener(event);
       if (goal && !active.interrupted && !(goal.resume && active.goal?.status === "complete") && !completed.some(record => record.status !== "completed")) {
-        const revision = goalRevision;
-        const snapshot = await client.writeGoal(session, goal.resume
-          ? { status: "active", ...(goal.tokenBudget !== undefined ? { tokenBudget: goal.tokenBudget } : {}) }
-          : goal);
-        if (settled) return;
-        if (revision === goalRevision) acceptGoal(snapshot);
+        await activateGoal();
       }
       starting = false;
       if (active.interrupted) await client.interrupt();

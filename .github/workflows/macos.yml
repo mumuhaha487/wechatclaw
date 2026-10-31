@@ -59,11 +59,21 @@ jobs:
           await client.writeGoal(session,{status:'complete'});
           emit('turn/completed',{turn:{id:'resumed',status:'completed',items:[{type:'agentMessage',id:'m3',text:'Resumed result'}]}});
           assert.equal(await resumed,'Resumed result');
+          goal={...goal,status:'paused'};
+          client.request=async()=>{throw Error('Goal controls must not replay a user turn')};
+          const controlled=answerTurns(client,session,{},()=>{}, {goal:{resume:true,controlOnly:true}});
+          await tick();assert.equal(goal.status,'active');
+          emit('turn/started',{turn:{id:'controlled'}});
+          await client.writeGoal(session,{status:'complete'});
+          emit('turn/completed',{turn:{id:'controlled',status:'completed',items:[{type:'agentMessage',id:'m4',text:'Controlled result'}]}});
+          assert.equal(await controlled,'Controlled result');
+          console.log('PASS: native goal control resumes without duplicate turn/start or turn/steer');
           const temporary=await fs.mkdtemp(path.join(process.env.RUNNER_TEMP,'qqclaw-goal-'));
           try {
-            const archive=new ConversationArchive(temporary);session.goal=goal;
+            const archive=new ConversationArchive(temporary);session.goal=goal;session.goalMessageIndex=0;
             await archive.sync(archive.prepare([session]));
             assert.equal((await archive.read())[0].goal.status,'complete');
+            assert.equal((await archive.read())[0].goalMessageIndex,0);
           } finally { await fs.rm(temporary,{recursive:true,force:true}); }
           console.log('PASS: native goal lifecycle, intermediate/final separation and portable goal transcripts');
           NODE

@@ -223,7 +223,9 @@ export class App {
       entry.client.on?.("unexpected-close", (error) => this.log("ERROR", error));
       entry.client.on?.("notification", ({ method, params }) => {
         if (params?.threadId !== session.threadId || !["thread/goal/updated", "thread/goal/cleared"].includes(method)) return;
+        const previousGoal = session.goal;
         session.goal = method === "thread/goal/cleared" ? null : goalSnapshot(params.goal, session.threadId);
+        if (!session.goal || previousGoal?.objective !== session.goal.objective || previousGoal?.createdAt !== session.goal.createdAt) session.goalMessageIndex = undefined;
         if (session.goal && session.busy && session.runStats) session.runStats.goal = structuredClone(session.goal);
         this.changed();
         this.store.save().catch(error => this.log("ERROR", error));
@@ -258,13 +260,14 @@ export class App {
       this.changed();
       throw error;
     }
-    session.messages.push({
+    if (!options.hideUserMessage) session.messages.push({
       role: "user",
       text: options.displayText || text,
       ...(options.attachments?.length ? { attachments: options.attachments.map((a) => ({ type: a.kind, path: a.path, label: a.label })) } : {}),
       at: new Date().toISOString(),
       taskKey,
     });
+    const goalMessageIndex = options.goal?.messageIndex ?? (!options.hideUserMessage ? session.messages.length - 1 : undefined);
     if (session.title === "新会话")
       session.title = (options.displayText || text).replace(/\s+/g, " ").slice(0, 34);
     session.updatedAt = new Date().toISOString();
@@ -327,6 +330,10 @@ export class App {
       };
       const reply = await answer(session, taskKey ? text : buildPrompt(text, options.attachments || [], "Web"), (event) => {
         const item = event.params?.item;
+        if (event.method === "thread/goal/updated" && options.goal?.objective === event.params.goal?.objective && Number.isInteger(goalMessageIndex)) {
+          session.goalMessageIndex = goalMessageIndex;
+          this.store.save().catch(error => this.log("ERROR", error));
+        }
         if (
           event.method === "item/started" &&
           [
@@ -776,6 +783,7 @@ export class App {
             createdAt: entry.createdAt, updatedAt: entry.updatedAt, threadId: entry.threadId || undefined,
             codexThreadPath: entry.codexThreadPath || null,
             goal: goalSnapshot(entry.goal, entry.threadId),
+            goalMessageIndex: Number.isInteger(entry.goalMessageIndex) && entry.messages[entry.goalMessageIndex]?.role === "user" ? entry.goalMessageIndex : undefined,
             messages: entry.messages.map((m) => ({ role: m.role, text: m.text, kind: m.kind === "progress" ? "progress" : undefined, at: m.at,
               attachments: (m.attachments || []).map((a) => ({ type: a.type, path: a.path, label: a.label })) })),
           });
@@ -895,7 +903,9 @@ export class App {
         return this.stop(p.sessionId);
       case "goal.get": {
         const session = this.getSession(p.sessionId);
+        const previousGoal = session.goal;
         session.goal = session.threadId ? await (await this.client(session)).readGoal(session) : null;
+        if (!session.goal || previousGoal?.objective !== session.goal.objective || previousGoal?.createdAt !== session.goal.createdAt) session.goalMessageIndex = undefined;
         await this.store.save(); this.changed();
         return session.goal;
       }
@@ -904,10 +914,21 @@ export class App {
         if (!Number.isInteger(p.message) || message?.role !== "user") throw new Error("请选择一条用户消息作为目标。");
         if (session.busy || session.queued) throw new Error("请先停止或等待当前任务结束，再设置目标。");
         const goal = goalRequest(message.text, p.tokenBudget);
-        const attachments = await Promise.all((message.attachments || []).map(async attachment => ({
-          ...await this.desktopAttachments.import({ path: attachment.path }), label: attachment.label,
-        })));
-        this.enqueue(session.id, message.text, undefined, undefined, { displayText: message.text, attachments, goal })
+        const attachments = await Promise.all((message.attachments || []).map(async attachment => {
+          const stat = await fs.stat(attachment.path);
+          if (!stat.isFile() || stat.size > 100 * 1024 * 1024) throw new Error("原消息附件已不可用，请重新添加。");
+          return { kind: attachment.type, path: attachment.path, label: attachment.label };
+        }));
+        this.enqueue(session.id, message.text, undefined, undefined, { hideUserMessage: true, attachments,
+          goal: { ...goal, controlOnly: true, messageIndex: p.message } })
+          .catch(error => this.emit("task-error", { sessionId: session.id, error: safeError(error) }));
+        return { accepted: true };
+      }
+      case "goal.set": {
+        const session = this.getSession(p.sessionId), goal = goalRequest(p.objective, p.tokenBudget);
+        if (session.busy || session.queued || this.desktopHandoffs.has(session.id)) throw new Error("请先暂停或等待当前任务结束，再修改目标。");
+        this.enqueue(session.id, goal.objective, undefined, undefined, { hideUserMessage: true,
+          goal: { ...goal, controlOnly: true, ...(Number.isInteger(session.goalMessageIndex) ? { messageIndex: session.goalMessageIndex } : {}) } })
           .catch(error => this.emit("task-error", { sessionId: session.id, error: safeError(error) }));
         return { accepted: true };
       }
@@ -917,7 +938,7 @@ export class App {
         if (!session.threadId) throw new Error("没有可继续的Codex目标。");
         const budget = goalRequest("继续目标", p.tokenBudget).tokenBudget;
         this.enqueue(session.id, "请继续当前目标，直到完成或遇到需要用户处理的实际阻碍。", undefined, undefined, {
-          displayText: "继续目标", goal: { resume: true, ...(budget !== undefined ? { tokenBudget: budget } : {}) },
+          hideUserMessage: true, goal: { resume: true, controlOnly: true, ...(budget !== undefined ? { tokenBudget: budget } : {}) },
         }).catch(error => this.emit("task-error", { sessionId: session.id, error: safeError(error) }));
         return { accepted: true };
       }
@@ -926,6 +947,7 @@ export class App {
         if (session.busy || session.queued || this.desktopHandoffs.has(session.id)) throw new Error("请先停止当前任务，再移除目标。");
         if (session.threadId) await (await this.client(session)).clearGoal(session);
         session.goal = null;
+        session.goalMessageIndex = undefined;
         await this.store.save(); this.changed();
         return { cleared: true };
       }

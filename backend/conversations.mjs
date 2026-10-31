@@ -15,7 +15,7 @@ export class ConversationArchive {
     this.lastError = "";
   }
   prepare(sessions) {
-    return sessions.filter((s) => s.messages?.length).map((s) => {
+    return sessions.filter((s) => s.messages?.length || s.goal).map((s) => {
       if (!/^[a-zA-Z0-9_-]{1,100}$/.test(s.id)) throw new Error("对话备份的会话标识无效。");
       const transcript = {
         format: "qqclaw.conversation", version: 1, id: s.id,
@@ -25,6 +25,7 @@ export class ConversationArchive {
         codexHome: codexHome(), providerId: s.providerId,
         model: s.model, effort: s.effort,
         ...(s.goal ? { goal: goalSnapshot(s.goal, s.threadId) } : {}),
+        ...(s.goal && Number.isInteger(s.goalMessageIndex) ? { goalMessageIndex: s.goalMessageIndex } : {}),
         messages: s.messages.map((m) => ({
           role: m.role, text: String(m.text || ""), kind: m.kind, at: m.at,
           attachments: (m.attachments || []).map((a) => ({ type: a.type, path: a.path, label: a.label })),
