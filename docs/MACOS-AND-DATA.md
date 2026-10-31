@@ -1,6 +1,22 @@
 # macOS 适配与对话保存
 
-2026-10-31，源码与 Mac 成品 **0.3.6**。已从 Windows 发起 GitHub macOS 云编译，并下载真正的 Intel / Apple Silicon 通用 `.app` 分发包。原生后台、管道、钥匙串加密及重启恢复的云端自检通过；完整界面交互与实际微信链路仍需 Mac 验收。
+2026-10-31，源码与 Mac 安装包 **0.3.7**。新增 Codex Desktop 接续、自动检测及 CLI 来源切换。Windows 已编译同版本候选（568,320 字节），当前正式 0.3.5 实例仍运行，尚未替换。Mac 双架构编译、DMG 安装复制、原生后台、对话保存与重启恢复均通过云端检查；完整 GUI、Desktop 内置浏览器交互与真实微信 Mac 链路仍需实机验收。
+
+## 当前 0.3.7 成品与 Desktop 接续
+
+- Mac：`release/macos/QQClaw.dmg`，574,870 字节，SHA-256 `d8ed5f93d993e7c85a47a505ace188b7958fd8f29db0330bb0e8c98b2bb84532`。仍为 macOS 13.3+、Intel / Apple Silicon 通用、ad hoc 签名且未 Apple 公证。
+- 云构建：[GitHub Actions 41180074030](https://github.com/mumuhaha487/wechatclaw/actions/runs/41180074030)，应用源码提交 `0cdd1a7ceb60ecbc0e6aac0cb375fd2b593ce013`。下载后核对 Artifact 摘要、ZIP CRC 与 DMG 文件尾；旧 DMG 仅保存在项目外。
+- Windows 候选：568,320 字节，SHA-256 `5BE1DA6A9F3BB79447DBEFEDAB6E1FBB00C9CEE7EE2AF03720546BB3638F12E9`；位于项目外，未覆盖仍在运行的正式 EXE。
+- 本地通过 119 项既有回归与 19 项新增检查。独立 CODEX_HOME 与本地受控 API 下，真实 Codex 完成第三方首轮、原生 fork、新进程恢复及继续回复；分别验证配置模型与动态默认模型，原线程保持 1 轮，副本独立完成 2 轮。额外确认未配置思考等级时不能传 null TOML 覆盖，已改为省略。
+- Windows 原生 API 确认商店版 Desktop 可通过 AppUserModelID 检测，UUID/工作目录链接校验通过。Mac 云端检查 Desktop 链接编码和非法 threadId 拒绝。界面模拟验证 Windows 接续提示、来源保存、Mac 缺环境引导与 CLI 恢复，没有控制台错误；模拟页面不能代替原生 GUI 验收。
+
+使用：QQClaw 会话右上角 **Desktop 中继续**，或会话菜单 **在 Codex Desktop 中继续**。已有原生历史复制为独立的 Codex 持久线程；空会话打开当前工作目录。草稿留在 QQClaw，请到 Desktop 发送下一条任务并使用其内置浏览器。Desktop 后续回复不会回传 QQClaw 或微信。
+
+「设置 → 运行环境 → Codex 来源」可选自动检测、Desktop 附带程序、独立 CLI 或手动指定。自动模式 Desktop 优先，失败回退 CLI；显式来源失败会提示配置。保存后后续任务采用新来源，模型目录随之刷新。切换不修改账户凭证或 Codex 的 config.toml。
+
+副本使用本机配置和动态默认模型，权限重置为按需询问/工作区写入，不使用 QQClaw 临时 Provider。相同源历史复用副本，源历史更新后创建新副本；目录忙碌时拒绝接续。同一目录的两端操作需自行协调，副本不参加 QQClaw 的目录队列。
+
+接续依靠官方深链接打开真正的 Desktop；QQClaw 无通用接口直接驱动其内置浏览器。历史接续要求相同 Codex 用户目录：Windows 检查用户/系统环境；Mac 按标准 `~/.codex` 检查，避免误把 QQClaw 进程的自定义环境当成会传递给 Launch Services。与已启动 Desktop 的实际自定义配置是否一致仍需用户确认。
 
 ## Mac 构建
 
@@ -86,7 +102,7 @@ Codex 通过 `thread/start { ephemeral:false }` 创建原生持久会话，通�
 
 浏览器模拟 Mac 桥接已检查复制、设置中的 Mac 路径与保留说明、恢复对话提示与侧栏、动态模型菜单，无控制台错误；Safari 目标的前后端资源打包通过。Windows 0.3.6 候选在项目外编译成功。正式 Windows 实例仍在运行，未替换现有 0.3.5 EXE。
 
-## 当前 DMG 安装包与构建证据
+## 0.3.6 DMG 构建记录（已由 0.3.7 替换）
 
 - 文件：`release/macos/QQClaw.dmg`，556,351 字节，项目中只保留这一个 Mac 成品，不再保留旧 ZIP。
 - SHA-256：`94064e42a606641fa62d5d979bfaf3080180d52ddec983e5ce4add741475cba5`。
