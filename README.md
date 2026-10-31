@@ -1,6 +1,6 @@
 # QQClaw
 
-当前源码为 **0.3.7**：增加 Codex Desktop 接续、Desktop / CLI 自动检测与手动切换。Windows 候选已通过编译和验证，当前正式运行实例未强制退出；Mac 0.3.7 通用 DMG 已完成云构建并更新到项目目录。
+当前源码为 **0.3.7**：增加 Codex Desktop 接续、Desktop / CLI 自动检测与手动切换。Windows 正式 EXE 与 Mac 通用 DMG 均已更新为 0.3.7；Windows 在用户正常退出后替换，文件指纹与已验证候选一致。
 
 轻量 Windows / macOS Codex 工作台。在桌面上编程，也可以通过腾讯 iLink / ClawBot 从微信操作各自的项目目录。
 

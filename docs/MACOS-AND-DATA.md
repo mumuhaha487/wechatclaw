@@ -1,12 +1,12 @@
 # macOS 适配与对话保存
 
-2026-10-31，源码与 Mac 安装包 **0.3.7**。新增 Codex Desktop 接续、自动检测及 CLI 来源切换。Windows 已编译同版本候选（568,320 字节），当前正式 0.3.5 实例仍运行，尚未替换。Mac 双架构编译、DMG 安装复制、原生后台、对话保存与重启恢复均通过云端检查；完整 GUI、Desktop 内置浏览器交互与真实微信 Mac 链路仍需实机验收。
+2026-10-31，源码与 Mac 安装包 **0.3.7**。新增 Codex Desktop 接续、自动检测及 CLI 来源切换。Windows 正式 EXE 已在用户正常退出后更新为 0.3.7（568,320 字节），并核对与已验证候选字节一致。Mac 双架构编译、DMG 安装复制、原生后台、对话保存与重启恢复均通过云端检查；完整 GUI、Desktop 内置浏览器交互与真实微信 Mac 链路仍需实机验收。
 
 ## 当前 0.3.7 成品与 Desktop 接续
 
 - Mac：`release/macos/QQClaw.dmg`，574,870 字节，SHA-256 `d8ed5f93d993e7c85a47a505ace188b7958fd8f29db0330bb0e8c98b2bb84532`。仍为 macOS 13.3+、Intel / Apple Silicon 通用、ad hoc 签名且未 Apple 公证。
 - 云构建：[GitHub Actions 41180074030](https://github.com/mumuhaha487/wechatclaw/actions/runs/41180074030)，应用源码提交 `0cdd1a7ceb60ecbc0e6aac0cb375fd2b593ce013`。下载后核对 Artifact 摘要、ZIP CRC 与 DMG 文件尾；旧 DMG 仅保存在项目外。
-- Windows 候选：568,320 字节，SHA-256 `5BE1DA6A9F3BB79447DBEFEDAB6E1FBB00C9CEE7EE2AF03720546BB3638F12E9`；位于项目外，未覆盖仍在运行的正式 EXE。
+- Windows：`release/QQClaw.exe`，568,320 字节，SHA-256 `5BE1DA6A9F3BB79447DBEFEDAB6E1FBB00C9CEE7EE2AF03720546BB3638F12E9`；用户确认退出后已替换正式路径并核对完整文件，项目内仅保留这一份 EXE。已重新启动，确认 0.3.7 解压完成标记、后台资源与 EXE 内嵌资源指纹一致，新窗口和后台进程启动成功。
 - 本地通过 119 项既有回归与 19 项新增检查。独立 CODEX_HOME 与本地受控 API 下，真实 Codex 完成第三方首轮、原生 fork、新进程恢复及继续回复；分别验证配置模型与动态默认模型，原线程保持 1 轮，副本独立完成 2 轮。额外确认未配置思考等级时不能传 null TOML 覆盖，已改为省略。
 - Windows 原生 API 确认商店版 Desktop 可通过 AppUserModelID 检测，UUID/工作目录链接校验通过。Mac 云端检查 Desktop 链接编码和非法 threadId 拒绝。界面模拟验证 Windows 接续提示、来源保存、Mac 缺环境引导与 CLI 恢复，没有控制台错误；模拟页面不能代替原生 GUI 验收。
 
@@ -100,7 +100,7 @@ Codex 通过 `thread/start { ephemeral:false }` 创建原生持久会话，通�
 - 独立测试验证删除应用数据后仍能从备份恢复、重复恢复不覆盖已有对话、移除会话仍保留备份、凭证不被导出、备份故障明确报错，以及 POSIX 路径大小写。
 - GitHub macOS 云端 Swift 双架构编译、Universal/签名校验、Node 发现、原生后台管道、小消息 RPC、钥匙串加密及重启恢复自检通过。完整 GUI、Intel 实机、微信实际 Mac 链路尚未验证。
 
-浏览器模拟 Mac 桥接已检查复制、设置中的 Mac 路径与保留说明、恢复对话提示与侧栏、动态模型菜单，无控制台错误；Safari 目标的前后端资源打包通过。Windows 0.3.6 候选在项目外编译成功。正式 Windows 实例仍在运行，未替换现有 0.3.5 EXE。
+浏览器模拟 Mac 桥接已检查复制、设置中的 Mac 路径与保留说明、恢复对话提示与侧栏、动态模型菜单，无控制台错误；Safari 目标的前后端资源打包通过。此前 Windows 0.3.6 候选曾在项目外编译成功，当时未替换运行中的 0.3.5；现已由上文 0.3.7 正式交付状态取代。
 
 ## 0.3.6 DMG 构建记录（已由 0.3.7 替换）
 
