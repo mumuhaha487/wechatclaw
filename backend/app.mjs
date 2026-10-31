@@ -617,7 +617,7 @@ export class App {
         return this.browserCommand(session, "open", { url: p.url || "https://www.google.com/" });
       }
       case "browser.command": {
-        if (!["back", "forward", "reload", "stop", "newTab", "selectTab", "closeTab", "state"].includes(p.action)) throw new Error("不支持的浏览器操作。");
+        if (!["back", "forward", "reload", "stop", "newTab", "selectTab", "closeTab", "restoreTab", "state"].includes(p.action)) throw new Error("不支持的浏览器操作。");
         const session = this.getSession(p.sessionId);
         // Stop must bypass the navigation queue so it can interrupt a load.
         if (p.action === "stop") return new BrowserViewer({ native: this.native, session }).call("stop");
@@ -626,7 +626,7 @@ export class App {
           const closed = this.browserCommand(session, "closeTab", { tabId: String(p.tabId || "") });
           return Promise.all([stopped, closed]).then(([, result]) => result);
         }
-        return this.browserCommand(session, p.action, { tabId: String(p.tabId || "") });
+        return this.browserCommand(session, p.action, p.action === "restoreTab" ? { url: String(p.url || "") } : { tabId: String(p.tabId || "") });
       }
       case "browser.officialStatus":
         return officialBrowserStatus();

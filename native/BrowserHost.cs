@@ -99,6 +99,16 @@ internal sealed class BrowserHost {
         await session.Serial.WaitAsync();
         try {
             if (session.Disposed) throw new Exception("浏览器会话已关闭。");
+            if (action == "restoreTab") {
+                string url = Value(p, "url");
+                if (url != "" && !Allowed(url)) throw new Exception("浏览器仅支持 HTTP/HTTPS 网页。");
+                var previous = session.Active;
+                var restored = NewTab(session); session.Active = previous; Layout();
+                try {
+                    if (url != "") await restored.Restore(url);
+                    return new { tabId = restored.Id, state = State(session, false) };
+                } catch { CloseTab(session, restored); throw; }
+            }
             if (action == "newTab") NewTab(session);
             else if (action == "selectTab" || action == "closeTab") {
                 var tab = session.Tabs.Find(t => t.Id == Value(p, "tabId"));
@@ -288,6 +298,7 @@ internal sealed class BrowserTab {
             string command = "";
             if (e.KeyCode == Keys.Tab) command = e.Shift ? "panel-previous-tab" : "panel-next-tab";
             else if (e.KeyCode == Keys.B) command = e.Shift ? "toggle-panel" : "toggle-sidebar";
+            else if (e.KeyCode == Keys.T && e.Shift) command = "panel-reopen-tab";
             else if (!e.Shift) {
                 switch (e.KeyCode) {
                     case Keys.T: command = "browser-new-tab"; break;
@@ -392,6 +403,13 @@ internal sealed class BrowserTab {
         if (response == null || !response.ContainsKey("ok")) throw new Exception("无法读取网页，页面可能正在跳转，请重试快照。");
         if (!(bool)response["ok"]) throw new Exception(Convert.ToString(response["error"]));
         return response["value"];
+    }
+    internal async Task Restore(string url) {
+        stopping = false;
+        await EnsureReady();
+        if (closed || stopping) throw new Exception("浏览器恢复已停止或标签页已关闭。");
+        // A closed page is reopened by URL. Never replay an old POST body.
+        Web.CoreWebView2.Navigate(url);
     }
     internal async Task<object> Run(Dictionary<string, object> p) {
         try {

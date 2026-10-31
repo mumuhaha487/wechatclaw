@@ -36,6 +36,7 @@ export class ApplicationMenu {
     if (group === "file") return [
       item("新聊天", "new-session", "Ctrl+N", s.ready), item("打开项目…", "add-project", "Ctrl+O", s.ready),
       item("新网页标签", "browser-new-tab", "Ctrl+T", s.ready && s.workspaceAvailable), item("关闭工作标签", "panel-close-active", "Ctrl+W", s.ready && s.workspaceAvailable && s.panel),
+      item("重新打开关闭的标签页", "panel-reopen-tab", "Ctrl+Shift+T", s.ready && s.workspaceAvailable && s.canReopen),
       item("打开工作目录", "open-folder", "", s.ready && s.workspace), null,
       item("设置…", "settings", "Ctrl+,", s.ready), item("配置运行环境…", "runtime"), null, item("退出", "window.close", "Alt+F4"),
     ];
@@ -74,6 +75,17 @@ export class ApplicationMenu {
     if (!open) return;
     const anchor = document.getElementById(`app-menu-${this.group}`);
     if (!anchor) return this.close();
+    const items = new Map(this.items(this.group).filter(Boolean).map(item => [item.command, item]));
+    for (const button of this.popup.querySelectorAll("[data-command]")) {
+      const item = items.get(button.dataset.command);
+      button.disabled = !item?.enabled;
+      if (item?.checked !== null && item?.checked !== undefined) {
+        button.setAttribute("aria-checked", String(item.checked));
+        button.querySelector(".menu-check").textContent = item.checked ? "✓" : "";
+      }
+    }
+    if (this.popup.contains(document.activeElement) && document.activeElement.disabled)
+      this.popup.querySelector("button:not(:disabled)")?.focus({ preventScroll: true });
     const r = anchor.getBoundingClientRect();
     this.popup.style.left = Math.max(8, Math.min(innerWidth - this.popup.offsetWidth - 8, r.left)) + "px";
     this.popup.style.top = Math.max(8, Math.min(innerHeight - this.popup.offsetHeight - 8, r.bottom + 4)) + "px";

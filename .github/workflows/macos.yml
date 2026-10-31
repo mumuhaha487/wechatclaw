@@ -16,6 +16,29 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Verify closed-tab history isolation and asynchronous recovery
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {ClosedPanelTabs} from './ui/closed-panel-tabs.mjs';
+          const closed=new ClosedPanelTabs();
+          const first=closed.capture({kind:'file',file:'a.txt',text:'unsaved snapshot'});
+          const next=closed.capture({kind:'browser'},{url:'https://example.com/'});
+          closed.remember('one',first);closed.remember('two',next);
+          let release,calls=0;
+          const running=closed.restore('one',async()=>{calls++;await new Promise(resolve=>release=resolve)});
+          assert.equal(await closed.restore('one',()=>calls++),false);
+          closed.remember('one',next);release();await running;
+          assert.equal(calls,1);assert.equal(closed.peek('one'),next);assert.equal(closed.peek('two'),next);
+          await assert.rejects(closed.restore('one',()=>{throw Error('native error')}));
+          assert.equal(closed.peek('one'),next);
+          assert.equal(JSON.stringify(first).includes('unsaved snapshot'),false);
+          assert.equal(closed.capture({kind:'browser'},{url:'https://user:secret@example.com'}),null);
+          closed.prune(['two']);assert.equal(closed.available('one'),false);assert.equal(closed.available('two'),true);
+          for(let index=0;index<25;index++)closed.remember('bounded',closed.capture({kind:'file',file:index+'.txt'}));
+          assert.equal(closed.entries.get('bounded').length,20);
+          console.log('PASS: closed-tab owner isolation, bounded metadata, retryable failure and asynchronous restore deduplication');
+          NODE
       - name: Verify checkpoint files, permissions and rollback on macOS
         run: |
           node --input-type=module <<'NODE'
@@ -111,19 +134,22 @@ jobs:
           const tabActions = await build({entryPoints:[path.join(root,'ui/panel-tab-actions.mjs')],bundle:true,write:false,format:'iife',globalName:'QQClawTabActions',target:'safari16.4'});
           const tabHTML = '<!doctype html><div class="work-tabs-bar"><div class="browser-tabs" data-owner="one">'+['A','B'].map(name=>'<div data-tab-key="file:'+name+'"><button role="tab" data-action="panel-select-tab" data-key="file:'+name+'">'+name+'</button></div>').join('')+'</div></div><script>'+tabActions.outputFiles[0].text.replaceAll('</script','<\\/script')+'</script><script>'+String.raw`
             (async()=>{
-              const tabs=['A','B'].map(name=>({key:'file:'+name,kind:'file',file:name+'.txt'})),closed=[];let owner='one';
+              const tabs=['A','B'].map(name=>({key:'file:'+name,kind:'file',file:name+'.txt'})),closed=[],reopened=[];let owner='one',canReopen=false;
               const assert=(value,message)=>{if(!value)throw Error(message)};
-              const actions=new QQClawTabActions.PanelTabActions({context:()=>({owner,tabs,selected:'file:A',tool:false,workspace:'/tmp',url:()=>''}),close:(from,values)=>closed.push({from,keys:values.map(t=>t.key)}),move:()=>{},copy:()=>{},reveal:()=>{},external:()=>{},changed:()=>{},error:error=>{window.__tabActionsDone=error.message}});
+              const actions=new QQClawTabActions.PanelTabActions({context:()=>({owner,tabs,canReopen,selected:'file:A',tool:false,workspace:'/tmp',url:()=>''}),close:(from,values)=>closed.push({from,keys:values.map(t=>t.key)}),reopen:from=>reopened.push(from),move:()=>{},copy:()=>{},reveal:()=>{},external:()=>{},changed:()=>{},error:error=>{window.__tabActionsDone=error.message}});
               const a=document.querySelector('[data-key="file:A"]'),b=document.querySelector('[data-key="file:B"]');
               a.focus();a.dispatchEvent(new KeyboardEvent('keydown',{key:'F10',shiftKey:true,bubbles:true}));
-              assert(actions.menu?.querySelectorAll('button').length===5,'WebKit Shift+F10 did not open tab menu');
-              assert(actions.menu.querySelectorAll('button:disabled').length===0,'WebKit menu enabled state wrong');
+              assert(actions.menu?.querySelectorAll('button').length===6,'WebKit Shift+F10 did not open tab menu');
+              assert(actions.menu.querySelectorAll('button:disabled').length===1,'WebKit empty restore history gate wrong');
               actions.menu.querySelector('button').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
               assert(!actions.menu&&document.activeElement===a,'WebKit Escape/focus restoration failed');
               b.dispatchEvent(new MouseEvent('contextmenu',{clientX:20,clientY:30,bubbles:true}));
-              assert(actions.menu?.querySelectorAll('button:disabled').length===1,'WebKit last-tab right-close gate failed');
+              assert(actions.menu?.querySelectorAll('button:disabled').length===2,'WebKit last-tab right-close gate failed');
               actions.menu.querySelectorAll('button')[1].click();await Promise.resolve();
               assert(closed.length===1&&closed[0].from==='one'&&closed[0].keys.join()==='file:A','WebKit batch close lost owner or target');
+              canReopen=true;b.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true}));
+              actions.menu.querySelectorAll('button')[3].click();await Promise.resolve();
+              assert(reopened.join()==='one','WebKit reopen command lost its owning workspace');
               b.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true}));owner='two';actions.refresh();
               assert(!actions.menu&&closed.length===1,'WebKit old-owner menu remained actionable');
               window.__tabActionsDone='passed';
@@ -205,6 +231,19 @@ jobs:
                           guard browserMenuEvents.contains(name) else { throw failure("Native browser shortcut did not reach app: " + name) }
                       }
                       print("PASS: AppKit browser shortcut menu equivalents, closed/file/browser gates and command dispatch (component verification, not full native-focus keyboard GUI)")
+                      guard let reopenMenu = menuCommand("panel-reopen-tab"), reopenMenu.keyEquivalent == "t",
+                            reopenMenu.keyEquivalentModifierMask == [.command, .shift] else { throw failure("Reopen shortcut equivalent missing") }
+                      _ = try await host.handle("window.menuState",["ready":true,"workspaceAvailable":true,"panel":false,"canReopen":false,"fontSize":14])
+                      guard !host.validateMenuItem(reopenMenu) else { throw failure("Empty history enabled reopen") }
+                      _ = try await host.handle("window.menuState",["ready":true,"workspaceAvailable":true,"panel":false,"canReopen":true,"fontSize":14])
+                      guard host.validateMenuItem(reopenMenu) else { throw failure("Closed panel disabled valid reopen") }
+                      _ = try await host.handle("window.menuState",["ready":true,"workspaceAvailable":false,"canReopen":true,"fontSize":14])
+                      guard !host.validateMenuItem(reopenMenu) else { throw failure("Modal workspace enabled reopen") }
+                      _ = try await host.handle("window.menuState",["ready":true,"workspaceAvailable":true,"canReopen":true,"fontSize":14])
+                      host.menuCommand(reopenMenu)
+                      let reopenEvents = try await host.web.evaluateJavaScript("JSON.stringify(window.__menuEvents)") as? String ?? ""
+                      guard reopenEvents.contains("panel-reopen-tab") else { throw failure("Reopen menu command did not reach app") }
+                      print("PASS: AppKit Cmd+Shift+T reopen menu, history/modal/closed-panel gates and command dispatch (component verification)")
                       host.web.loadHTMLString(String(decoding: Data(base64Encoded: "${tabHTML64}")!, as: UTF8.self), baseURL: nil)
                       var tabActionsResult = ""
                       for _ in 0..<100 {
@@ -362,6 +401,30 @@ jobs:
                       guard let closedRevision = empty["revision"] as? Int64,
                             let currentRevision = stillEmpty["revision"] as? Int64,
                             currentRevision > closedRevision else { throw failure("Browser state revision did not increase") }
+                      let blankRecovery = try await control("restoreTab") as! [String: Any]
+                      let blankRecoveryState = blankRecovery["state"] as! [String: Any]
+                      let blankRecoveryId = blankRecovery["tabId"] as! String
+                      guard (blankRecoveryState["tabs"] as? [[String: Any]])?.count == 1,
+                            blankRecoveryState["activeTab"] as? String == "", browser.sessions[owner]!.active == nil else { throw failure("Blank recovery stole native selection") }
+                      _ = try await control("selectTab", ["tabId": blankRecoveryId])
+                      let backgroundRecovery = try await control("restoreTab", ["url": fixture + "?q=recovered"]) as! [String: Any]
+                      let backgroundRecoveryId = backgroundRecovery["tabId"] as! String
+                      let recoveredPage = browser.sessions[owner]!.tabs.first { $0.id == backgroundRecoveryId }!
+                      for _ in 0..<100 {
+                          if recoveredPage.web.title == "Search Result" { break }
+                          try await Task.sleep(nanoseconds: 100_000_000)
+                      }
+                      guard recoveredPage.web.title == "Search Result", recoveredPage.url.contains("q=recovered"),
+                            browser.sessions[owner]!.active?.id == blankRecoveryId else { throw failure("URL recovery failed or stole native selection") }
+                      var rejectedRecovery = false
+                      do { _ = try await control("restoreTab", ["url": "file:///etc/passwd"]) } catch { rejectedRecovery = true }
+                      guard rejectedRecovery, browser.sessions[owner]!.tabs.count == 2 else { throw failure("Invalid recovery created a native tab") }
+                      _ = try await control("selectTab", ["tabId": backgroundRecoveryId])
+                      guard browser.sessions[owner]!.active === recoveredPage else { throw failure("Explicit restored-page selection failed") }
+                      _ = try await control("closeTab", ["tabId": backgroundRecoveryId])
+                      _ = try await control("closeTab", ["tabId": blankRecoveryId])
+                      guard browser.sessions[owner]!.tabs.isEmpty else { throw failure("Recovered pages were not truly closed") }
+                      print("PASS: real WKWebView blank/URL background restoration, explicit selection, invalid-URL rejection and final close")
                       func downloadItems() -> [[String: Any]] { browser.downloads.state()["items"] as! [[String: Any]] }
                       func awaitDownload(_ url: String, _ status: String) async throws -> [String: Any] {
                           for _ in 0..<250 {

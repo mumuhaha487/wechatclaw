@@ -64,6 +64,12 @@ export class PanelTabs {
     group.tabs.splice(index, 1);
     if (group.selected === key) group.selected = group.tabs[Math.min(index, group.tabs.length - 1)]?.key || "";
   }
+  place(owner, tab, index) {
+    const group = this.group(owner), current = group.tabs.indexOf(tab);
+    if (current < 0 || !Number.isSafeInteger(index)) return;
+    group.tabs.splice(current, 1);
+    group.tabs.splice(Math.max(0, Math.min(index, group.tabs.length)), 0, tab);
+  }
   syncBrowser(owner, state) {
     if (!Array.isArray(state?.tabs)) return;
     const group = this.group(owner), keys = new Set(state.tabs.map(tab => `browser:${tab.id}`));

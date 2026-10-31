@@ -102,7 +102,7 @@ internal static class Program {
                         using (var source = entry.Open()) using (var destination = File.Create(target)) source.CopyTo(destination);
                     }
                 }
-                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.26");
+                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.27");
             }
             CleanupOldRuntimes(hash);
             SetDllDirectory(RuntimeDirectory);

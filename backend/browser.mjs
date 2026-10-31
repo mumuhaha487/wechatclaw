@@ -24,7 +24,7 @@ export function browserIsolationArguments() {
 export class BrowserViewer {
   constructor({ native, session }) { Object.assign(this, { native, session }); }
   call(action, args = {}) {
-    if (action === "open") args = { ...args, url: browserUrl(args.url) };
+    if (action === "open" || action === "restoreTab" && args.url) args = { ...args, url: browserUrl(args.url) };
     return this.native("browser.control", { ...args, action, owner: this.session.id,
       profile: createHash("sha256").update(this.session.accountId || this.session.id).digest("hex").slice(0, 32),
       workspace: this.session.workspace });

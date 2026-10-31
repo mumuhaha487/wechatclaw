@@ -222,7 +222,7 @@ final class Backend: @unchecked Sendable {
     var browserHost: BrowserHost?
     var menuAvailable = false, menuReady = false, menuSidebar = true, menuPanel = false, menuHasSession = false
     var menuFont = 14
-    var menuBrowser = false, menuTabNavigation = false, menuWorkspaceAvailable = false
+    var menuBrowser = false, menuTabNavigation = false, menuWorkspaceAvailable = false, menuCanReopen = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             let env = ProcessInfo.processInfo.environment
@@ -274,6 +274,7 @@ final class Backend: @unchecked Sendable {
         section("文件", file)
         command(file, "新聊天", "new-session", "n"); command(file, "打开项目…", "add-project", "o")
         command(file, "新网页标签", "browser-new-tab", "t"); command(file, "关闭工作标签", "panel-close-active", "w")
+        command(file, "重新打开关闭的标签页", "panel-reopen-tab", "t", modifiers: [.command, .shift])
         command(file, "打开工作目录", "open-folder"); file.addItem(.separator()); command(file, "配置运行环境…", "runtime")
         section("编辑", edit)
         for (name, action, key) in [("撤销", "undo:", "z"), ("重做", "redo:", "Z"), ("剪切", "cut:", "x"), ("复制", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] { edit.addItem(withTitle: name, action: Selector(action), keyEquivalent: key) }
@@ -307,6 +308,7 @@ final class Backend: @unchecked Sendable {
         if name == "font-reset" { return menuReady && menuFont != 14 }
         if name == "find-message" { return menuReady && menuHasSession }
         if name == "browser-new-tab" { return menuReady && menuWorkspaceAvailable }
+        if name == "panel-reopen-tab" { return menuReady && menuWorkspaceAvailable && menuCanReopen }
         if name == "browser-focus-address" { return menuReady && menuWorkspaceAvailable && menuPanel && menuBrowser }
         if ["panel-next-tab", "panel-previous-tab"].contains(name) { return menuReady && menuWorkspaceAvailable && menuPanel && menuTabNavigation }
         if name == "panel-close-active" { return menuReady && menuWorkspaceAvailable && menuPanel }
@@ -337,6 +339,7 @@ final class Backend: @unchecked Sendable {
             menuHasSession = p["hasSession"] as? Bool == true
             menuBrowser = p["browser"] as? Bool == true; menuTabNavigation = p["tabNavigation"] as? Bool == true
             menuWorkspaceAvailable = p["workspaceAvailable"] as? Bool == true
+            menuCanReopen = p["canReopen"] as? Bool == true
             return true
         case "window.theme":
             let dark = p["theme"] as? String == "dark"

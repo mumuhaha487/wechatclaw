@@ -17,6 +17,7 @@ import { groupChanges } from "../shared/change-stats.mjs";
 import { reviewView } from "../shared/review-view.mjs";
 import { ApplicationMenu } from "./application-menu.mjs";
 import { PanelTabs, workspaceFileReference } from "./panel-tabs.mjs";
+import { ClosedPanelTabs } from "./closed-panel-tabs.mjs";
 import { PanelTabActions } from "./panel-tab-actions.mjs";
 import { ViewPreferences } from "./view-preferences.mjs";
 import { ConversationView } from "./conversation-view.mjs";
@@ -203,7 +204,7 @@ const sessionSearch = new SessionSearch({ sessions: () => state.sessions, select
 const draftKey = () => ui.active || `new:${workspaceKey(project()?.workspace || "")}`;
 const applicationMenu = new ApplicationMenu({
   state: () => ({ ready: environmentReady(), workspace: project()?.workspace, fontSize: state.settings.fontSize,
-    sidebar: ui.sidebar, panel: ui.panel, workspaceAvailable: workspaceKeyboardAvailable(), browser: ui.panel && ui.panelPage === "browser", tabNavigation: ui.panel && ["file", "browser"].includes(ui.panelPage) && panelTabs.group(panelOwner()).tabs.length > 1, isMac, hasSession: Boolean(session()), draftKey: draftKey() }),
+    sidebar: ui.sidebar, panel: ui.panel, workspaceAvailable: workspaceKeyboardAvailable(), canReopen: closedPanelTabs.available(panelOwner()), browser: ui.panel && ui.panelPage === "browser", tabNavigation: ui.panel && ["file", "browser"].includes(ui.panelPage) && panelTabs.group(panelOwner()).tabs.length > 1, isMac, hasSession: Boolean(session()), draftKey: draftKey() }),
   dispatch: name => action(name), readClipboard: () => rpc("clipboard.read"), copy: copyText, error: error => toast(error.message),
   pasteAttachments: async value => {
     if (value.files) return addAttachments(value.files, true);
@@ -214,7 +215,7 @@ const applicationMenu = new ApplicationMenu({
 function workspaceKeyboardAvailable() { return !ui.page && !ui.overlay && !document.querySelector(".overlay-backdrop"); }
 function syncNativeMenuState() {
   if (!isMac) return;
-  const menuState = JSON.stringify({ ready: environmentReady(), workspaceAvailable: workspaceKeyboardAvailable(), sidebar: ui.sidebar, panel: ui.panel, browser: ui.panel && ui.panelPage === "browser", tabNavigation: ui.panel && ["file", "browser"].includes(ui.panelPage) && panelTabs.group(panelOwner()).tabs.length > 1, fontSize: state.settings.fontSize, hasSession: Boolean(session()) });
+  const menuState = JSON.stringify({ ready: environmentReady(), workspaceAvailable: workspaceKeyboardAvailable(), canReopen: closedPanelTabs.available(panelOwner()), sidebar: ui.sidebar, panel: ui.panel, browser: ui.panel && ui.panelPage === "browser", tabNavigation: ui.panel && ["file", "browser"].includes(ui.panelPage) && panelTabs.group(panelOwner()).tabs.length > 1, fontSize: state.settings.fontSize, hasSession: Boolean(session()) });
   if (menuState !== ui.nativeMenuState) {
     ui.nativeMenuState = menuState;
     rpc("window.menuState", JSON.parse(menuState)).catch(() => { ui.nativeMenuState = undefined; });
@@ -776,14 +777,17 @@ const browserHistory = new BrowserHistory({ rpc, ready: () => environmentReady()
 const closingBrowserTabs = new Map();
 const creatingBrowserTabs = new Set();
 const panelTabs = new PanelTabs();
+const closedPanelTabs = new ClosedPanelTabs();
+const restoringBrowserOwners = new Set();
 const panelOwner = () => JSON.stringify([ui.active, workspaceKey(session()?.workspace || project()?.workspace)]);
 const panelTabActions = new PanelTabActions({
   context: () => !ui.page && !ui.overlay && ui.panel && environmentReady() ? {
     owner: panelOwner(), workspace: session()?.workspace || project()?.workspace,
-    ...panelTabs.group(panelOwner()), tool: ["files", "review"].includes(ui.panelPage) ? ui.panelPage : "",
+    ...panelTabs.group(panelOwner()), canReopen: closedPanelTabs.available(panelOwner()), tool: ["files", "review"].includes(ui.panelPage) ? ui.panelPage : "",
     url: tab => browserStates.get(session()?.id)?.tabs?.find(value => value.id === tab.id)?.url || "",
   } : null,
   close: closePanelTabs,
+  reopen: owner => owner === panelOwner() && reopenPanelTab(),
   move: (owner, key, target, after) => {
     if (owner !== panelOwner()) return;
     rememberPanelTabScroll();
@@ -805,6 +809,7 @@ async function closePanelTabs(owner, tabs, tool) {
     if (!group.tabs.includes(tab)) continue;
     const current = owner === panelOwner();
     if (current) ui.panelIntent++;
+    const closeIntent = ui.panelIntent, position = group.tabs.indexOf(tab);
     const selected = group.selected === tab.key && current && ["file", "browser"].includes(ui.panelPage);
     if (tab.kind === "browser" && tab.id) {
       if (!target) continue;
@@ -812,12 +817,20 @@ async function closePanelTabs(owner, tabs, tool) {
       closingBrowserTabs.get(owner).add(tab.id);
     }
     if (current) rememberDocumentScroll();
+    const closed = closedPanelTabs.capture(tab, { index: position,
+      url: browserStates.get(target?.id)?.tabs?.find(value => value.id === tab.id)?.url || "" });
+    let recorded = false;
+    const rememberClosed = () => {
+      if (!recorded && panelTabs.groups.get(owner) === group) { closedPanelTabs.remember(owner, closed); recorded = true; }
+    };
     panelTabs.close(owner, tab.key);
+    if (tab.kind !== "browser" || !tab.id) rememberClosed();
     if (selected) applyPanelTab();
     if (current) { rememberPanel(); render(); }
     if (tab.kind !== "browser" || !tab.id) continue;
     try {
       const data = await rpc("browser.command", { sessionId: target.id, action: "closeTab", tabId: tab.id });
+      if (Array.isArray(data?.tabs) && !data.tabs.some(value => value.id === tab.id)) rememberClosed();
       updateBrowserState(data);
       if (owner === panelOwner() && ui.panelPage === "browser") {
         const next = panelTabs.selected(owner);
@@ -828,13 +841,105 @@ async function closePanelTabs(owner, tabs, tool) {
       }
     } catch (error) {
       closingBrowserTabs.get(owner)?.delete(tab.id);
-      try { updateBrowserState(await rpc("browser.command", { sessionId: target.id, action: "state" })); } catch {}
+      try {
+        const data = await rpc("browser.command", { sessionId: target.id, action: "state" });
+        if (Array.isArray(data?.tabs) && !data.tabs.some(value => value.id === tab.id)) rememberClosed();
+        updateBrowserState(data);
+        if (data?.tabs?.some(value => value.id === tab.id) && panelTabs.groups.get(owner) === group) {
+          const replacement = group.tabs.find(value => value.id === tab.id && value.kind === "browser");
+          if (replacement) {
+            Object.assign(tab, { name: replacement.name, loading: replacement.loading });
+            group.tabs.splice(group.tabs.indexOf(replacement), 1, tab);
+          } else group.tabs.push(tab);
+          panelTabs.place(owner, tab, position);
+          if (owner === panelOwner()) {
+            if (selected && closeIntent === ui.panelIntent) { panelTabs.select(owner, tab.key); applyPanelTab(); }
+            render();
+          }
+        }
+      } catch {}
       throw error;
     } finally {
       const closing = closingBrowserTabs.get(owner);
       closing?.delete(tab.id);
       if (!closing?.size) closingBrowserTabs.delete(owner);
+      if (owner === panelOwner()) syncNativeMenuState();
     }
+  }
+}
+async function reopenPanelTab() {
+  if (!environmentReady() || !workspaceKeyboardAvailable()) return;
+  const owner = panelOwner(), group = panelTabs.group(owner);
+  if (!closedPanelTabs.available(owner)) return;
+  const [id, workspace] = JSON.parse(owner), intent = ++ui.panelIntent;
+  const target = state.sessions.find(s => s.id === id && workspaceKey(s.workspace) === workspace);
+  const directory = target?.workspace || project()?.workspace;
+  const valid = () => panelTabs.groups.get(owner) === group && (id
+    ? state.sessions.some(s => s.id === id && workspaceKey(s.workspace) === workspace)
+    : state.projects.some(p => workspaceKey(p.workspace) === workspace));
+  const maySelect = () => owner === panelOwner() && intent === ui.panelIntent && workspaceKeyboardAvailable() && !document.querySelector(".context-menu");
+  if (!valid()) return;
+  try {
+    const restoring = closedPanelTabs.restore(owner, async entry => {
+      let tab, fresh = false;
+      try {
+        if (entry.kind === "browser") {
+          if (!target) return false;
+          restoringBrowserOwners.add(owner);
+          const result = await rpc("browser.command", { sessionId: target.id, action: "restoreTab", url: entry.url });
+          if (!valid()) return false;
+          updateBrowserState(result.state);
+          tab = group.tabs.find(value => value.kind === "browser" && value.id === result.tabId);
+          if (!tab) throw new Error("网页标签未能恢复，请重试。");
+          fresh = true;
+        } else {
+          tab = group.tabs.find(value => value.kind === "file" && value.file === entry.file);
+          if (!tab) {
+            let data;
+            try { data = await rpc("workspace.read", { workspace: directory, file: entry.file }); }
+            catch (error) {
+              if (/ENOENT|ENOTDIR/.test(error.message)) throw new Error("文件不存在或已被移走，恢复记录已保留。");
+              throw error;
+            }
+            if (!valid()) return false;
+            tab = group.tabs.find(value => value.kind === "file" && value.file === (data.relative || entry.file));
+            if (!tab) {
+              const previous = group.selected;
+              tab = panelTabs.openFile(owner, data.relative || entry.file);
+              if (!previous || group.tabs.some(value => value.key === previous)) group.selected = previous;
+              Object.assign(tab, data, { loaded: true, source: entry.source, scrollTop: entry.scrollTop, scrollLeft: entry.scrollLeft });
+              fresh = true;
+            }
+          }
+        }
+        if (!valid()) return false;
+        if (fresh) panelTabs.place(owner, tab, entry.index);
+        // Native restoration creates a background page. Select it only after the
+        // response, while this request still owns the current user intent.
+        if (entry.kind === "browser" && maySelect()) {
+          try {
+            updateBrowserState(await rpc("browser.command", { sessionId: target.id, action: "selectTab", tabId: tab.id }));
+          } catch (error) {
+            if (valid() && owner === panelOwner()) toast(`标签页已恢复，但切换网页失败：${error.message}`);
+            return true;
+          }
+        }
+        if (maySelect()) {
+          panelTabs.select(owner, tab.key); applyPanelTab(); ui.panel = true;
+          if (target) ui.browserHidden.delete(target.id);
+          rememberPanel(); render();
+          try { await focusPanelSelection(owner, entry.kind === "browser" && Boolean(entry.url)); }
+          catch (error) { toast(`标签页已恢复，但聚焦失败：${error.message}`); }
+        }
+        return true;
+      } finally { restoringBrowserOwners.delete(owner); }
+    });
+    syncNativeMenuState();
+    await restoring;
+  } finally {
+    // A restored tab can finish in the background after a later selection or
+    // panel close. Refresh its tab strip without changing that newer intent.
+    if (owner === panelOwner()) render();
   }
 }
 function rememberPanelTabScroll() {
@@ -965,8 +1070,8 @@ function updateBrowserState(data) {
   // A webpage can create a native tab without a toolbar command. Follow that
   // native selection only while the old browser tab still owns this group;
   // updates to hidden pages must not steal a file/tool selection or reopen it.
-  if (data.activeTab && data.activeTab !== previous?.activeTab && before === `browser:${previous?.activeTab}` &&
-      panelTabs.group(owner).tabs.some(tab => tab.key === before)) {
+  if (!restoringBrowserOwners.has(owner) && data.activeTab && (before === "browser:start" ||
+      data.activeTab !== previous?.activeTab && before === `browser:${previous?.activeTab}` && panelTabs.group(owner).tabs.some(tab => tab.key === before))) {
     panelTabs.select(owner, `browser:${data.activeTab}`);
   }
   if (owner !== panelOwner()) return;
@@ -984,16 +1089,16 @@ function updateBrowserState(data) {
   }
   panelTabActions.refresh();
 }
-async function focusPanelSelection(owner) {
+async function focusPanelSelection(owner, preferPage = false) {
   const intent = ui.panelIntent;
   // render() schedules the viewport update before this frame. Focus only after
   // that update, and only if this user action still owns the visible selection.
   await new Promise(resolve => requestAnimationFrame(resolve));
-  if (owner !== panelOwner() || intent !== ui.panelIntent || !workspaceKeyboardAvailable()) return;
+  if (owner !== panelOwner() || intent !== ui.panelIntent || !workspaceKeyboardAvailable() || document.querySelector(".context-menu")) return;
   const tab = panelTabs.selected(owner);
   if (!ui.panel || !tab) { $("composer-input")?.focus(); return; }
   if (ui.panelPage === "browser" && tab?.kind === "browser") {
-    if (!browserStates.get(session()?.id)?.url) { $("browser-address")?.focus(); $("browser-address")?.select(); }
+    if (!browserStates.get(session()?.id)?.url && !preferPage) { $("browser-address")?.focus(); $("browser-address")?.select(); }
     else {
       browserHistory.dismissSuggestions();
       if (document.activeElement?.id === "browser-address") document.activeElement.blur();
@@ -1868,6 +1973,7 @@ async function action(name, element) {
       await action(tab ? "panel-close-tab" : ui.panelPage ? "panel-close-tool" : "close-panel", tab ? { dataset: { key: tab.key } } : undefined);
       return focusPanelSelection(owner);
     }
+    case "panel-reopen-tab": return reopenPanelTab();
     case "panel-next-tab": case "panel-previous-tab": {
       if (!workspaceKeyboardAvailable() || !ui.panel || !["file", "browser"].includes(ui.panelPage)) return;
       const owner = panelOwner(), group = panelTabs.group(owner);
@@ -1884,6 +1990,7 @@ async function action(name, element) {
     case "panel-add-tab":
       return showContext(element, [
         { label: "新网页", icon: "browser", action: "browser-newTab" },
+        ...(closedPanelTabs.available(panelOwner()) ? [{ label: "重新打开关闭的标签页", icon: "clock", action: "panel-reopen-tab" }] : []),
         { label: "文件管理器", icon: "folder", action: "panel-files" },
         { label: "审阅", icon: "review", action: "panel-review" },
       ]);
@@ -2615,7 +2722,7 @@ function onEvent(event, data) {
   } else if (event === "browser-shortcut") {
     const tab = panelTabs.selected(panelOwner());
     if (!workspaceKeyboardAvailable() || !ui.panel || ui.panelPage !== "browser" || data.owner !== session()?.id || data.tabId !== tab?.id ||
-        !["browser-new-tab", "panel-close-active", "browser-focus-address", "panel-next-tab", "panel-previous-tab", "toggle-sidebar", "toggle-panel", "new-session", "search", "settings"].includes(data.command)) return;
+        !["browser-new-tab", "panel-close-active", "panel-reopen-tab", "browser-focus-address", "panel-next-tab", "panel-previous-tab", "toggle-sidebar", "toggle-panel", "new-session", "search", "settings"].includes(data.command)) return;
     const owner = panelOwner();
     action(data.command).then(() => { if (["toggle-sidebar", "toggle-panel"].includes(data.command)) return focusPanelSelection(owner); }).catch(error => toast(error.message));
   } else if (event === "browser-state") {
@@ -2637,6 +2744,7 @@ function onEvent(event, data) {
       const [id, workspace] = JSON.parse(owner);
       if (id ? !state.sessions.some(s => s.id === id && workspaceKey(s.workspace) === workspace) : !state.projects.some(p => workspaceKey(p.workspace) === workspace)) panelTabs.groups.delete(owner);
     }
+    closedPanelTabs.prune(panelTabs.groups.keys());
     for (const id of browserStates.keys()) if (!state.sessions.some(s => s.id === id)) browserStates.delete(id);
     if (ui.active && !state.sessions.some((s) => s.id === ui.active)) {
       ui.active = "";
@@ -2971,7 +3079,7 @@ document.addEventListener("keydown", (event) => {
   if (!(panelTabShortcut || (isMac ? event.metaKey : event.ctrlKey)) || !workspaceKeyboardAvailable()) return;
   const key = event.key.toLowerCase();
   if (key === "b") { event.preventDefault(); action(event.shiftKey ? "toggle-panel" : "toggle-sidebar").catch(e => toast(e.message)); }
-  if (key === "t" && !event.shiftKey) { event.preventDefault(); action("browser-new-tab").catch(e => toast(e.message)); }
+  if (key === "t" && !event.altKey) { event.preventDefault(); action(event.shiftKey ? "panel-reopen-tab" : "browser-new-tab").catch(e => toast(e.message)); }
   if (key === "l" && !event.shiftKey && ui.panel && ui.panelPage === "browser") { event.preventDefault(); action("browser-focus-address").catch(e => toast(e.message)); }
   if (key === "w" && ui.panel) {
     event.preventDefault();

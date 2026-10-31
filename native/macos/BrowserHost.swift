@@ -195,6 +195,16 @@ private struct BrowserHistoryRecord: Codable {
             _ = await previous?.result
             guard !session.disposed else { throw failure("浏览器会话已关闭。") }
             defer { self.publish(session) }
+            if action == "restoreTab" {
+                let url = p["url"] as? String ?? ""
+                guard url.isEmpty || Self.allowed(url) else { throw failure("浏览器仅支持 HTTP/HTTPS 网页。") }
+                let previous = session.active
+                let restored = try self.newTab(session)
+                session.active = previous
+                self.layout()
+                if !url.isEmpty { restored.web.load(URLRequest(url: URL(string: url)!)) }
+                return ["tabId": restored.id, "state": self.state(session)] as [String: Any]
+            }
             switch action {
             case "newTab": try self.newTab(session)
             case "selectTab", "closeTab":

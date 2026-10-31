@@ -3,8 +3,8 @@ import { icon } from "./icons.mjs";
 // Tab gestures stay in the owning conversation. Delayed menu actions hold the
 // actual tab objects, so a new tab or another conversation cannot inherit them.
 export class PanelTabActions {
-  constructor({ context, close, move, copy, reveal, external, changed, error }) {
-    Object.assign(this, { context, close, move, copy, reveal, external, changed, error });
+  constructor({ context, close, reopen, move, copy, reveal, external, changed, error }) {
+    Object.assign(this, { context, close, reopen, move, copy, reveal, external, changed, error });
     document.addEventListener("contextmenu", e => {
       const tab = this.target(e.target); if (!tab) return;
       e.preventDefault(); this.open(tab, { x: e.clientX, y: e.clientY });
@@ -47,7 +47,7 @@ export class PanelTabActions {
     const now = this.context();
     return now && now.owner === value.context.owner && now.tabs.includes(value.tab) && value.tab.key === value.key;
   }
-  signature(context) { return context && JSON.stringify([context.owner, context.selected, context.tool, context.tabs.map(tab => tab.key)]); }
+  signature(context) { return context && JSON.stringify([context.owner, context.selected, context.tool, context.canReopen, context.tabs.map(tab => tab.key)]); }
   refresh() {
     if (this.menu && this.signature(this.context()) !== this.menuSignature) this.dismiss(false);
     if (this.drag && !this.valid(this.drag)) this.cancelDrag();
@@ -72,6 +72,7 @@ export class PanelTabActions {
       ["关闭标签页", "close", () => this.close(context.owner, [tab])],
       ["关闭其他标签页", "close", (others.length || context.tool) && (() => this.close(context.owner, others, context.tool ? { page: context.tool, keep: tab } : undefined))],
       ["关闭右侧标签页", "close", right.length && (() => this.close(context.owner, right))],
+      ["重新打开关闭的标签页", "clock", context.canReopen && (() => this.reopen(context.owner))],
       tab.kind === "file" ? ["复制文件路径", "copy", () => this.copy(tab.file)] : ["复制网页地址", "copy", url && (() => this.copy(url))],
       tab.kind === "file" ? ["在文件夹中显示", "folder", () => this.reveal(context.workspace, tab.file)] : ["在系统浏览器打开", "external", url && (() => this.external(url))],
     ];
