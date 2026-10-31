@@ -227,8 +227,13 @@ jobs:
                       guard found else { throw failure("Native browser form submission failed") }
                       let screenshot = try await control("screenshot") as! [String: Any]
                       guard let encoded = screenshot["imageBase64"] as? String, let png = Data(base64Encoded: encoded), png.count > 100 else { throw failure("Native browser screenshot failed") }
+                      for _ in 0..<60 {
+                          let records = browser.history.state()["items"] as! [[String: Any]]
+                          if records.count == 2, records[0]["title"] as? String == "Search Result" { break }
+                          try await Task.sleep(nanoseconds: 100_000_000)
+                      }
                       let browsing = browser.history.state()["items"] as! [[String: Any]]
-                      guard browsing.count == 2, browsing.contains(where: { $0["url"] as? String == fixture && $0["title"] as? String == "QQClaw Browser Check" }), browsing[0]["title"] as? String == "Search Result" else { throw failure("Successful top-level navigation history not recorded") }
+                      guard browsing.count == 2, browsing.contains(where: { $0["url"] as? String == fixture && $0["title"] as? String == "QQClaw Browser Check" }), browsing[0]["title"] as? String == "Search Result" else { throw failure("Successful top-level navigation history not recorded: " + String(describing: browser.history.state())) }
                       _ = try await control("open", ["url": fixture + "#section"])
                       let revisited = browser.history.state()["items"] as! [[String: Any]]
                       guard revisited.count == 2, revisited[0]["url"] as? String == fixture else { throw failure("History did not deduplicate fragment/revisit") }

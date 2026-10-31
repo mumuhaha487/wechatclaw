@@ -27,14 +27,24 @@ private struct BrowserHistoryRecord: Codable {
         guard let result = components.url?.absoluteString, result.utf16.count <= 8192 else { return nil }; return result
     }
     private static var now: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+    private static func cleanTitle(_ title: String, url: String) -> String {
+        let clean = title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.prefix(256).map(String.init).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        return clean.isEmpty ? (URL(string: url)?.host ?? url) : clean
+    }
     func visit(_ value: String, title: String) {
         guard let url = Self.normalize(value), storageError.isEmpty else { return }
         let original = items, previous = items.first { $0.url == url }
-        let cleanTitle = title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.prefix(256).map(String.init).joined().trimmingCharacters(in: .whitespacesAndNewlines)
-        let record = BrowserHistoryRecord(id: previous?.id ?? UUID().uuidString.lowercased(), url: url, title: cleanTitle.isEmpty ? (URL(string: url)?.host ?? url) : cleanTitle, at: Self.now)
+        let record = BrowserHistoryRecord(id: previous?.id ?? UUID().uuidString.lowercased(), url: url, title: Self.cleanTitle(title, url: url), at: Self.now)
         items = Array(([record] + items.filter { $0.url != url }).prefix(500))
         do { try save() } catch { items = original }
         notify(state())
+    }
+    func updateTitle(_ value: String, title: String) {
+        guard let url = Self.normalize(value), storageError.isEmpty, let index = items.firstIndex(where: { $0.url == url }) else { return }
+        let original = items, previous = items[index], clean = Self.cleanTitle(title, url: url)
+        guard previous.title != clean else { return }
+        items[index] = BrowserHistoryRecord(id: previous.id, url: previous.url, title: clean, at: previous.at)
+        do { try save() } catch { items = original }; notify(state())
     }
     private func save() throws {
         do {
@@ -213,7 +223,11 @@ private struct BrowserHistoryRecord: Codable {
         super.init()
         web.navigationDelegate = self; web.uiDelegate = self
         observations = [web.observe(\.url, options: [.new]) { [weak self] _, _ in self?.changed() },
-                        web.observe(\.title, options: [.new]) { [weak self] _, _ in self?.changed() },
+                        web.observe(\.title, options: [.new]) { [weak self] _, _ in
+                            guard let self else { return }
+                            if !self.web.isLoading && !self.closed && !self.downloadNavigation { self.history.updateTitle(self.url, title: self.web.title ?? "") }
+                            self.changed()
+                        },
                         web.observe(\.isLoading, options: [.new]) { [weak self] _, _ in self?.changed() },
                         web.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in self?.changed() },
                         web.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in self?.changed() }]

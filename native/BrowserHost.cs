@@ -154,13 +154,25 @@ internal sealed class BrowserHistory {
         try { var uri = new UriBuilder(value) { Fragment = "" }; var result = uri.Uri.AbsoluteUri; return result.Length <= 8192 ? result : null; } catch { return null; }
     }
     private static long Now() { return (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds; }
+    private static string CleanTitle(string value, string url) {
+        var title = new string((value ?? "").Where(c => !Char.IsControl(c)).ToArray()).Trim();
+        if (title.Length > 256) title = title.Substring(0, Char.IsHighSurrogate(title[255]) ? 255 : 256);
+        return title == "" ? new Uri(url).Host : title;
+    }
     internal void Visit(string value, string title) {
         var url = Normalize(value); if (url == null || storageError != "") return;
         var original = items; var previous = items.Find(item => item.url == url);
-        title = new string((title ?? "").Where(c => !Char.IsControl(c)).ToArray()).Trim();
-        if (title.Length > 256) title = title.Substring(0, Char.IsHighSurrogate(title[255]) ? 255 : 256);
-        var record = new BrowserHistoryRecord { id = previous == null ? Guid.NewGuid().ToString("D") : previous.id, url = url, title = title == "" ? new Uri(url).Host : title, at = Now() };
+        var record = new BrowserHistoryRecord { id = previous == null ? Guid.NewGuid().ToString("D") : previous.id, url = url, title = CleanTitle(title, url), at = Now() };
         items = new [] { record }.Concat(items.Where(item => item.url != url)).Take(500).ToList();
+        try { Save(); } catch { items = original; }
+        notify(State());
+    }
+    internal void UpdateTitle(string value, string title) {
+        var url = Normalize(value); if (url == null || storageError != "") return;
+        var previous = items.Find(item => item.url == url); if (previous == null) return;
+        title = CleanTitle(title, url); if (previous.title == title) return;
+        var original = items;
+        items = items.Select(item => item == previous ? new BrowserHistoryRecord { id = item.id, url = item.url, at = item.at, title = title } : item).ToList();
         try { Save(); } catch { items = original; }
         notify(State());
     }
@@ -247,7 +259,7 @@ internal sealed class BrowserTab {
             Loading = false; Error = e.IsSuccess || stopping || downloadNavigation ? "" : "网页未能加载：" + e.WebErrorStatus; changed();
         };
         Web.CoreWebView2.SourceChanged += delegate { changed(); };
-        Web.CoreWebView2.DocumentTitleChanged += delegate { changed(); };
+        Web.CoreWebView2.DocumentTitleChanged += delegate { if (!Loading && !closed && !downloadNavigation) history.UpdateTitle(Url, Title); changed(); };
         Web.CoreWebView2.HistoryChanged += delegate { changed(); };
         Web.CoreWebView2.NewWindowRequested += delegate(object sender, CoreWebView2NewWindowRequestedEventArgs e) {
             e.Handled = true; if (BrowserHost.Allowed(e.Uri)) Web.CoreWebView2.Navigate(e.Uri);
