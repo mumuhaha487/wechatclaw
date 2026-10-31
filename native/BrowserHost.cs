@@ -292,6 +292,7 @@ internal sealed class BrowserTab {
     private bool findOpen;
     private string findQuery = "";
     private CoreWebView2Find findSession;
+    private TaskCompletionSource<bool> findInterrupted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource<bool> navigation;
     internal ulong NavigationId;
     private readonly BrowserDownloads downloads;
@@ -388,7 +389,7 @@ internal sealed class BrowserTab {
             Loading = false; changed();
         };
     }
-    internal void Close() { closed = true; findRevision++; Web.Visible = false; Web.Bounds = new Rectangle(-2000, 0, 1000, 760); ReleaseDownloadView(); }
+    internal void Close() { closed = true; findRevision++; findOpen = false; findInterrupted.TrySetResult(true); Web.Visible = false; Web.Bounds = new Rectangle(-2000, 0, 1000, 760); ReleaseDownloadView(); }
     internal void ReleaseDownloadView() { if (closed && !downloads.Active(Id) && !Web.IsDisposed) Web.Dispose(); }
     internal void Stop() { stopping = true; if (Web.CoreWebView2 != null) Web.CoreWebView2.Stop(); Loading = false; changed(); }
     private async Task<bool> Navigate(Action action) {
@@ -425,10 +426,22 @@ internal sealed class BrowserTab {
         // A closed page is reopened by URL. Never replay an old POST body.
         Web.CoreWebView2.Navigate(url);
     }
+    private static async Task<bool> AwaitFind(Task operation, Task interrupted) {
+        if (await Task.WhenAny(operation, interrupted) == operation) { await operation; return true; }
+        // A disposed WebView can leave StartAsync without a completion callback.
+        // Settle our RPC immediately and observe any later native failure.
+        var observe = operation.ContinueWith(completed => GC.KeepAlive(completed.Exception), TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+        return false;
+    }
     internal async Task<object> Find(Dictionary<string, object> p) {
         string operation = BrowserHost.Value(p, "operation"), query = BrowserHost.Value(p, "query");
         if (!new [] { "search", "next", "previous", "clear" }.Contains(operation) || query.Length > 512) throw new Exception("网页查找参数无效。");
-        int revision = operation == "search" || operation == "clear" ? ++findRevision : findRevision;
+        if (operation == "search" || operation == "clear") {
+            findRevision++; findInterrupted.TrySetResult(true);
+            findInterrupted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        int revision = findRevision;
+        Task interrupted = findInterrupted.Task;
         if (operation == "search" || operation == "clear") findOpen = operation != "clear";
         await findSerial.WaitAsync();
         try {
@@ -437,14 +450,15 @@ internal sealed class BrowserTab {
                 if (findSession != null) findSession.Stop();
                 findQuery = ""; return new { cleared = true, found = false };
             }
-            await EnsureReady();
+            if (!await AwaitFind(EnsureReady(), interrupted)) return new { stale = true };
             if (closed || revision != findRevision) return new { stale = true };
             findSession = Web.CoreWebView2.Find;
             if (operation == "search" || query != findQuery) {
                 var options = Web.CoreWebView2.Environment.CreateFindOptions();
                 options.FindTerm = query; options.IsCaseSensitive = false;
                 options.ShouldHighlightAllMatches = true; options.SuppressDefaultFindDialog = true;
-                findSession.Stop(); await findSession.StartAsync(options);
+                findSession.Stop();
+                if (!await AwaitFind(findSession.StartAsync(options), interrupted)) return new { stale = true };
                 if (revision == findRevision) findQuery = query;
             } else {
                 var changedIndex = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -453,7 +467,7 @@ internal sealed class BrowserTab {
                 try {
                     int total = findSession.MatchCount;
                     if (operation == "previous") findSession.FindPrevious(); else findSession.FindNext();
-                    if (total > 1 && await Task.WhenAny(changedIndex.Task, Task.Delay(2000)) != changedIndex.Task && revision == findRevision && !closed)
+                    if (total > 1 && await Task.WhenAny(changedIndex.Task, interrupted, Task.Delay(2000)) != changedIndex.Task && revision == findRevision && !closed)
                         throw new Exception("网页没有返回新的查找位置，请重试。");
                 } finally {
                     try { findSession.ActiveMatchIndexChanged -= changed; }

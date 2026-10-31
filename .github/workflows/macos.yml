@@ -338,6 +338,15 @@ jobs:
                       do { _ = try await control("find", ["tabId":"missing","operation":"search","query":"alpha"]); throw failure("Find accepted invalid tab") }
                       catch let error as NSError { guard error.localizedDescription.contains("已关闭") else { throw error } }
                       print("PASS: real WKWebView find true/false, inline/Unicode/literal text, directions, honest unavailable counts, clear, invalid tab and focused AppKit dispatch (component verification)")
+                      _ = try await control("newTab"); _ = try await control("open", ["url":fixture])
+                      let retiringTab = browser.sessions[owner]!.active!, findCloseStart = Date()
+                      let retiringFind = Task { @MainActor in try await retiringTab.find(["operation":"search","query":"alpha beta"]) }
+                      await Task.yield()
+                      _ = try await control("closeTab", ["tabId":retiringTab.id])
+                      _ = try await retiringFind.value
+                      guard Date().timeIntervalSince(findCloseStart) < 3, retiringTab.closed,
+                            browser.sessions[owner]!.active === focusTab else { throw failure("Closing native page left find pending or selected wrong tab") }
+                      print("PASS: native WKWebView close settles in-flight find within three seconds without reviving its page")
                       guard page["title"] as? String == "QQClaw Browser Check", let elements = page["elements"] as? [[String: Any]], let ref = elements.first(where: { $0["role"] as? String == "input" })?["ref"] as? String else { throw failure("Native browser snapshot failed") }
                       _ = try await control("fill", ["ref": ref, "text": "native-mac-search"])
                       _ = try await control("press", ["ref": ref, "key": "Enter"])

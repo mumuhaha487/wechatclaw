@@ -259,6 +259,7 @@ private struct BrowserHistoryRecord: Codable {
     var findRevision = 0
     var findOpen = false, findCanStep = false
     var findOperation: Task<[String: Any], Never>?
+    private var findCompletion: (() -> Void)?
     init(resources: URL, store: WKWebsiteDataStore, downloads: BrowserDownloads, history: BrowserHistory, owner: String, configuration: WKWebViewConfiguration? = nil, changed: @escaping () -> Void) {
         self.resources = resources; self.changed = changed
         self.downloads = downloads; self.owner = owner
@@ -283,7 +284,7 @@ private struct BrowserHistoryRecord: Codable {
                         web.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in self?.changed() }]
     }
     func stop() { web.stopLoading(); finishNavigation(.failure(failure("浏览器操作已停止。"))); changed() }
-    func close() { closed = true; findRevision += 1; findOpen = false; findCanStep = false; web.isHidden = true; releaseDownloadView() }
+    func close() { closed = true; findRevision += 1; findOpen = false; findCanStep = false; findCompletion?(); web.isHidden = true; releaseDownloadView() }
     func releaseDownloadView() {
         if closed && !downloads.active(id) { observations.removeAll(); web.navigationDelegate = nil; web.uiDelegate = nil; web.removeFromSuperview() }
     }
@@ -358,7 +359,7 @@ private struct BrowserHistoryRecord: Codable {
     func find(_ p: [String: Any]) async throws -> [String: Any] {
         let operation = p["operation"] as? String ?? "", query = p["query"] as? String ?? ""
         guard ["search", "next", "previous", "clear"].contains(operation), query.utf16.count <= 512 else { throw failure("网页查找参数无效。") }
-        if operation == "search" || operation == "clear" { findRevision += 1; findOpen = operation != "clear"; findCanStep = false }
+        if operation == "search" || operation == "clear" { findRevision += 1; findOpen = operation != "clear"; findCanStep = false; findCompletion?() }
         let revision = findRevision, previous = findOperation
         let task = Task { @MainActor () -> [String: Any] in
             _ = await previous?.value
@@ -368,7 +369,13 @@ private struct BrowserHistoryRecord: Codable {
             configuration.backwards = operation == "previous"
             let term = operation == "clear" ? "" : query
             let found = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-                self.web.find(term, configuration: configuration) { result in continuation.resume(returning: result.matchFound) }
+                var completed = false
+                let finish: (Bool) -> Void = { [weak self] value in
+                    guard !completed else { return }; completed = true; self?.findCompletion = nil
+                    continuation.resume(returning: value)
+                }
+                self.findCompletion = { finish(false) }
+                self.web.find(term, configuration: configuration) { result in finish(result.matchFound) }
             }
             guard !self.closed, revision == self.findRevision else { return ["stale": true] }
             self.findCanStep = found && !term.isEmpty
