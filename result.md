@@ -1,6 +1,6 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-11-01。当前源码 **0.3.27**。Mac 唯一安装包已更新为 0.3.27；Windows 候选已编译，正式 EXE 仍为 0.3.26，等待用户正常退出后替换。 亮色、可调宽/可关闭面板、真实上下文统计和此前数据保存继续保留。官方 ChatGPT 扩展自动浏览仍未接通，整体目标没有完成；交付范围与限制以文末本版记录为准。
+更新时间：2026-11-01。当前源码 **0.3.28**。Mac 唯一安装包已更新为 0.3.28；Windows 0.3.28 候选已编译，正式 EXE 仍为 0.3.26（PID 115392），等待用户正常退出后替换。 官方 ChatGPT 扩展自动浏览仍未接通，整体目标没有完成；最新交付范围、失败记录和限制以文末 0.3.28 章节为准。
 
 ## 用户目标与不可替换的要求
 
@@ -796,3 +796,60 @@ ZIP SHA-256 E768C087A811ED766C978BFF6AAD7D76D9FBA6C34DAB56CBF9D0A852699A0609 与
 **整体目标仍未完成。** 官方 ChatGPT 扩展独立授权及微信触发自动浏览没有接通；关闭恢复只涵盖用户显式关闭的文件/网页，不跨重启，不保存整段网页历史/表单/POST，审阅/文件管理器工具页和网页自行关闭暂不进入该历史。全部主页 1:1、网页批注、完整 SPA/Cookie/站点权限、Mac 网页查找/完整产品键盘和中文输入法、Apple 公证及线上微信等仍有差异或未验收。本版只报告上述可核对的阶段进展，持续 goal 保持 active。
 
 <!-- end-qqclaw-0327 -->
+
+
+## 0.3.28 当前内容查找与原生请求取消
+
+Mac 唯一安装包已更新为 0.3.28；Windows 0.3.28 候选已编译，正式 EXE 仍为 0.3.26（PID 115392），等待用户正常退出后替换。
+
+Ctrl/⌘+F 根据最后实际操作的聊天或工作面板分派；文件/网页采用真实选中标签，不受后台标签右键菜单影响。显式“查找会话内容”仍定位聊天。一次仅打开一种查找；F3、Ctrl/⌘+G、Shift 反向、Enter/Shift+Enter、Escape 及编辑菜单均有对应操作。切换会话、文件、网页地址或关闭面板会清理旧查找，迟到结果不能恢复旧条或抢回选择。
+
+文件复用 MessageFind 的文档模式，支持中文、字面正则符号、跨行内格式、高亮、计数及水平阅读位置。网页 UI 使用新增 ui/browser-find.mjs，真实搜索走 App.browser.find → BrowserViewer → 两端原生 Find；不下载页面重建搜索结果，不向模型发送页面内容。查找条位于原生视口上方并缩小视口，避免外部网页遮挡。网页历史、外部打开移入“更多”菜单，下载保留独立入口。
+
+Windows 使用 CoreWebView2.Find，返回实测的匹配数与从 1 开始的位置；不支持接口时明确提示更新 WebView2。Mac 使用 WKWebView.find、WKFindConfiguration 和 matchFound；公开 API 没有总数和序号，显示“找到匹配/未找到”，不伪造数字。Windows 原生网页增加 Ctrl+F/G、F3 和仅查找打开时的 Escape 分派；Mac AppKit 菜单先读取真实 firstResponder，再发送带 owner/tabId 的 browser-shortcut，随后交还主 UI。原生焦点下的新快捷键本轮未做 Windows 可信按键或完整 Mac GUI 实测。
+
+### 查到的遗漏与严格修正
+
+旧组件检查第 13 条只断言标签为空，并将 pending find 的拒绝吞掉；不能证明请求已结束。收紧为关闭后必须 3 秒内完成且不能 Native API timeout，严格基线真实失败：12 项通过，查找请求在 **30,014ms** 后超时，passed=false。Windows 增加关闭/新查询的中断信号，提前结束等待并观察迟到原生异常；Mac 显式完成待处理 continuation，迟到回调只结束一次。最终 Windows 同一路径 **24ms 返回 stale**，严格 13 项通过；Mac 新增关闭期间查找检查也实际通过。没有仅更改超时时间或跳过该断言。
+
+另修复 MessageFind 新区域谓词与原匹配序号同名、网页“更多”菜单被同一次 click 立即移除、菜单关闭聊天查找后焦点丢失。Windows system.status 原来写死 0.3.26，改为 scripts/build-windows.mjs 从 package.json 生成临时 BuildInfo.cs，status 与 .complete 统一引用；成品反射读取常量为 0.3.28，未在源码增加第二份手填版本号。
+
+### 本轮实际证据与范围
+
+材料均在项目外 C:\Users\admin\AppData\Local\Temp\qqclaw-v0328-20261101。
+
+| 材料 | 结果与实际范围 |
+| --- | --- |
+| cua-find-checks.json | 22 条 CUA 操作的当前前端 + 真实 App/Windows BrowserHost 组件检查；文档/聊天/网页查找、方向、中文/字面词、错误显示、延迟结果、菜单及草稿隔离。跨候选迭代，不当作全部来自最终独立 EXE |
+| cua-final-find-checks.json | 最终前端和取消修复后的原生组件 11 条补充；菜单关闭恢复聊天焦点、文件 F3、4 档视口、真实网页计数/Ctrl+G、查找条与原生视口不重叠、会话隔离及草稿保留 |
+| native-find-strict-baseline.json / .mjs | 严格失败基线保留；旧吞错检查未计入最终及时完成证据 |
+| native-find.json / .mjs | 最终真实 WebView2 Find 13 项，关闭期间 24ms 返回 stale，退出 0；中文/字面词/行内样式、前后/循环、真实计数、非法 owner/tab/query、连续查询、没有重新抓取网页 |
+| regression.tap | 本轮后台 119 项核心回归，fail 0；之后仅改原生取消、菜单关闭的焦点及构建文档，没有重复声称后台重跑 |
+| QQClaw-0.3.28-file-find.jpg | 已查看实际前端白底黑灰截图，版本 0.3.28；为隔离数据，非正式 EXE 或自动浏览截图 |
+| mac-build.json / mac-executed-passes.json | 成功云构建实际 34 条 PASS。只读取 0_build.txt 的执行输出，排除 shell 源码回显，也排除逐步骤日志的重复副本 |
+| candidate-source-match.json / cloud-source-match.json / candidate-payload.json | 58 份源码/样式/页面/版本/工作流与 Windows 编译副本逐字节一致，与 Mac head 按换行规范化一致；EXE 内嵌主要资源另核对摘要 |
+| failure-notes.md | 保留编译准备漏复制许可证、无 PyYAML、补丁校验、旧 CUA handle/地址角色变化、窄屏断言及替换 API 失败与修正，不把准备失败算作产品通过 |
+
+四档视口中，1100/1500/1800px 保持约 28.7% 默认面板占比；1000px 时工作区不足 719px，按既有规则采用可关闭的覆盖面板，并非并排 28.7%。均检查查找条在面板内、页面不横向溢出；首次错误地要求所有尺寸都为相同比例的断言已纠正并记录。截图不是原生网页内容或官方浏览器工具成功证明。
+
+没有向原微信账户/原会话发送测试消息，没有运行模型或借用开发聊天的官方授权身份。CUA 承载的前端、透明原生组件和模拟环境/模型门禁的边界保持明确；本轮不宣称完整独立 Windows EXE GUI、原生页焦点下可信按键、中文输入法全流程、Mac 用户实机或线上微信端到端验收。
+
+### 构建、唯一成品及数据
+
+最终代码提交 f911c69a54e4c22353d77c6d5402a985b66d5124。前一轮 4b5fee5 云构建也成功，但交付采用包含取消修复的新 head。
+
+[Mac 云构建 41242626394](https://github.com/mumuhaha487/wechatclaw/actions/runs/41242626394) 成功；artifact 13057658439，实际 34 条 PASS。包含双架构/签名/系统库/DMG 只读挂载与安装复制、后台/钥匙串/消息/附件/重启、审阅/历史/下载/新窗口/恢复，并新增文件查找 WebKit 组件、AppKit 查找门禁、原生 WKWebView 真/假匹配/方向/清理、focused-page 命令和关闭时结束请求。组件菜单直接派发不等于用户可信按键。Mac 仍未 Apple 公证。
+
+ZIP SHA-256 8BB50FC6CCE72C2747BD8C768F1516AE58B88265CCBBAD0838FDAA731CC30417 与 GitHub 上传 digest 一致；CRC、唯一 DMG 和 UDIF 尾均通过。
+
+| 文件 | 当前状态 | 大小（bytes） | SHA-256 |
+| --- | --- | --- | --- |
+| release/QQClaw.exe | 正式仍为 0.3.26；未替换、未重启 | 671744 | C251A31F3D7216934FAFC919A39786D8138A7CB4838572E1E0968DC876BAA085 |
+| 项目外 build-root/release/QQClaw.exe | 0.3.28 待替换候选 | 685568 | 71E88DCC300220587AED26D527EF24747C3B007D9AF40488D49B3EEA5A941758 |
+| release/macos/QQClaw.dmg | 0.3.28 已更新 | 851960 | 8CA33AF36621141076241AF8E6DC1D802D9D9F45D2D213F27CED402AD54C79C2 |
+
+替换前再次只读确认正式 Windows PID 115392 仍在运行，没有用当前工具不支持的桌面控制或强杀代替正常退出；此前用户正常退出请求仍待回应，不重复请求更新授权。已准备项目外 replace-when-exited.ps1，仅正常退出后才备份、核对并替换/启动；不能把候选编译或反射版本当成正式启动成功。
+
+Mac 更新前将原加密 state 和旧两端成品备份至 replacement-v0328。更新后仍为 1 个连接账户、1 条断开身份、3 个会话/134 条消息，busy/queued/pending 均为 0。账户绑定、保留身份、threadId/逐条消息/时间及 Provider URL/Key 比较均为 true，未恢复原断开身份；仅比较与备份，没有改写用户内容。此比较发生在仅更新 Mac 安装包之后，不是 Windows 替换证明。项目 release 中仍仅一个 EXE、一个 DMG。
+
+**整体目标仍未完成。** 官方 ChatGPT 扩展独立授权及微信自动浏览没有接通，本次查找仅用户手动操作；不能用这些组件检查替代官方扩展端到端证明。完整主页 1:1、网页批注、完整 SPA/Cookie/站点权限、Mac 实机/公证及可信按键等既有差异继续保留，goal 保持 active。

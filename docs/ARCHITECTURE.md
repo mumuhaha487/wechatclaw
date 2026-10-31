@@ -1,3 +1,11 @@
+## 0.3.28 按上下文查找
+
+UI 的 find-current 按最后实际操作区域和当前选中工作标签选择聊天、文件或网页；显式会话查找保持原含义。MessageFind 文档模式只操作已加载的文件 DOM；BrowserFind 通过 sessionId/tabId 调用独立 browser.find RPC，以 owner/tab/url/请求序号隔离迟到结果。搜索结果只更新查找条，不为每个输入字符重建整个编辑器；原生视口留在条下方。
+
+Windows 使用真实 CoreWebView2Find 和显式中断信号；新查询/清理/关闭都能结束旧等待，并观察迟到任务异常，避免关闭 WebView 后 StartAsync 不回调而挂住。Mac 使用 WKWebView.find，显式且只一次结束 continuation；公开 API 的总数/序号缺失保留为 null。AppKit 在聚焦主 UI 前检查原生 firstResponder，按实际 owner/tab 派发命令；网页无应用桥。
+
+查找仅供用户手动阅读，不注册模型工具，不改变官方扩展授权门禁。Windows BuildInfo.cs 在临时构建目录由 package.json 生成，status 与资源版本统一。具体代码、成品和验证边界见 result.md 的 0.3.28 章节。
+
 ## 0.3.27 关闭恢复及操作归属
 
 ClosedPanelTabs 与 PanelTabs 分工：前者保存有限的已关闭位置描述、恢复中的 owner 锁和可重试记录，后者管理实际打开对象及位置。自动同步移除、canonical 去重和工作面板收起不写关闭历史；显式浏览器关闭失败先读取真实 state，仍存在时恢复原对象、顺序、草稿和未被更新的选择。
@@ -222,7 +230,7 @@ Mac 分发改为单一 `release/macos/QQClaw.dmg`：只读压缩磁盘映像包�
 
 原生 `BrowserHost` 仍管理手动网页预览：空会话不隐式创建标签，关闭最后标签保持空组；新标签/导航才创建网页。UI 通过 `browser.view` 同步 DOM 视口与 DPI 坐标，在弹窗/菜单时隐藏外部网页层。Windows 按账户/会话存储网站登录态；Mac 当前使用账户隔离内存存储。
 
-侧面板默认 340 CSS 像素，拖动/键盘/双击调整并保存；分屏保留至少 400 CSS 像素聊天宽度，空间不足改为可关闭的覆盖面板。收起/关闭面板不销毁标签；标签上的叉销毁网页。手动关闭后，后台网页事件不得强行展开面板。
+侧面板默认 clamp(280px, 28.7vw, 560px)，拖动/键盘/双击调整并保存；分屏保留至少 400 CSS 像素聊天宽度，空间不足改为可关闭的覆盖面板。收起/关闭面板不销毁标签；标签上的叉销毁网页。手动关闭后，后台网页事件不得强行展开面板。
 
 `shared/context-usage.mjs` 使用 Codex `last` 样本的当前输入+输出占比，禁止使用整段历史的 `total` 累计统计；缓存输入不重复相加，缺窗口/样本显示待统计。真实消耗证据见 result.md。
 
