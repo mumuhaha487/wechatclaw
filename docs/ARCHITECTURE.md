@@ -1,3 +1,11 @@
+## 0.3.29 浏览器按页隔离
+
+App.browserCommand不等待同一owner的上一次导航，只维护未完成请求Set供清理。两端原生在await前捕获实际目标；select/new/close/state/restore及时处理，页面操作按tab独立串行。新导航使同页旧操作失效，停止/关闭/移除主动结束初始化、导航和页面读取等待。Windows匹配NavigationId；Mac匹配WKNavigation对象并只一次结束continuation，旧失败不得结束新请求。
+
+UI始终传实际选中页tabId，避免原生选择ACK晚到时导航落到旧页。BrowserState使用显示地址，加载时保留请求网址；浏览历史/页面信息继续用真实成功文档地址。下载及停止清理待加载状态。未带tabId的内部stop保留全组取消，UI停止为明确目标。移除会话先dispose页，再等Set清理。
+
+本版不提供官方扩展自动化或新的模型工具。测试为CUA前端与真实原生组件，见result.md的0.3.29章节。
+
 ## 0.3.28 按上下文查找
 
 UI 的 find-current 按最后实际操作区域和当前选中工作标签选择聊天、文件或网页；显式会话查找保持原含义。MessageFind 文档模式只操作已加载的文件 DOM；BrowserFind 通过 sessionId/tabId 调用独立 browser.find RPC，以 owner/tab/url/请求序号隔离迟到结果。搜索结果只更新查找条，不为每个输入字符重建整个编辑器；原生视口留在条下方。

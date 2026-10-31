@@ -1,6 +1,6 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-11-01。当前源码 **0.3.28**。Mac 唯一安装包已更新为 0.3.28；Windows 0.3.28 候选已编译，正式 EXE 仍为 0.3.26（PID 115392），等待用户正常退出后替换。 官方 ChatGPT 扩展自动浏览仍未接通，整体目标没有完成；最新交付范围、失败记录和限制以文末 0.3.28 章节为准。
+更新时间：2026-11-01。当前源码 **0.3.29**。Mac 唯一安装包已更新为 0.3.29；Windows 0.3.29 候选已编译，正式 EXE 仍为 0.3.26（PID 115392），等待用户正常退出后替换。 官方 ChatGPT 扩展自动浏览仍未接通，全部主页 1:1 仍有缺失，整体目标没有完成；最新实现、证据与限制见文末0.3.29。
 
 ## 用户目标与不可替换的要求
 
@@ -853,3 +853,66 @@ ZIP SHA-256 8BB50FC6CCE72C2747BD8C768F1516AE58B88265CCBBAD0838FDAA731CC30417 与
 Mac 更新前将原加密 state 和旧两端成品备份至 replacement-v0328。更新后仍为 1 个连接账户、1 条断开身份、3 个会话/134 条消息，busy/queued/pending 均为 0。账户绑定、保留身份、threadId/逐条消息/时间及 Provider URL/Key 比较均为 true，未恢复原断开身份；仅比较与备份，没有改写用户内容。此比较发生在仅更新 Mac 安装包之后，不是 Windows 替换证明。项目 release 中仍仅一个 EXE、一个 DMG。
 
 **整体目标仍未完成。** 官方 ChatGPT 扩展独立授权及微信自动浏览没有接通，本次查找仅用户手动操作；不能用这些组件检查替代官方扩展端到端证明。完整主页 1:1、网页批注、完整 SPA/Cookie/站点权限、Mac 实机/公证及可信按键等既有差异继续保留，goal 保持 active。
+
+
+## 0.3.29 慢网页期间的标签响应与待加载地址
+
+Mac 唯一安装包已更新为 0.3.29；Windows 0.3.29 候选已编译，正式 EXE 仍为 0.3.26（PID 115392），等待用户正常退出后替换。
+
+### 实际复现与修复
+
+本次再次核查原始“点击无反应”的目标，发现 App 和两端原生均按整个会话串行等待导航。保留一个真实本地 HTTP 响应时，另一个已加载标签的切换在700ms内没有返回，直到释放响应才完成。不是用进程存在推断正常。基线保留于 slow-selection-baseline.json；随后按实际标签隔离工作，最终同一路径切换2ms、另一页导航25ms（单机组件测量，不作普遍性能保证）。
+
+- App.browserCommand 跟踪每个会话的未完成请求集合，原生在发起时固定目标页；切换/新建/关闭/状态/后台恢复不等待其他页的网络加载。移除会话先dispose全部网页，再等请求集合清理，避免等待队列死锁。
+- Windows 每页单独串行，关闭/停止/新网址触发中断；同一页旧请求被取消，不重放到后来选中的页。初始化、页面读取和截图等待也能在关闭时结束。新导航按真实 NavigationId 匹配完成事件。Mac 按页排队，并核对 WKNavigation 对象、隔离已取消回调，保证迟到失败不能结束新导航；页面读取/截图 continuation 只完成一次。
+- UI 为打开/刷新/前进后退/停止携带发起时选中页的tabId；新导航更新panelIntent，旧请求取消不会抢回选择或弹出迟到错误。UI停止只针对选中页；未指定tabId的内部全组stop保持原行为，初始化期间的恢复取消回归仍通过。
+- CUA补查又发现待加载地址会退回旧网址。新增显示地址，与实际文档URL分离，导航完成/失败/停止/下载后清理；浏览历史仍依据实际成功访问写入。pending-url-baseline.json 保存旧地址且loading=true的界面失败证据；最终实际组件及CUA均核对待加载地址正确，未访问网址不会进历史。
+
+涉及 backend/app.mjs、ui/app.mjs、native/BrowserHost.cs、native/macos/BrowserHost.swift；没有注册模型浏览器工具，也没有改变微信进度预算、最终文件发送、Provider和原生Codex归档规则。
+
+### 本轮证据与边界
+
+全部测试、依赖、截图和旧包在项目外 C:\Users\admin\AppData\Local\Temp\qqclaw-v0329-20261101。
+
+| 材料 | 结果与实际范围 |
+| --- | --- |
+| slow-selection-baseline.json / pending-url-baseline.json | 真实App/Windows原生的队列阻塞，以及CUA的加载时地址回退基线；不以修复后的结果覆盖失败证据 |
+| navigation-concurrency.json / .mjs | 最终13项实际App RPC+WebView2：保留HTTP响应时切换/其他页导航/新建/后台恢复、待加载地址不进真实历史、关闭后台加载页、停止仅影响目标、新URL替代、初始化替代/关闭、非法目标不落到当前页、12次快速导航最终URL、移除会话取消全部请求 |
+| native-protocol.json / .mjs | 最终11项原生恢复/初始化停止/后台加载/显式选择/非法URL/12页上限/全关/空组/dispose回归 |
+| native-find.json / .mjs | 最终13项真实WebView2 Find回归，包含关闭期间及时结束；退出0 |
+| cua-navigation-final.json | 最终13条CUA操作当前前端+真实App/Windows原生：双网页、待加载地址、慢页期间切换/另一页导航/文件预览/关闭、草稿、文件查找、整面板关闭/重开、最后浏览器页关闭、快捷键真实URL恢复、恢复后真实原生Find |
+| regression.tap | 后台119项，fail0；随后只改原生地址显示和云端检查，没有重复宣称后台重跑 |
+| QQClaw-0.3.29-responsive-panels.jpg | 已查看最终前端亮色截图，隔离数据；不是独立EXE GUI或官方浏览器自动操作截图 |
+| mac-build.json | 最终成功云构建实际40条PASS；仅统计0_build.txt内带时间戳的执行输出，排除源码回显和逐步骤日志副本 |
+| candidate-source-match.json / cloud-source-match.json / candidate-payload.json | 58份代码/样式/页面/版本/工作流与Windows编译副本逐字节一致，与Mac head按换行规范化一致；主要内嵌资源另核摘要 |
+| failure-notes.md | 保留测试清理误用公开dispose、补丁上下文校验、构建目录尚不存在、新建菜单操作假设、人工慢页达到25秒超时及后续有界重发检查等准备失败；不计为通过 |
+
+没有向原微信账户/原会话发测试消息，没有运行模型。CUA只承载产品前端；实际网页在透明隔离的Windows BrowserHost中运行，环境/模型门禁为夹具。不能将这些结果扩大为完整独立EXE GUI、原生页焦点下可信快捷键/中文输入法、Mac用户实机或线上微信端到端。窗口错误/未处理拒绝采集为0；取消和网络超时等预期RPC错误另有记录，不能说全部RPC均成功。CSS和默认约28.7%面板规则本轮未改；窄工作区仍按既有覆盖规则，详见0.3.28。
+
+### 官方扩展：独立实例复查仍未完成连接
+
+继续按OpenAI Docs读取官方扩展、app-server的CLI连接及远程Code Mode host说明；页面实际内容与文档工具结果保存于项目外 C:/Users/admin/AppData/Local/Temp/qqclaw-official-probe-20261101。当前安装的codex-cli为0.157.1。使用空的独立CODEX_HOME、移除父worker/浏览器环境及CODEX_API_KEY/OPENAI_API_KEY，仅启动自己的app-server并以qqclaw_browser_probe真实客户端身份initialize，再读取功能与requirements元数据；没有读取其他聊天、复制其凭据、执行vendor浏览器运行时或发起模型回合。子进程正常退出0。
+
+实际结果：browser_use、browser_use_external、in_app_browser、code_mode_host等功能标为stable/enabled；因此不能把问题简单说成CLI没有编译浏览器功能。生成的完整实验ClientRequest协议有167个方法，未找到browser命名的独立连接/授权方法；BrowserUseConfig公开字段为网站策略和历史许可。独立实例没有建立官方浏览器授权链，也没有发起浏览器操作，功能开关启用和初始化成功都不是连接成功证明。
+
+证据：C:/Users/admin/AppData/Local/Temp/qqclaw-official-probe-20261101/app-server-preflight.json、evidence.json、schema/、官方页面快照和两份Code Mode文档。该结论仅限定本次所查文档/协议/实例，不能扩成所有私有技术路径都不可能。下一步仍要解决QQClaw自身身份下的可信Code Mode/浏览器服务与官方扩展、任务/网站授权；不能用假nodeRepl、删除校验、自签始终允许或开发聊天的现有管道凑通过。
+
+### 成品、数据与剩余差异
+
+最终代码head 3b2149fc620df44a7eeb383f5dc4bf9577aa7163；前一head a8d6ff8 的39项云构建也成功，但交付采用包含待加载地址修复的新head。
+
+[Mac云构建41246304291](https://github.com/mumuhaha487/wechatclaw/actions/runs/41246304291)，artifact 13059398865，实际40条PASS。新增真实WKWebView保留HTTP响应时的选择/独立导航/新建/后台恢复/目标停止与关闭/替换导航/丢弃旧回调/dispose，以及待加载地址不进历史；原有查找、恢复、POST/opener、下载字节、钥匙串和重启检查继续通过。仍为组件直接派发，未做用户可信按键GUI或Apple公证。
+
+ZIP SHA-256 F0F6B2CA284478E73815D9A5E37E9CC5ED6FA8BC76335CEB02CEE3F0A63E84E8 与GitHub上传digest一致；CRC、唯一DMG和UDIF尾通过。
+
+| 文件 | 状态 | 大小（bytes） | SHA-256 |
+| --- | --- | --- | --- |
+| release/QQClaw.exe | 正式仍0.3.26，未替换/未重启 | 671744 | C251A31F3D7216934FAFC919A39786D8138A7CB4838572E1E0968DC876BAA085 |
+| 项目外build-root/release/QQClaw.exe | 0.3.29候选 | 688128 | FA78794ACF29FC1F954A5254BF3FABF9C83625E87AEED860FD4AE7265132EB58 |
+| release/macos/QQClaw.dmg | 0.3.29已更新 | 854310 | 3EBF2A67ED4CD6D0199E51D2ECB3E89809831AC809EBCA9FB09CB14342D13CCB |
+
+Windows正式PID115392仍在运行，先前正常退出请求仍待回应，没有重复询问、强杀或覆盖占用文件。项目外PowerShell7替换脚本已指向0.3.29，候选预期运行资源0E3DAACDE97238E8；仅静态资源/构建版本核对，不作实际新版启动证明。
+
+Mac更新前将旧两端成品和加密状态备份至replacement-v0329。更新后原1个连接账户、1条断开身份、3个会话/134条消息保留，busy/queued/pending为0，账户绑定/保留身份/threadId/逐条消息及时间/Provider URL和Key比较全为true，前后加密状态指纹相同。没有恢复原断开身份；这是仅更新Mac安装包后的比较，不是Windows替换证明。项目release仍只有一个EXE和一个DMG。
+
+**整体目标仍active且未完成。** 官方扩展自动浏览尚无通过证据；参考原图1/3中的“目标/设为目标”在当前ui/app.mjs和后台主逻辑也没有对应入口，不能宣称主页全部1:1。网页批注、完整SPA/Cookie/站点权限、Mac实机/公证及可信按键等既有差异继续保留。用户完整原始要求不因本轮成功的导航修复而缩小。

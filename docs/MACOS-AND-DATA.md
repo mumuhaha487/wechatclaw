@@ -1,6 +1,17 @@
 # macOS 适配与对话保存
 
-## 0.3.28 当前构建与查找
+## 0.3.29 当前构建
+
+Mac 唯一安装包已更新为 0.3.29；Windows 0.3.29 候选已编译，正式 EXE 仍为 0.3.26（PID 115392），等待用户正常退出后替换。
+
+Mac按tabId独立排队，切换/关闭/新建/恢复不等待其他页面；同页新URL取消旧导航，以WKNavigation对象隔离迟到回调，读取/截图/查找continuation只完成一次。地址栏保留待加载网址，真实历史不记录未访问项。
+
+[最终云构建41246304291](https://github.com/mumuhaha487/wechatclaw/actions/runs/41246304291)，代码3b2149fc620df44a7eeb383f5dc4bf9577aa7163，40条实际PASS（不含源码回显/日志副本）。已核对ZIP digest/CRC、唯一DMG/UDIF及正式同名包摘要：854310 bytes，SHA-256 3EBF2A67ED4CD6D0199E51D2ECB3E89809831AC809EBCA9FB09CB14342D13CCB。源代码、失败与范围见result.md文末。
+
+安装包继续使用Universal双架构、包外对话/账户存储与Codex原生归档；没有把Mac云组件检查称为用户实机/可信按键/中文输入法或Apple公证验收。Windows仍运行旧版，没有替换；官方扩展自动浏览仍未接通。
+
+
+## 0.3.28 历史构建与查找
 
 Mac 唯一安装包已更新为 0.3.28；Windows 0.3.28 候选已编译，正式 EXE 仍为 0.3.26（PID 115392），等待用户正常退出后替换。
 
