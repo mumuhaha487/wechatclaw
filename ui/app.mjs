@@ -990,8 +990,8 @@ async function focusPanelSelection(owner) {
   // that update, and only if this user action still owns the visible selection.
   await new Promise(resolve => requestAnimationFrame(resolve));
   if (owner !== panelOwner() || intent !== ui.panelIntent || !workspaceKeyboardAvailable()) return;
-  if (!ui.panel) { $("composer-input")?.focus(); return; }
   const tab = panelTabs.selected(owner);
+  if (!ui.panel || !tab) { $("composer-input")?.focus(); return; }
   if (ui.panelPage === "browser" && tab?.kind === "browser") {
     if (!browserStates.get(session()?.id)?.url) { $("browser-address")?.focus(); $("browser-address")?.select(); }
     else {
