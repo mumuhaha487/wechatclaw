@@ -33,7 +33,8 @@ export async function macPayload(root, resources) {
 export async function buildMac(root = project) {
   if (process.platform !== "darwin") throw new Error("macOS 原生构建需要 macOS 和 Xcode Command Line Tools。当前平台不能生成经过原生编译的 .app；请在 Mac 或 macOS CI 执行 npm run build:mac。");
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "qqclaw-macos-build-"));
-  const app = path.join(temporary, "QQClaw.app"), contents = path.join(app, "Contents"), resources = path.join(contents, "Resources"), binaries = path.join(contents, "MacOS");
+  const imageRoot = path.join(temporary, "image");
+  const app = path.join(imageRoot, "QQClaw.app"), contents = path.join(app, "Contents"), resources = path.join(contents, "Resources"), binaries = path.join(contents, "MacOS");
   const run = async (exe, args) => {
     try { const result = await exec(exe, args, { timeout: 600000, maxBuffer: 8 * 1024 * 1024 }); if (result.stdout.trim()) console.log(result.stdout.trim()); return result.stdout.trim(); }
     catch (error) { throw new Error(error.stderr || error.stdout || error.message); }
@@ -61,18 +62,33 @@ export async function buildMac(root = project) {
     const identity = process.env.MACOS_SIGN_IDENTITY || "-";
     await run("/usr/bin/codesign", ["--force", "--sign", identity, ...(identity === "-" ? [] : ["--options", "runtime", "--timestamp"]), app]);
     await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
-    const archive = path.join(temporary, "QQClaw.zip");
-    const zip = () => run("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, archive]);
-    await zip();
+    await fs.symlink("/Applications", path.join(imageRoot, "Applications"));
+    await fs.writeFile(path.join(imageRoot, "安装说明.txt"), [
+      "QQClaw · Mac 安装说明", "",
+      "1. 将 QQClaw 拖到旁边的 Applications（应用程序）文件夹。",
+      "2. 打开 Mac 的“应用程序”，双击 QQClaw。以后可直接从这里启动。",
+      process.env.MACOS_NOTARY_PROFILE
+        ? "3. 首次打开时，如系统询问是否打开，请确认。"
+        : "3. 初次打开若被系统拦截，请先尝试打开一次，再到“系统设置 → 隐私与安全性”中选择“仍要打开”。当前版本尚未经过 Apple 公证。",
+      "4. 首次进入软件，按照“前往配置”提示安装 Node.js 22.13+ 和 Codex；以后启动无需再次安装。",
+      "", "支持 macOS 13.3 及更新版本，兼容 Apple Silicon 和 Intel。",
+      "安装完成后可以推出此磁盘映像。删除应用不会主动删除对话数据。", ""
+    ].join("\n"));
+    const archive = path.join(temporary, "QQClaw.dmg");
+    await run("/usr/bin/hdiutil", ["create", "-volname", "QQClaw", "-srcfolder", imageRoot, "-fs", "HFS+", "-format", "UDZO", archive]);
+    if (identity !== "-") {
+      await run("/usr/bin/codesign", ["--force", "--sign", identity, "--timestamp", archive]);
+      await run("/usr/bin/codesign", ["--verify", "--strict", "--verbose=2", archive]);
+    }
     if (process.env.MACOS_NOTARY_PROFILE) {
       if (identity === "-") throw new Error("公证需要 Developer ID 签名，请配置 MACOS_SIGN_IDENTITY。");
       const result = JSON.parse(await run("/usr/bin/xcrun", ["notarytool", "submit", archive, "--keychain-profile", process.env.MACOS_NOTARY_PROFILE, "--wait", "--output-format", "json"]));
       if (result.status !== "Accepted") throw new Error(`Apple 公证未通过：${result.status}`);
-      await run("/usr/bin/xcrun", ["stapler", "staple", app]);
-      await run("/usr/bin/xcrun", ["stapler", "validate", app]);
-      await fs.rm(archive); await zip();
+      await run("/usr/bin/xcrun", ["stapler", "staple", archive]);
+      await run("/usr/bin/xcrun", ["stapler", "validate", archive]);
     }
-    const output = path.join(root, "release/macos/QQClaw.zip");
+    await run("/usr/bin/hdiutil", ["verify", archive]);
+    const output = path.join(root, "release/macos/QQClaw.dmg");
     await fs.mkdir(path.dirname(output), { recursive: true }); await fs.copyFile(archive, output);
     console.log(`已构建 ${output} · macOS 13.3+ · Apple Silicon / Intel Universal · ${identity === "-" ? "本地签名，尚未公证" : process.env.MACOS_NOTARY_PROFILE ? "Developer ID 已签名并公证" : "Developer ID 已签名，未公证"} · 不内置 Node / Codex`);
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }

@@ -17,7 +17,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:mac
-      - name: Verify native backend and encrypted data persistence
+      - name: Verify installer, native backend and encrypted data persistence
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs/promises';
@@ -26,7 +26,17 @@ jobs:
           const root = process.env.GITHUB_WORKSPACE;
           const temporary = await fs.mkdtemp(path.join(process.env.RUNNER_TEMP, 'qqclaw-verify-'));
           const run = (exe, args, options={}) => execFileSync(exe, args, {encoding:'utf8',timeout:180000,...options});
-          run('/usr/bin/ditto', ['-x','-k',path.join(root,'release/macos/QQClaw.zip'),temporary]);
+          const image = path.join(root,'release/macos/QQClaw.dmg');
+          run('/usr/bin/hdiutil',['verify',image]);
+          const mount = path.join(temporary,'mounted');
+          await fs.mkdir(mount);
+          run('/usr/bin/hdiutil',['attach','-readonly','-nobrowse','-mountpoint',mount,image]);
+          try {
+            if (await fs.readlink(path.join(mount,'Applications')) !== '/Applications') throw new Error('Applications installation shortcut missing');
+            if (!(await fs.readFile(path.join(mount,'安装说明.txt'),'utf8')).includes('Node.js 22.13+')) throw new Error('Installation instructions missing');
+            run('/usr/bin/ditto',[path.join(mount,'QQClaw.app'),path.join(temporary,'QQClaw.app')]);
+            console.log('PASS: DMG checksum, read-only mount and application installation copy');
+          } finally { run('/usr/bin/hdiutil',['detach',mount]); }
           const app = path.join(temporary,'QQClaw.app');
           const binary = path.join(app,'Contents/MacOS/QQClaw');
           console.log(run('/usr/bin/lipo',[binary,'-archs']).trim());
@@ -92,6 +102,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: QQClaw-macOS-Universal
-          path: release/macos/QQClaw.zip
+          path: release/macos/QQClaw.dmg
           if-no-files-found: error
           retention-days: 7
