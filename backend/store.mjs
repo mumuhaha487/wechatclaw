@@ -5,6 +5,7 @@ import { parseActionBlocksSafe } from "./wechat-actions.mjs";
 import { ConversationArchive } from "./conversations.mjs";
 import { workspaceKey } from "../shared/workspace.mjs";
 import { reviewView } from "../shared/review-view.mjs";
+import { viewPreferences } from "../shared/view-preferences.mjs";
 
 export const defaults = () => ({
   version: 2,
@@ -30,6 +31,7 @@ export const defaults = () => ({
   accounts: [],
   retainedAccounts: [],
   reviewView: null,
+  viewPreferences: null,
 });
 
 export class Store {
@@ -101,6 +103,7 @@ export class Store {
       }
     }
     this.state.reviewView = reviewView(this.state.reviewView, this.state.sessions);
+    this.state.viewPreferences = viewPreferences(this.state.viewPreferences, this.state);
     return this;
   }
   save() {
@@ -147,6 +150,7 @@ export class Store {
   snapshot() {
     const state = structuredClone(this.state);
     state.reviewView = reviewView(state.reviewView, state.sessions);
+    state.viewPreferences = viewPreferences(state.viewPreferences, state);
     state.providers = state.providers.map(({ apiKey, ...p }) => ({
       ...p,
       hasKey: Boolean(apiKey),

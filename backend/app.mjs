@@ -14,6 +14,7 @@ import { DesktopAttachments, attachmentPreview } from "./desktop-attachments.mjs
 import { Checkpoints } from "./checkpoints.mjs";
 import { groupChanges } from "../shared/change-stats.mjs";
 import { reviewView } from "../shared/review-view.mjs";
+import { viewPreferences } from "../shared/view-preferences.mjs";
 
 export const EFFORTS = [
   "",
@@ -110,6 +111,9 @@ export class App {
     this.modelRequests = new Map();
     this.desktopHandoffs = new Map();
     this.fileOperations = new Set();
+    this.browserOperations = new Map();
+    this.browserOwners = new Set();
+    this.removingSessions = new Set();
     this.closing = false;
     this.idleTimeoutMs = idleTimeoutMs;
     this.idleTimer = setInterval(() => this.reapIdleClients(), Math.min(60000, idleTimeoutMs));
@@ -149,9 +153,23 @@ export class App {
     return this.store.state.sessions.some(s => sameWorkspace(s.workspace, workspace) && s.messages.some(m => m.runStats?.checkpoint?.id !== exceptId && ["applying", "recovery-needed"].includes(m.runStats?.checkpoint?.status)));
   }
   getSession(id) {
+    if (this.removingSessions.has(id)) throw new Error("会话正在移除，请稍后重试。");
     const session = this.store.state.sessions.find((s) => s.id === id);
     if (!session) throw new Error("会话不存在。");
     return session;
+  }
+  browserCommand(session, action, args = {}) {
+    const previous = this.browserOperations.get(session.id);
+    const operation = Promise.resolve(previous).catch(() => {}).then(() => {
+      if (this.getSession(session.id) !== session) throw new Error("会话已变化，请重新打开网页。");
+      this.browserOwners.add(session.id);
+      return new BrowserViewer({ native: this.native, session }).call(action, args);
+    });
+    this.browserOperations.set(session.id, operation);
+    operation.finally(() => {
+      if (this.browserOperations.get(session.id) === operation) this.browserOperations.delete(session.id);
+    }).catch(() => {});
+    return operation;
   }
   newSession(options) {
     const session = {
@@ -579,6 +597,10 @@ export class App {
         state.reviewView = reviewView(p.value, state.sessions);
         await this.store.save();
         return { saved: true };
+      case "view.remember":
+        state.viewPreferences = viewPreferences(p.value, state);
+        await this.store.save();
+        return { saved: true };
       case "checkpoint.review": {
         const { session, id } = this.checkpointMessage(p);
         return await this.checkpoints.review(id, session.workspace, String(p.relative || ""));
@@ -592,14 +614,19 @@ export class App {
         return this.continueDesktop(p);
       case "browser.open": {
         const session = this.getSession(p.sessionId);
-        const browser = new BrowserViewer({ native: this.native, session });
-        return browser.call("open", { url: p.url || "https://www.google.com/" });
+        return this.browserCommand(session, "open", { url: p.url || "https://www.google.com/" });
       }
       case "browser.command": {
         if (!["back", "forward", "reload", "stop", "newTab", "selectTab", "closeTab", "state"].includes(p.action)) throw new Error("不支持的浏览器操作。");
         const session = this.getSession(p.sessionId);
-        const browser = new BrowserViewer({ native: this.native, session });
-        return browser.call(p.action, { tabId: String(p.tabId || "") });
+        // Stop must bypass the navigation queue so it can interrupt a load.
+        if (p.action === "stop") return new BrowserViewer({ native: this.native, session }).call("stop");
+        if (p.action === "closeTab") {
+          const stopped = new BrowserViewer({ native: this.native, session }).call("stop", { tabId: String(p.tabId || "") });
+          const closed = this.browserCommand(session, "closeTab", { tabId: String(p.tabId || "") });
+          return Promise.all([stopped, closed]).then(([, result]) => result);
+        }
+        return this.browserCommand(session, p.action, { tabId: String(p.tabId || "") });
       }
       case "browser.officialStatus":
         return officialBrowserStatus();
@@ -808,12 +835,26 @@ export class App {
         if (session.busy || session.queued || this.desktopHandoffs.has(p.id)) throw new Error("请先等待任务或 Desktop 接续完成。");
         if (state.accounts.some((a) => this.bridge.accountSessionIds(a).has(p.id)))
           throw new Error("该会话正在供微信账户使用，请先断开账户。");
-        this.clients.get(p.id)?.client.close();
-        this.clients.delete(p.id);
-        state.sessions = state.sessions.filter((s) => s.id !== p.id);
-        await this.store.save();
-        this.changed();
-        return this.store.snapshot();
+        const operation = (async () => {
+          this.removingSessions.add(p.id);
+          try {
+            const browser = new BrowserViewer({ native: this.native, session });
+            if (this.browserOwners.has(p.id)) await browser.call("stop");
+            await this.browserOperations.get(p.id)?.catch(() => {});
+            if (this.browserOwners.has(p.id)) {
+              await browser.call("dispose");
+              this.browserOwners.delete(p.id);
+            }
+            this.clients.get(p.id)?.client.close();
+            this.clients.delete(p.id);
+            state.sessions = state.sessions.filter((s) => s.id !== p.id);
+            await this.store.save();
+            this.changed();
+            return this.store.snapshot();
+          } finally { this.removingSessions.delete(p.id); }
+        })();
+        this.fileOperations.add(operation);
+        try { return await operation; } finally { this.fileOperations.delete(operation); }
       }
       case "chat.send": {
         const session = this.getSession(p.sessionId);

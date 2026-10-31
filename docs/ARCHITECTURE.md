@@ -1,3 +1,5 @@
+0.3.18 补充：shared/view-preferences.mjs 校验布局白名单与实体引用；ui/view-preferences.mjs 仅在首次迁移读取网页存储，后续通过 view.remember 保存加密布局。拖动宽度暂存并在释放/失焦时提交；键盘调整按目标宽度计算。App 按会话序列化手动网页操作，定向停止绕过导航队列，removingSessions 阻止移除期间新任务；正常退出等待会话移除操作。两端原生 dispose 停止导航、释放子视图并移除会话，Mac 额外释放 KVO 观察器。UI 过滤关闭中的标签状态，失败后读取真实原生状态恢复。文件/网页标签和草稿仍不跨重启。
+
 0.3.17 补充：ui/panel-tabs.mjs 按会话/工作区管理混合标签及读取顺序；ui/app.mjs 负责独立文件面板、Markdown/源码、canonical 去重、#L 行号、各文件阅读及标签栏横向滚动位置。文件和网页异步更新核对 owner、请求/原生 revision，不抢走当前文件，不复活已关闭标签。backend/app.mjs 的 workspace.read 返回 canonical 相对路径；workspace.reveal 复用 realpath 工作区边界检查。两端 BrowserHost 为每个会话状态增加单调 revision。文件标签及阅读位置只保留于进程内；手动网页的共用标签栏不意味着官方扩展自动化已接通。
 
 0.3.16 补充：ui/application-menu.mjs 管理 Windows 菜单、焦点及剪贴板异步目标核对；ui/render-frame.mjs 在同一草稿刷新时保留输入节点及祖先的 DOM 连接，避免清空原生撤销记录。ui/app.mjs 提供外侧应用导航。Windows clipboard.read 仅对应用 UI 开放；Mac 使用 AppKit 菜单及原生 Edit responder chain，window.menuState 同步门禁/勾选/字号边界，menu-action 交给现有 UI action。

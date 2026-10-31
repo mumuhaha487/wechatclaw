@@ -3,6 +3,7 @@ import WebKit
 
 @MainActor final class BrowserSession {
     var revision: Int64 = 0
+    var disposed = false
     let owner: String, profile: String
     var tabs: [BrowserWindow] = []
     var active: BrowserWindow!
@@ -49,7 +50,7 @@ import WebKit
                 "url": tab?.url ?? "", "title": tab?.web.title ?? "", "loading": tab?.web.isLoading ?? false,
                 "canGoBack": tab?.web.canGoBack ?? false, "canGoForward": tab?.web.canGoForward ?? false, "error": tab?.errorText ?? ""]
     }
-    func publish(_ session: BrowserSession, reveal: Bool = false) { notify(state(session, reveal: reveal)) }
+    func publish(_ session: BrowserSession, reveal: Bool = false) { if !session.disposed { notify(state(session, reveal: reveal)) } }
     func newTab(_ session: BrowserSession) throws {
         guard session.tabs.count < 12 else { throw failure("最多打开 12 个标签页，请先关闭不用的页面。") }
         // macOS 13 lacks persistent stores by identifier. Share only the same
@@ -64,7 +65,24 @@ import WebKit
     func handle(_ p: [String: Any]) async throws -> Any {
         let owner = p["owner"] as? String ?? "", action = p["action"] as? String ?? ""
         guard UUID(uuidString: owner) != nil else { throw failure("浏览器会话无效。") }
-        if action == "stop" { sessions[owner]?.tabs.forEach { $0.stop() }; return ["stopped": true] }
+        if action == "stop" {
+            let tabId = p["tabId"] as? String ?? ""
+            sessions[owner]?.tabs.filter { tabId.isEmpty || $0.id == tabId }.forEach { $0.stop() }
+            return ["stopped": true]
+        }
+        if action == "dispose" {
+            if let session = sessions[owner] {
+                session.disposed = true
+                session.tabs.forEach { $0.stop() }
+                _ = await operations[owner]?.result
+                session.tabs.forEach { $0.observations.removeAll(); $0.web.removeFromSuperview() }
+                session.tabs.removeAll(); session.active = nil
+                sessions.removeValue(forKey: owner); operations.removeValue(forKey: owner)
+                if visibleOwner == owner { visibleOwner = ""; visible = false }
+                layout()
+            }
+            return ["disposed": true]
+        }
         if sessions[owner] == nil {
             let profile = p["profile"] as? String ?? ""
             guard profile.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else { throw failure("浏览器用户目录无效。") }
@@ -73,6 +91,7 @@ import WebKit
         let previous = operations[owner], session = sessions[owner]!
         let operation = Task { @MainActor () throws -> Any in
             _ = await previous?.result
+            guard !session.disposed else { throw failure("浏览器会话已关闭。") }
             defer { self.publish(session) }
             switch action {
             case "newTab": try self.newTab(session)

@@ -204,6 +204,15 @@ jobs:
                       guard (reopened["tabs"] as? [[String: Any]])?.count == 1 else { throw failure("First new tab created twice") }
                       guard let reopenedRevision = reopened["revision"] as? Int64,
                             reopenedRevision > currentRevision else { throw failure("Reopened browser state revision did not increase") }
+                      let removedView = browser.sessions[owner]!.tabs[0]
+                      _ = try await control("dispose")
+                      guard browser.sessions[owner] == nil, browser.operations[owner] == nil,
+                            removedView.web.superview == nil, removedView.observations.isEmpty else { throw failure("Disposal retained native page resources") }
+                      _ = try await control("dispose")
+                      let recreated = try await control("newTab") as! [String: Any]
+                      guard (recreated["tabs"] as? [[String: Any]])?.count == 1 else { throw failure("Restored conversation could not open a fresh browser") }
+                      _ = try await control("dispose")
+                      print("PASS: native browser disposal releases pages and observations, is idempotent, and permits reopening")
                       browser.setView(["visible": false]); browserWindow.orderOut(nil)
                       print("PASS: manual WKWebView preview, navigation, input, screenshot, last-tab close and empty-session state (not official extension automation)")
                       let first = try await host.startBackend()
@@ -213,6 +222,7 @@ jobs:
                       print("PASS: native backend startup and small pipe response")
                       let session = try await host.call(first, "session.create", params: ["workspace": host.data.path, "title": "native-persistence-check"]) as! [String: Any]
                       let id = session["id"] as! String
+                      _ = try await host.call(first, "view.remember", params: ["value": ["active-session": id, "active-project": host.data.path, "panel-width": "470", "sidebar-width": "300", "sidebar-open": "false", "panel-open": "true", "panel-page": "files", "panel-maximized": "true"]])
                       let imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aNSEAAAAASUVORK5CYII="
                       let attachment = try await host.call(first, "attachment.import", params: ["name": "native-image.png", "data": imageData]) as! [String: Any]
                       let attachmentId = attachment["id"] as! String
@@ -232,6 +242,16 @@ jobs:
                       let second = try await host.startBackend()
                       let snapshot = try await host.call(second, "snapshot") as! [String: Any]
                       guard (snapshot["sessions"] as? [[String: Any]])?.contains(where: { $0["id"] as? String == id }) == true else { throw failure("Native restart lost session") }
+                      guard let layout = snapshot["viewPreferences"] as? [String: Any],
+                            layout["active-session"] as? String == id,
+                            layout["active-project"] as? String == host.data.path,
+                            layout["panel-width"] as? String == "470",
+                            layout["sidebar-width"] as? String == "300",
+                            layout["sidebar-open"] as? String == "false",
+                            layout["panel-open"] as? String == "true",
+                            layout["panel-page"] as? String == "files",
+                            layout["panel-maximized"] as? String == "true" else { throw failure("Native restart lost layout preferences") }
+                      print("PASS: layout preferences survive native pipe, Keychain encryption and backend restart without web storage")
                       let restoredPreview = try await host.call(second, "attachment.preview", params: ["id": attachmentId]) as? String
                       guard restoredPreview == preview else { throw failure("Restart lost imported attachment") }
                       print("PASS: attachment copy and preview survive native backend restart")

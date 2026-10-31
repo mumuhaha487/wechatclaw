@@ -48,8 +48,22 @@ internal sealed class BrowserHost {
         if (!Guid.TryParseExact(owner, "D", out id)) throw new Exception("浏览器会话无效。");
         BrowserSession session;
         if (action == "stop") {
-            if (sessions.TryGetValue(owner, out session)) foreach (var tab in session.Tabs) tab.Stop();
+            if (sessions.TryGetValue(owner, out session)) foreach (var tab in session.Tabs) if (Value(p, "tabId") == "" || Value(p, "tabId") == tab.Id) tab.Stop();
             return new { stopped = true };
+        }
+        if (action == "dispose") {
+            if (sessions.TryGetValue(owner, out session)) {
+                session.Disposed = true;
+                foreach (var tab in session.Tabs) tab.Stop();
+                await session.Serial.WaitAsync();
+                try {
+                    foreach (var tab in session.Tabs) tab.Web.Dispose();
+                    session.Tabs.Clear(); session.Active = null; sessions.Remove(owner);
+                    if (visibleOwner == owner) { visibleOwner = ""; visible = false; }
+                    Layout();
+                } finally { session.Serial.Release(); }
+            }
+            return new { disposed = true };
         }
         if (!sessions.TryGetValue(owner, out session)) {
             string profile = Value(p, "profile");
@@ -58,6 +72,7 @@ internal sealed class BrowserHost {
         }
         await session.Serial.WaitAsync();
         try {
+            if (session.Disposed) throw new Exception("浏览器会话已关闭。");
             if (action == "newTab") NewTab(session);
             else if (action == "selectTab" || action == "closeTab") {
                 var tab = session.Tabs.Find(t => t.Id == Value(p, "tabId"));
@@ -90,7 +105,7 @@ internal sealed class BrowserHost {
             url = tab == null ? "" : tab.Url, title = tab == null ? "" : tab.Title, loading = tab != null && tab.Loading,
             canGoBack = tab != null && tab.CanGoBack, canGoForward = tab != null && tab.CanGoForward, error = tab == null ? "" : tab.Error };
     }
-    private void Publish(BrowserSession session, bool reveal) { notify(State(session, reveal)); }
+    private void Publish(BrowserSession session, bool reveal) { if (!session.Disposed) notify(State(session, reveal)); }
     internal static string Value(Dictionary<string, object> p, string key) {
         object v; return p.TryGetValue(key, out v) && v != null ? Convert.ToString(v) : "";
     }
@@ -101,6 +116,7 @@ internal sealed class BrowserHost {
 }
 internal sealed class BrowserSession {
     internal long Revision;
+    internal bool Disposed;
     internal string Owner, Profile;
     internal readonly List<BrowserTab> Tabs = new List<BrowserTab>();
     internal BrowserTab Active;
@@ -175,6 +191,7 @@ internal sealed class BrowserTab {
     internal async Task<object> Run(Dictionary<string, object> p) {
         try {
             stopping = false; ready = ready ?? Initialize(); await ready;
+            if (stopping) throw new Exception("浏览器操作已停止。");
             string action = BrowserHost.Value(p, "action");
             if (action == "open") {
                 string url = BrowserHost.Value(p, "url"); if (!BrowserHost.Allowed(url)) throw new Exception("浏览器仅支持 HTTP/HTTPS 网页。");

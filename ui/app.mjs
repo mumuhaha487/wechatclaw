@@ -17,6 +17,7 @@ import { groupChanges } from "../shared/change-stats.mjs";
 import { reviewView } from "../shared/review-view.mjs";
 import { ApplicationMenu } from "./application-menu.mjs";
 import { PanelTabs, workspaceFileReference } from "./panel-tabs.mjs";
+import { ViewPreferences } from "./view-preferences.mjs";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -79,13 +80,9 @@ const isMac = window.qqclaw?.platform === "darwin" || /Macintosh|Mac OS X/.test(
 const nativeBridge = window.qqclaw?.bridge || window.chrome?.webview;
 document.documentElement.dataset.platform = isMac ? "darwin" : "win32";
 const copyText = (text) => isMac ? rpc("clipboard.write", { text }) : navigator.clipboard.writeText(text);
-// Some embedded WebKit origins disable browser storage. Only view preferences
-// use this cache; conversations and settings always live in the backend Store.
-const viewStorage = {
-  getItem(key) { try { return window.localStorage.getItem(key); } catch { return null; } },
-  setItem(key, value) { try { window.localStorage.setItem(key, value); } catch {} },
-  removeItem(key) { try { window.localStorage.removeItem(key); } catch {} },
-};
+// The backend is authoritative after hydration; localStorage is migration only.
+const viewStorage = new ViewPreferences({ storage: () => window.localStorage, context: () => state,
+  save: value => rpc("view.remember", { value }), error: error => toast(`界面布局保存失败：${error.message}`) });
 function rpc(method, params = {}) {
   return new Promise((resolve, reject) => {
     if (!nativeBridge) {
@@ -121,10 +118,11 @@ let state = {
 };
 const ui = {
   active: viewStorage.getItem("active-session") || "",
-  project: "",
+  project: viewStorage.getItem("active-project") || "",
   page: "",
   panel: viewStorage.getItem("panel-open") === "true",
   sidebar: viewStorage.getItem("sidebar-open") !== "false",
+  panelMax: viewStorage.getItem("panel-maximized") === "true",
   browserHidden: new Set(),
   projectLimits: new Map(),
   detailStates: new Map(),
@@ -530,7 +528,7 @@ function sidebar() {
         icon("folder") +
         "打开项目</button>") +
     '</div><div class="side-footer">' +
-    '<button class="version" data-action="about">v0.3.17</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v0.3.18</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -746,10 +744,11 @@ function panelSplitter() {
   return `<div class="panel-splitter${ui.panelMax ? " hidden" : ""}" role="separator" aria-label="调整工作面板宽度" aria-orientation="vertical" aria-valuemin="280" aria-valuemax="${Math.max(280, (document.querySelector(".content-area")?.clientWidth || innerWidth) - 400)}" aria-valuenow="${Number(viewStorage.getItem("panel-width")) || 340}" tabindex="0" title="拖动调整宽度，双击还原"></div>`;
 }
 function rememberPanel() {
-  viewStorage.setItem("panel-open", String(ui.panel));
-  viewStorage.setItem("panel-page", ui.panelPage);
+  viewStorage.patch({ "panel-open": String(ui.panel), "panel-page": ui.panelPage === "file" ? "" : ui.panelPage,
+    "panel-maximized": String(Boolean(ui.panelMax)) });
 }
 const browserStates = new Map();
+const closingBrowserTabs = new Map();
 const panelTabs = new PanelTabs();
 const panelOwner = () => JSON.stringify([ui.active, workspaceKey(session()?.workspace || project()?.workspace)]);
 function rememberPanelTabScroll() {
@@ -865,6 +864,13 @@ function updateBrowserState(data) {
   const owner = JSON.stringify([target.id, workspaceKey(target.workspace)]), before = panelTabs.group(owner).selected;
   const previous = browserStates.get(data.owner);
   if (Number.isSafeInteger(previous?.revision) && (!Number.isSafeInteger(data.revision) || data.revision < previous.revision)) return;
+  const closing = closingBrowserTabs.get(owner);
+  if (closing?.size && Array.isArray(data.tabs)) {
+    const tabs = data.tabs.filter(tab => !closing.has(tab.id));
+    const active = tabs.find(tab => tab.id === data.activeTab) || tabs[0];
+    data = { ...data, tabs, activeTab: active?.id || "" };
+    if (!active || active.id !== previous?.activeTab) Object.assign(data, { url: active?.url || "", title: active?.title || "", loading: active?.loading || false, canGoBack: false, canGoForward: false });
+  }
   browserStates.set(data.owner, data);
   panelTabs.syncBrowser(owner, data);
   if (owner !== panelOwner()) return;
@@ -1063,7 +1069,7 @@ function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.17 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.18 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
@@ -1166,6 +1172,8 @@ function render() {
     documentScroll.scrollTop = ui.filePreview.scrollTop || 0; documentScroll.scrollLeft = ui.filePreview.scrollLeft || 0;
   }
   restorePanelTabScroll();
+  if (environmentReady()) viewStorage.patch({ "active-session": ui.active, "active-project": ui.project || session()?.workspace || "",
+    "sidebar-open": String(ui.sidebar), "expanded-projects": JSON.stringify([...ui.expanded]) });
   hydrateAttachments();
 }
 function defaultConnection() {
@@ -1339,6 +1347,18 @@ async function checkEnvironment(restart) {
       if (restart) await rpc("system.reload");
       const initial = await rpc("snapshot");
       state = initial;
+      if (!viewStorage.ready) {
+        viewStorage.hydrate(initial.viewPreferences);
+        ui.active = viewStorage.getItem("active-session") || "";
+        ui.project = viewStorage.getItem("active-project") || "";
+        ui.sidebar = viewStorage.getItem("sidebar-open") !== "false";
+        ui.panel = viewStorage.getItem("panel-open") === "true";
+        ui.panelPage = viewStorage.getItem("panel-page") || "";
+        ui.panelMax = viewStorage.getItem("panel-maximized") === "true";
+        ui.expanded = new Set(JSON.parse(viewStorage.getItem("expanded-projects") || "[]"));
+        document.documentElement.style.setProperty("--sidebar-width", (viewStorage.getItem("sidebar-width") || 275) + "px");
+        document.documentElement.style.setProperty("--panel-width", (viewStorage.getItem("panel-width") || 340) + "px");
+      }
       if (!ui.reviewHydrated) {
         const saved = reviewView(initial.reviewView, state.sessions);
         if (saved) {
@@ -1355,9 +1375,9 @@ async function checkEnvironment(restart) {
       }
       ui.login = initial.wechat?.login;
       ui.busyAccounts = initial.wechat?.busyAccounts || [];
-      if (!state.sessions.some((s) => s.id === ui.active)) ui.active = state.sessions[0]?.id || "";
+      if (!state.sessions.some((s) => s.id === ui.active) && !ui.project) ui.active = state.sessions[0]?.id || "";
       const p = state.projects.find((p) => sameWorkspace(p.workspace, session()?.workspace));
-      if (p) ui.expanded.add(p.id);
+      if (p && !viewStorage.getItem("expanded-projects")) ui.expanded.add(p.id);
       ui.environment = await rpc("environment");
       ui.officialBrowser = await rpc("browser.officialStatus").catch(() => null);
       ui.startupError = ui.environment.error || "";
@@ -1377,6 +1397,7 @@ async function checkEnvironment(restart) {
   if (!environmentReady()) { ui.overlay = ""; renderOverlay(); }
   render();
   if (environmentReady() && ui.panel && ui.reviewTarget && !ui.panelData && !ui.panelLoading) await loadPanel();
+  else if (environmentReady() && ui.panel && ui.panelPage === "files" && !ui.panelData && !ui.panelLoading) await loadPanel();
 }
 async function updateComposer(change) {
   const s = session();
@@ -1632,7 +1653,7 @@ async function action(name, element) {
       ui.panelMax = !ui.panelMax;
       rememberPanel();
       render();
-      if (ui.reviewTarget && !ui.panelData && !ui.panelLoading) return loadPanel();
+      if ((ui.reviewTarget || ui.panelPage === "files") && !ui.panelData && !ui.panelLoading) return loadPanel();
       return;
     case "panel-review":
     case "panel-files":
@@ -1695,15 +1716,29 @@ async function action(name, element) {
       const owner = panelOwner(), group = panelTabs.group(owner), tab = group.tabs.find(tab => tab.key === element.dataset.key);
       if (!tab) return;
       const selected = group.selected === tab.key && ["file", "browser"].includes(ui.panelPage), s = session();
+      if (tab.kind === "browser" && tab.id) {
+        if (!closingBrowserTabs.has(owner)) closingBrowserTabs.set(owner, new Set());
+        closingBrowserTabs.get(owner).add(tab.id);
+      }
       rememberDocumentScroll(); panelTabs.close(owner, tab.key);
       if (selected) applyPanelTab();
       rememberPanel(); render();
       if (tab.kind === "browser" && tab.id && s) {
-        const data = await rpc("browser.command", { sessionId: s.id, action: "closeTab", tabId: tab.id });
-        updateBrowserState(data);
-        if (owner === panelOwner() && ui.panelPage === "browser") {
-          const next = panelTabs.selected(owner);
-          if (next?.id && next.id !== data.activeTab) return runBrowserCommand("selectTab", { tabId: next.id });
+        try {
+          const data = await rpc("browser.command", { sessionId: s.id, action: "closeTab", tabId: tab.id });
+          updateBrowserState(data);
+          if (owner === panelOwner() && ui.panelPage === "browser") {
+            const next = panelTabs.selected(owner);
+            if (next?.id && next.id !== data.activeTab) return runBrowserCommand("selectTab", { tabId: next.id });
+          }
+        } catch (error) {
+          closingBrowserTabs.get(owner)?.delete(tab.id);
+          try { updateBrowserState(await rpc("browser.command", { sessionId: s.id, action: "state" })); } catch {}
+          throw error;
+        } finally {
+          const closing = closingBrowserTabs.get(owner);
+          closing?.delete(tab.id);
+          if (!closing?.size) closingBrowserTabs.delete(owner);
         }
       }
       return;
@@ -1805,7 +1840,7 @@ async function action(name, element) {
       else ui.browserHidden.add(session()?.id);
       rememberPanel();
       render();
-      if (ui.panel && ui.reviewTarget && !ui.panelData && !ui.panelLoading) return loadPanel();
+      if (ui.panel && (ui.reviewTarget || ui.panelPage === "files") && !ui.panelData && !ui.panelLoading) return loadPanel();
       return;
     case "project-show-more":
       ui.projectLimits.set(id, (ui.projectLimits.get(id) || 20) + 20);
@@ -2668,9 +2703,10 @@ document.addEventListener("pointerdown", (e) => {
   const move = (event) => {
     const width = Math.max(220, Math.min(520, event.clientX - left));
     document.documentElement.style.setProperty("--sidebar-width", width + "px");
-    viewStorage.setItem("sidebar-width", String(width));
+    viewStorage.stageItem("sidebar-width", String(width));
   };
   const done = () => {
+    viewStorage.persist();
     splitter.removeEventListener("pointermove", move);
     splitter.removeEventListener("pointerup", done);
     splitter.removeEventListener("pointercancel", done);
@@ -2688,12 +2724,13 @@ document.documentElement.style.setProperty(
   "--sidebar-width",
   (Number(viewStorage.getItem("sidebar-width")) || 275) + "px",
 );
-function resizePanel(value) {
+function resizePanel(value, persist = true) {
   const area = document.querySelector(".content-area");
   const maximum = Math.max(280, Math.min(1200, (area?.clientWidth || innerWidth) - 400));
   const width = Math.round(Math.max(280, Math.min(maximum, value)));
   document.documentElement.style.setProperty("--panel-width", width + "px");
-  viewStorage.setItem("panel-width", String(width));
+  if (persist) viewStorage.setItem("panel-width", String(width));
+  else viewStorage.stageItem("panel-width", String(width));
   const splitter = document.querySelector(".panel-splitter");
   splitter?.setAttribute("aria-valuenow", String(width));
   splitter?.setAttribute("aria-valuemax", String(maximum));
@@ -2707,8 +2744,9 @@ document.addEventListener("pointerdown", (event) => {
   const area = document.querySelector(".content-area");
   splitter.setPointerCapture(event.pointerId);
   document.documentElement.classList.add("resizing-panel");
-  const move = (e) => resizePanel(area.getBoundingClientRect().right - e.clientX);
+  const move = (e) => resizePanel(area.getBoundingClientRect().right - e.clientX, false);
   const done = () => {
+    viewStorage.persist();
     splitter.removeEventListener("pointermove", move);
     splitter.removeEventListener("pointerup", done);
     splitter.removeEventListener("pointercancel", done);
@@ -2742,7 +2780,7 @@ document.addEventListener("keydown", (event) => {
   if (splitter && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
     event.preventDefault();
     const panel = splitter.classList.contains("panel-splitter"), step = event.shiftKey ? 64 : 16;
-    const current = panel ? document.querySelector(".work-panel").getBoundingClientRect().width : document.querySelector(".sidebar").getBoundingClientRect().width;
+    const current = panel ? document.querySelector(".work-panel").getBoundingClientRect().width : Number(viewStorage.getItem("sidebar-width")) || 275;
     const value = event.key === "Home" ? (panel ? 280 : 220) : event.key === "End" ? (panel ? innerWidth : 520) : current + (event.key === "ArrowLeft" ? (panel ? step : -step) : (panel ? -step : step));
     if (panel) resizePanel(value);
     else { const width = Math.max(220, Math.min(520, value)); document.documentElement.style.setProperty("--sidebar-width", width + "px"); viewStorage.setItem("sidebar-width", String(width)); }

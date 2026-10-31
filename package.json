@@ -1,6 +1,6 @@
 {
   "name": "qqclaw-desktop",
-  "version": "0.3.17",
+  "version": "0.3.18",
   "private": true,
   "type": "module",
   "description": "轻量 Windows / macOS Codex 与微信 ClawBot 工作台",
