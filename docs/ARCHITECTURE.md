@@ -1,4 +1,8 @@
-0.3.25 当前补充：Windows 新窗口事件通过 OpenWindow 建立与来源同一 CoreWebView2Environment 的未导航 WebView，设置 e.NewWindow 后 finally 只 Dispose deferral 一次；using+Complete 会重复结束并触发 0x8000000E，已在隔离环境复现后修正。统一 CloseTab 同时服务工具栏和网页 WindowCloseRequested。Mac newTab 接受 WebKit 的原始 WKWebViewConfiguration，createWebViewWith 返回新 WKWebView，禁止自行 load URL 破坏 POST/opener。两端都保留源页、会话资料和标签上限，不提供应用消息桥给网页。UI updateBrowserState 在原网页仍拥有选择时跟随新原生 activeTab；已关闭面板、文件/工具选择和其他会话不被抢占。
+0.3.26 当前补充：原生网页的应用快捷键使用宿主 KeyDown（Windows）和 AppKit 菜单（Mac）转交主 UI，同一套 action 处理标签创建/关闭/切换和地址栏。Windows 仅捕获白名单 Ctrl 组合，排除 Alt/AltGr；BeginInvoke 离开同步原生按键回调后才切换主 WebView 和发 browser-shortcut。UI 核对当前会话、实际标签、面板和模态状态；window.focusBrowser 只给当前可见 owner/tabId 聚焦，不开放模型工具或网页消息桥。Mac 自定义菜单执行前切回主 WKWebView，原生编辑菜单仍走 responder chain。
+
+focusPanelSelection 在 DOM/视口同步后核对原 owner、panelIntent 和标签对象，关闭地址建议并释放地址焦点后再还给原生网页；空组回到聊天输入框。render/refreshBrowserPanel 仅在主文档有焦点时恢复表单焦点，BrowserHistory 在 blur 时关闭建议。菜单状态在 render 和视口更新时同步，避免后台标签数量变化后菜单状态过期。菜单可用性独立区分工作台、面板、网页与多标签，不让模态框背后的键盘命令生效。对话、微信、模型和存储后台源码本轮未改；实际检查和限制见 result.md 0.3.26。
+
+0.3.25 历史补充：Windows 新窗口事件通过 OpenWindow 建立与来源同一 CoreWebView2Environment 的未导航 WebView，设置 e.NewWindow 后 finally 只 Dispose deferral 一次；using+Complete 会重复结束并触发 0x8000000E，已在隔离环境复现后修正。统一 CloseTab 同时服务工具栏和网页 WindowCloseRequested。Mac newTab 接受 WebKit 的原始 WKWebViewConfiguration，createWebViewWith 返回新 WKWebView，禁止自行 load URL 破坏 POST/opener。两端都保留源页、会话资料和标签上限，不提供应用消息桥给网页。UI updateBrowserState 在原网页仍拥有选择时跟随新原生 activeTab；已关闭面板、文件/工具选择和其他会话不被抢占。
 
 Windows 原生 COM 异常在 Program.Main 注册的 FirstChanceException 观察器写入用户数据 logs/native.log，超过 1 MiB 轮换为 .1；保留完整堆栈，不修改默认异常处理。微信/Codex 后台、主 Store 和原生对话保存源码本轮未改。验证与交付见根目录 result.md 的 0.3.25。
 

@@ -1,6 +1,6 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-11-01。此文件供后续开发与独立审核使用。**当前源码、正式 Windows 程序与 Mac 安装包均为 0.3.25，唯一同名成品已替换，Windows 已启动并核对实际运行资源。修复开发候选中复现的 0x8000000E（新窗口 deferral 重复结束），新窗口现在保留来源页、POST 与 opener。最终 319 条 Windows UI/原生集成、119 项核心回归、Mac 26 条实际检查通过；1 个连接账户、1 条断开身份、3 会话/134 消息及 Provider 比较保留。白色为主、黑色为辅、整体亮色，网页顶部对齐与默认 28.7% 比例继续有效。官方扩展仍未接通，不能写成整体通过。** 下文历史交付记录不覆盖最新状态，当前指纹/失败/限制见文末 0.3.25。
+更新时间：2026-11-01。此文件供后续开发与独立审核使用。**当前源码、正式 Windows 程序与 Mac 安装包均为 0.3.26，唯一同名成品已替换，Windows 正常退出/重启并核对实际资源。修复原生网页获得焦点后应用快捷键失效，新增 22 项真实原生键盘检查。最终 341 项 Windows UI/原生集成、119 项核心回归、Mac 28 条实际检查通过；1 个连接账户、1 条断开身份、3 会话/134 消息、目录绑定与 Provider 比较保留。白色为主、黑色为辅、整体亮色及网页比例不变。官方扩展仍未接通，不能写成整体通过。** 历史交付记录不覆盖最新状态，当前指纹/失败/限制见文末 0.3.26。
 
 ## 用户目标与不可替换的要求
 
@@ -690,3 +690,42 @@ Windows 替换前 busy/queued/pending 均为 0，初始加密状态/旧 EXE/旧 
 | release/macos/QQClaw.dmg | 819,715 bytes | 3739974888AB530AF78FE1338C6150600146ED33931E4E7C6D514902AB55B9C1 |
 
 本轮也重新查看官方 Browser/Chrome extension/app-server/remote Markdown（项目外 official-*.md）：仍未找到独立第三方宿主获取官方浏览器授权并由微信触发的公开接口，app-server requestAttestation 为客户端响应的 opaque token，不是自助签发接口。未借用当前开发聊天身份/令牌/管道，未换普通远控、其他扩展或自建 MCP 作为完成。**官方 ChatGPT 扩展自动浏览仍未接通；全部参考主页操作 1:1、网页批注、完整 SPA/Cookie/网站权限仍有差异，Mac 未 Apple 公证/用户整套 GUI/中文输入法/线上微信验收，Swift5 既有隔离警告不等于 Swift6 严格模式通过。整体目标保持 active，不能宣布整体完成。**
+
+## 0.3.26 原生网页键盘与焦点
+
+继续对照主页操作，发现 0.3.25 在网页输入框获得真实原生焦点后 Ctrl+T 没有反应。隔离基线实际发送 Win32 按键，原生页收到事件、应用仍在，标签数量却从 1 仍为 1；因此“进程没退出”不等于快捷键可用。根因是应用快捷键仅在主 HTML 文档处理，独立原生网页的键盘没有传给它。基线证据 shortcut-baseline.json，测试及资料都在项目外 C:\Users\admin\AppData\Local\Temp\qqclaw-v0326-20261101。
+
+Windows 现从原生 WebView2.KeyDown 识别有限 Ctrl 组合，排除 Alt/AltGr，标记处理后用 BeginInvoke 异步返回主 UI；UI 再核对会话、真实标签、可见面板和模态状态。支持网页焦点下 Ctrl+T/W/L、Ctrl+Tab/Shift+Tab、Ctrl+B/Shift+B、Ctrl+N/K/逗号。原有 HTML 快捷键和菜单使用同一 action；Windows 不接管网页自身 Ctrl+A/C/V/Z/F。Mac 为 ⌘T/W/L、Control+Tab/Shift+Tab 增加 AppKit 菜单，并在自定义命令分发前切回主 WKWebView；原生编辑菜单保持 responder chain。菜单按工作台/面板/网页/多标签和环境状态启用，同步后台标签状态，避免留下无效入口。Mac 原有 ⌘F 仍用于会话查找，不能说网页查找已全部复刻。
+
+焦点处理不是只看按钮变化：创建新页聚焦地址栏；切换/关闭后等待视口同步，核对 owner/panelIntent/标签对象，将输入交给实际页面。关闭历史联想、blur 地址栏，状态刷新仅在主文档有焦点时恢复表单，避免刷新把输入拉回来。window.focusBrowser 只接受当前可见会话及标签；页面合成 KeyboardEvent 不触发宿主快捷键，未开放应用消息桥或模型自动化接口。最后工作标签关闭后可保留空工具选择器，原生标签必须为零；面板全局叉负责关闭整个面板。空组键盘操作后回到聊天输入框。0.3.25 项目外 failure-notes 中“最后标签一定关闭空面板”的早期推断已在本轮说明中纠正，不据此改变产品正确语义。
+
+索引：native/BrowserHost.cs 的 BrowserTab.KeyDown、Shortcut、Focus；native/Program.cs 的 browser-shortcut 与 window.focusBrowser；native/macos/QQClaw.swift 的 makeMenu/menuCommand/validateMenuItem，native/macos/BrowserHost.swift 的 focus；ui/app.mjs 的 focusPanelSelection、workspaceKeyboardAvailable、syncNativeMenuState、原生事件与键盘动作；ui/application-menu.mjs 新入口；ui/browser-history.mjs 的焦点/建议处理。后台与主 Store/微信/Codex 源码本轮未改，backend.cjs 仍为 25AE1A12BA8B268FA94E4A0190518E9E70EA345127C1EBD42D9C6200A4213A09。README 末尾过时的“自建 MCP 服务”索引同步改正，不能与早已停用该工具的实际实现混淆。
+
+| 最终证据 | 实际范围 |
+| --- | --- |
+| shortcut-ui.json/.mjs/.log、input-native.ps1 | 22 项：真实点击网页输入框后的新建/关闭/地址/连续前后切换、普通输入与撤销、单页循环、侧栏/面板、后台完整刷新、搜索/设置/新聊天、错误聚焦请求拒绝、原消息/草稿不变及最后一页不重建；进程正常退出 0 |
+| post-native-checks.json | shortcut 和 popup 两套在正常退出后均无原生 COM 日志，非仅检查状态或进程存在 |
+| popup-ui.json | 本版重新执行 21 项真实原生新窗口/POST/opener/命名窗口/关闭/隔离回归，保持 0x8000000E 修复 |
+| panel-proportion-ui.json / history-ui.json | 27+47 项：六档真实窗口比例/关闭/保存、历史联想与持久化/故障/边界 |
+| download-storage-ui / downloads-ui / download-edge-* JSON | 7+32+4+3+3 项真实下载和保存异常回归 |
+| appearance-ui / tab-actions-ui / search-ui / conversation-ui / layout-ui JSON | 26+44+60+32+13 项亮色/图片/菜单/标签/搜索/长消息/重启布局回归 |
+| regression.tap | 本轮实际 119 项核心回归，fail 0 |
+| candidate-source-match.json / cloud-source-match.json | 当前 62 文件与候选逐字节一致，与成功 Mac head 按换行规范化一致 |
+| mac-build.json / verification-summary.json / runtime-audit.json / final-delivery.json | 云实测、摘要和最终检查汇总、正式运行内嵌资源核对、交付及数据保留 |
+
+最终 14 份 Windows JSON 均晚于最终 build.json，合计 **341 项**，前端 errors 为空。测试用隔离 DPAPI 数据和本地网页；原账户/原会话没有收到测试消息，没有运行模型。这些检查验证用户操作和键盘，不等于官方扩展自动浏览。22 项按键采用真实 Win32 输入；普通输入的断言检查新增原生 input 事件、原有文本与聊天草稿，未强制机器切换输入法，也没有将其算作中文输入法全套验收。实际已查看 QQClaw-0.3.26-light-proportions.png，保留亮色、顶部对齐、28.7% 默认比例和可调宽/可关面板。
+
+失败和修正记录在 failure-notes.md：初始新标签正常但旧地址联想挡住原生视口，增加正确焦点交还；测试曾等待“可见”的收起侧栏、选择了重复返回按钮、在收起侧栏直接点击会话，均修正测试定位；输入法提交 xy%27z 使精确 ASCII 断言超时，但原生页已经收到输入，最终针对实际焦点要求核查输入事件和草稿；最后一页测试额外要求面板消失也已纠正，同时补上真实空组焦点遗漏。没有把这些非零退出计为通过。Git 新行 CRLF 曾被默认 whitespace 检查视为行尾空白，使用一次性的 core.whitespace=cr-at-eol 核查通过，不修改全局配置或忽略真正空格。
+
+Windows 替换前再次核对 busy/queued/pending 为 0，初始状态与旧两端成品保存于 replacement-v0326。正常 CloseMainWindow 后替换同名 EXE 并启动，1 个连接账户、1 条断开身份、3 会话/134 消息、账户/目录绑定、原 threadId/逐条消息/时间、Provider URL/Key 比较均保留。未恢复已有断开身份。正式 Windows PID `115392`，资源 `C:\Users\admin\AppData\Local\QQClaw\app\D6D04A747374777E`，.complete=0.3.26；runtime-audit 核对实际后台路径、内嵌主 UI/CSS/HTML 与运行资源一致。
+
+[最终 Mac 云构建 41230961068](https://github.com/mumuhaha487/wechatclaw/actions/runs/41230961068) 成功，head `bef58590793366ff43a8c634b897e4cd06b3a882`，artifact `13054020822`，实际 **28 条 PASS**。包含原有双架构/签名/系统库/DMG只读挂载和安装复制、后台/钥匙串/附件/重启/审阅/下载/历史/新窗口，以及新增菜单 keyEquivalent/修饰键、状态启用和组件命令派发、真实 WKWebView firstResponder 与错误 owner/tab/隐藏页拒绝。菜单是组件直接派发，不能称为 Mac 整应用可信键盘验收。前一源版本 run 41230765473 成功后才对最后空组焦点修正的 head 再构建，未重启尚在运行的 job。
+
+ZIP SHA-256 `B1DB5086172B2BD091F7887CAC405CA5D57C3E332CB9750B3138353145B1D81A` 与 GitHub upload digest 一致，CRC、唯一 DMG 与 UDIF koly 尾检查通过。项目内仍只有一个 EXE、一个 DMG，旧包和测试都在项目外。
+
+| 唯一正式成品 | 大小 | SHA-256 |
+| --- | --- | --- |
+| release/QQClaw.exe | 671,744 bytes | C251A31F3D7216934FAFC919A39786D8138A7CB4838572E1E0968DC876BAA085 |
+| release/macos/QQClaw.dmg | 824,734 bytes | 794FE7DD4456E076BABF24D6BAB0D0EA0091E77F995F3B20FF187B56F61BFA67 |
+
+**整体目标仍未完成。** 官方 ChatGPT 扩展授权宿主接入没有变化，本轮未以其他扩展、远控、自建 MCP 或开发聊天身份替代。全部主页行为 1:1、网页批注、完整 SPA/Cookie/站点权限、关闭标签恢复等仍有差异；Mac 网页查找/完整产品键盘与中文输入法、Apple 公证和线上微信端到端未验收。既有 Swift5 警告不等于 Swift6 严格模式通过。发布仅确认上述实际修复和检查，持续 goal 保持 active。

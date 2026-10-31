@@ -1,8 +1,16 @@
 # macOS 适配与对话保存
 
-2026-11-01，当前源码与两端正式成品 **0.3.25**，以白色为主、黑色为辅，整体亮色。Mac 原生窗口和 WebKit 初始使用 aqua/白底，动态主题同步及主动选色保存继续保留。文件与手动网页共用右侧标签栏，按会话及目录隔离；Mac 原生状态同样提供单调 revision。混合标签和文件阅读位置仅在进程内，普通布局偏好现保存至加密 Store 并跨重启恢复；网站登录态仍未保证跨重启。已发送对话和当前任务审阅的加密保存机制不变。官方 ChatGPT 扩展自动调用尚未完成，微信/QQClaw 的自动浏览器任务会如实报告无法完成。最新验收、源码及成品指纹见根目录 `result.md`；下方早期交付记录保留为历史，不能作为当前官方插件成功的证据。
+2026-11-01，当前源码与两端正式成品 **0.3.26**，以白色为主、黑色为辅，整体亮色。Mac 原生窗口和 WebKit 初始使用 aqua/白底，动态主题同步及主动选色保存继续保留。文件与手动网页共用右侧标签栏，按会话及目录隔离；Mac 原生状态同样提供单调 revision。混合标签和文件阅读位置仅在进程内，普通布局偏好现保存至加密 Store 并跨重启恢复；网站登录态仍未保证跨重启。已发送对话和当前任务审阅的加密保存机制不变。官方 ChatGPT 扩展自动调用尚未完成，微信/QQClaw 的自动浏览器任务会如实报告无法完成。最新验收、源码及成品指纹见根目录 `result.md`；下方早期交付记录保留为历史，不能作为当前官方插件成功的证据。
 
-## 0.3.25 当前安装包与网页新窗口
+## 0.3.26 当前安装包与网页键盘
+
+唯一 release/macos/QQClaw.dmg，824,734 bytes，SHA-256 `794FE7DD4456E076BABF24D6BAB0D0EA0091E77F995F3B20FF187B56F61BFA67`。[云构建 41230961068](https://github.com/mumuhaha487/wechatclaw/actions/runs/41230961068) 成功，代码 bef58590793366ff43a8c634b897e4cd06b3a882，实际 28 条 PASS。ZIP 与 GitHub digest 一致、CRC/唯一 DMG/UDIF koly 尾通过。前一源版本 run 41230765473 同样成功；最终空标签组焦点修正之后再次构建当前 head。
+
+新增 ⌘T 新网页、⌘W 关闭工作标签、⌘L 地址栏、Control+Tab/Shift+Tab 前后标签的菜单定义与状态验证。自定义应用菜单分发前将 first responder 交给主 WKWebView，编辑菜单仍使用原生 responder chain；BrowserHost.focus 只接受当前可见 owner/tabId。云端实际检查菜单 keyEquivalent/修饰键、关闭/文件/网页状态启用、命令派发，以及真实 WKWebView firstResponder 和错误会话/标签/隐藏页拒绝。菜单检查直接调用组件，并非完整应用中的可信真实按键验收。Windows 22 项真实 Win32 键盘检查不能冒充 Mac 实机检查。
+
+对话独立数据保存、钥匙串与升级保留策略不变。Mac 尚未 Apple 公证、用户全 GUI/中文输入法/线上微信验收；⌘F 目前仍查找会话而非网页，官方扩展自动浏览仍未接通。
+
+## 0.3.25 历史安装包与网页新窗口
 
 唯一 release/macos/QQClaw.dmg，819,715 bytes，SHA-256 `3739974888AB530AF78FE1338C6150600146ED33931E4E7C6D514902AB55B9C1`。[云构建 41227468490](https://github.com/mumuhaha487/wechatclaw/actions/runs/41227468490) 成功，代码 `e1166079cf58dfcedb8af0e599681166560c8184`，实际 26 条 PASS。下载 ZIP 摘要与 GitHub upload digest 一致，CRC、唯一 DMG 条目及 UDIF koly 尾核查通过，云端完成双架构/签名检查、DMG 校验与只读挂载/安装复制、原生后台及数据重启检查。
 
