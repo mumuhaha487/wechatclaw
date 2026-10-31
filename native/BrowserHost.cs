@@ -6,6 +6,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
+using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
@@ -19,7 +22,10 @@ internal sealed class BrowserHost {
     private string visibleOwner = "";
     private Rectangle bounds = new Rectangle(-2000, 0, 1000, 760);
     private bool visible;
-    internal BrowserHost(Form parent, Action<object> notify) { this.parent = parent; this.notify = notify; }
+    internal readonly BrowserDownloads Downloads;
+    internal BrowserHost(Form parent, Action<object> notify, Action<object> downloadNotify = null) {
+        this.parent = parent; this.notify = notify; Downloads = new BrowserDownloads(downloadNotify ?? delegate { });
+    }
     internal void SetView(Dictionary<string, object> p) {
         visibleOwner = Value(p, "owner");
         double width = Number(p, "viewportWidth"), height = Number(p, "viewportHeight");
@@ -57,7 +63,7 @@ internal sealed class BrowserHost {
                 foreach (var tab in session.Tabs) tab.Stop();
                 await session.Serial.WaitAsync();
                 try {
-                    foreach (var tab in session.Tabs) tab.Web.Dispose();
+                    foreach (var tab in session.Tabs) tab.Close();
                     session.Tabs.Clear(); session.Active = null; sessions.Remove(owner);
                     if (visibleOwner == owner) { visibleOwner = ""; visible = false; }
                     Layout();
@@ -81,7 +87,7 @@ internal sealed class BrowserHost {
                 else {
                     int index = session.Tabs.IndexOf(tab); session.Tabs.Remove(tab);
                     if (session.Active == tab) session.Active = session.Tabs.Count == 0 ? null : session.Tabs[Math.Min(index, session.Tabs.Count - 1)];
-                    tab.Web.Dispose();
+                    tab.Close();
                 }
             }
             // Empty sessions stay empty after the last tab closes. Only an
@@ -95,7 +101,7 @@ internal sealed class BrowserHost {
     }
     private void NewTab(BrowserSession session) {
         if (session.Tabs.Count >= 12) throw new Exception("最多打开 12 个标签页，请先关闭不用的页面。");
-        var tab = new BrowserTab(parent, session.Profile, () => Publish(session, false));
+        var tab = new BrowserTab(parent, session.Profile, () => Publish(session, false), Downloads, session.Owner);
         session.Tabs.Add(tab); session.Active = tab;
     }
     private object State(BrowserSession s, bool reveal) {
@@ -137,8 +143,15 @@ internal sealed class BrowserTab {
     private readonly string profile;
     private Task ready;
     private bool stopping;
-    internal BrowserTab(Form parent, string profile, Action changed) {
+    private bool closed;
+    private bool downloadNavigation;
+    private TaskCompletionSource<bool> navigation;
+    private ulong navigationId;
+    private readonly BrowserDownloads downloads;
+    private readonly string owner;
+    internal BrowserTab(Form parent, string profile, Action changed, BrowserDownloads downloads, string owner) {
         this.profile = profile; this.changed = changed;
+        this.downloads = downloads; this.owner = owner;
         Web.Bounds = new Rectangle(-2000, 0, 1000, 760); parent.Controls.Add(Web);
     }
     private async Task Initialize() {
@@ -149,12 +162,15 @@ internal sealed class BrowserTab {
         Web.CoreWebView2.Settings.AreDevToolsEnabled = false;
         Web.CoreWebView2.Settings.IsStatusBarEnabled = false;
         Web.CoreWebView2.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e) {
+            navigationId = e.NavigationId;
             if (e.Uri != "about:blank" && !BrowserHost.Allowed(e.Uri)) { e.Cancel = true; Error = "已阻止不支持的链接。"; }
-            else { Loading = true; Error = ""; }
+            else { Loading = true; Error = ""; downloadNavigation = false; }
             changed();
         };
-        Web.CoreWebView2.NavigationCompleted += delegate(object sender, CoreWebView2NavigationCompletedEventArgs e) {
-            Loading = false; Error = e.IsSuccess || stopping ? "" : "网页未能加载：" + e.WebErrorStatus; changed();
+        Web.CoreWebView2.NavigationCompleted += async delegate(object sender, CoreWebView2NavigationCompletedEventArgs e) {
+            if (!e.IsSuccess && !stopping) await Task.Delay(200);
+            if (Web.IsDisposed || e.NavigationId != navigationId) return;
+            Loading = false; Error = e.IsSuccess || stopping || downloadNavigation ? "" : "网页未能加载：" + e.WebErrorStatus; changed();
         };
         Web.CoreWebView2.SourceChanged += delegate { changed(); };
         Web.CoreWebView2.DocumentTitleChanged += delegate { changed(); };
@@ -163,22 +179,38 @@ internal sealed class BrowserTab {
             e.Handled = true; if (BrowserHost.Allowed(e.Uri)) Web.CoreWebView2.Navigate(e.Uri);
         };
         Web.CoreWebView2.PermissionRequested += delegate(object sender, CoreWebView2PermissionRequestedEventArgs e) { e.State = CoreWebView2PermissionState.Deny; };
-        Web.CoreWebView2.DownloadStarting += delegate(object sender, CoreWebView2DownloadStartingEventArgs e) { e.Cancel = true; Error = "下载请在系统浏览器中完成。"; changed(); };
+        Web.CoreWebView2.DownloadStarting += delegate(object sender, CoreWebView2DownloadStartingEventArgs e) {
+            try { downloads.Start(e, this, owner); Error = ""; }
+            catch (Exception error) { e.Cancel = true; Error = "无法开始下载：" + error.Message; }
+            downloadNavigation = true;
+            if (navigation != null) {
+                if (e.Cancel) navigation.TrySetException(new Exception(Error));
+                else navigation.TrySetResult(false);
+            }
+            Loading = false; changed();
+        };
     }
+    internal void Close() { closed = true; Web.Visible = false; Web.Bounds = new Rectangle(-2000, 0, 1000, 760); ReleaseDownloadView(); }
+    internal void ReleaseDownloadView() { if (closed && !downloads.Active(Id) && !Web.IsDisposed) Web.Dispose(); }
     internal void Stop() { stopping = true; if (Web.CoreWebView2 != null) Web.CoreWebView2.Stop(); Loading = false; changed(); }
-    private async Task Navigate(Action action) {
+    private async Task<bool> Navigate(Action action) {
         var result = new TaskCompletionSource<bool>();
+        navigation = result; downloadNavigation = false;
         EventHandler<CoreWebView2NavigationCompletedEventArgs> completed = null;
-        completed = delegate(object sender, CoreWebView2NavigationCompletedEventArgs e) {
+        completed = async delegate(object sender, CoreWebView2NavigationCompletedEventArgs e) {
             if (e.IsSuccess) result.TrySetResult(true);
-            else result.TrySetException(new Exception(stopping ? "浏览器操作已停止。" : "网页未能加载：" + e.WebErrorStatus));
+            else {
+                if (!stopping) await Task.Delay(200);
+                if (downloadNavigation) result.TrySetResult(false);
+                else result.TrySetException(new Exception(stopping ? "浏览器操作已停止。" : "网页未能加载：" + e.WebErrorStatus));
+            }
         };
         Web.CoreWebView2.NavigationCompleted += completed;
         try {
             action();
             if (await Task.WhenAny(result.Task, Task.Delay(25000)) != result.Task) { Web.CoreWebView2.Stop(); throw new Exception("网页加载超时，请重试或检查网络。"); }
-            await result.Task;
-        } finally { Web.CoreWebView2.NavigationCompleted -= completed; }
+            return await result.Task;
+        } finally { navigation = null; if (!Web.IsDisposed) Web.CoreWebView2.NavigationCompleted -= completed; }
     }
     private async Task<object> Page(Dictionary<string, object> p) {
         string script = File.ReadAllText(Path.Combine(Program.RuntimeDirectory, "browser-page.js"));
@@ -195,14 +227,129 @@ internal sealed class BrowserTab {
             string action = BrowserHost.Value(p, "action");
             if (action == "open") {
                 string url = BrowserHost.Value(p, "url"); if (!BrowserHost.Allowed(url)) throw new Exception("浏览器仅支持 HTTP/HTTPS 网页。");
-                await Navigate(() => Web.CoreWebView2.Navigate(url));
-            } else if (action == "back" && CanGoBack) await Navigate(() => Web.CoreWebView2.GoBack());
-            else if (action == "forward" && CanGoForward) await Navigate(() => Web.CoreWebView2.GoForward());
-            else if (action == "reload") await Navigate(() => Web.CoreWebView2.Reload());
+                if (!await Navigate(() => Web.CoreWebView2.Navigate(url))) return new { downloadStarted = true };
+            } else if (action == "back" && CanGoBack) { if (!await Navigate(() => Web.CoreWebView2.GoBack())) return new { downloadStarted = true }; }
+            else if (action == "forward" && CanGoForward) { if (!await Navigate(() => Web.CoreWebView2.GoForward())) return new { downloadStarted = true }; }
+            else if (action == "reload") { if (!await Navigate(() => Web.CoreWebView2.Reload())) return new { downloadStarted = true }; }
             else if (action == "screenshot") {
                 using (var stream = new MemoryStream()) { await Web.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream); return new { url = Url, imageBase64 = Convert.ToBase64String(stream.ToArray()) }; }
             } else if (action != "back" && action != "forward") return await Page(p);
             return await Page(new Dictionary<string, object> { { "action", "snapshot" } });
         } catch (Exception e) { Error = e.Message; throw; }
+    }
+}
+
+internal sealed class BrowserDownloadRecord {
+    public string id { get; set; }
+    public string owner { get; set; }
+    public string name { get; set; }
+    public string path { get; set; }
+    public string url { get; set; }
+    public string at { get; set; }
+    public string status { get; set; }
+    public string error { get; set; }
+    public long received { get; set; }
+    public long total { get; set; }
+    internal CoreWebView2DownloadOperation Operation;
+    internal BrowserTab Source;
+    internal bool Cancelled;
+}
+
+internal sealed class BrowserDownloads {
+    private readonly Action<object> notify;
+    private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = 32 * 1024 * 1024 };
+    private readonly List<BrowserDownloadRecord> items = new List<BrowserDownloadRecord>();
+    private readonly string history = Path.Combine(Program.DataDirectory, "browser-downloads.json");
+    private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 500 };
+    private string storageError = "";
+    private long revision;
+    internal BrowserDownloads(Action<object> notify) {
+        this.notify = notify;
+        try {
+            if (File.Exists(history)) {
+                var bytes = ProtectedData.Unprotect(Convert.FromBase64String(File.ReadAllText(history)), Encoding.UTF8.GetBytes("QQClaw/downloads/v1"), DataProtectionScope.CurrentUser);
+                var saved = json.Deserialize<List<BrowserDownloadRecord>>(Encoding.UTF8.GetString(bytes));
+                if (saved == null) throw new Exception("下载记录格式无效。");
+                items.AddRange(saved);
+                foreach (var item in items.Where(item => item.status == "running")) { item.status = "interrupted"; item.error = "应用退出时下载尚未完成，请在原网页重新下载。"; }
+            }
+        } catch { storageError = "无法读取加密下载记录，原文件已保留。请使用原系统账户重试。"; }
+        timer.Tick += delegate { bool changed = false; foreach (var item in items.Where(item => item.Operation != null).ToArray()) changed |= Update(item); if (changed) Publish(); };
+        timer.Start();
+    }
+    internal bool Active(string tabId) { return items.Any(item => item.Source != null && item.Source.Id == tabId && item.status == "running"); }
+    private static long Total(CoreWebView2DownloadOperation operation) { var value = operation.TotalBytesToReceive; return value.HasValue ? value.Value > Int64.MaxValue ? Int64.MaxValue : (long)value.Value : 0; }
+    private static string Filename(string suggested) {
+        string name = Path.GetFileName((suggested ?? "").Replace('\\', '/'));
+        foreach (char value in Path.GetInvalidFileNameChars()) name = name.Replace(value, '_');
+        name = name.Trim().TrimEnd('.');
+        if (name.Length > 180) name = name.Substring(0, Char.IsHighSurrogate(name[179]) ? 179 : 180);
+        if (String.IsNullOrEmpty(name)) name = "download";
+        if (System.Text.RegularExpressions.Regex.IsMatch(name, "^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\\.|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) name = "_" + name;
+        return name;
+    }
+    private static string DirectoryRoot() {
+        var configured = Environment.GetEnvironmentVariable("QQCLAW_DOWNLOADS_DIR");
+        if (!String.IsNullOrEmpty(configured)) return Path.GetFullPath(configured);
+        Guid id = new Guid("374DE290-123F-4565-9164-39C4925E467B"); IntPtr pointer;
+        int result = SHGetKnownFolderPath(ref id, 0, IntPtr.Zero, out pointer);
+        if (result != 0) throw new Exception("无法定位系统下载目录。");
+        try { return Path.Combine(System.Runtime.InteropServices.Marshal.PtrToStringUni(pointer), "QQClaw"); }
+        finally { System.Runtime.InteropServices.Marshal.FreeCoTaskMem(pointer); }
+    }
+    [System.Runtime.InteropServices.DllImport("shell32.dll")]
+    private static extern int SHGetKnownFolderPath(ref Guid id, uint flags, IntPtr token, out IntPtr path);
+    internal void Start(CoreWebView2DownloadStartingEventArgs args, BrowserTab source, string owner) {
+        if (storageError != "") throw new Exception(storageError);
+        var operation = args.DownloadOperation;
+        var item = new BrowserDownloadRecord { id = Guid.NewGuid().ToString("D"), owner = owner, name = Filename(args.ResultFilePath), url = operation.Uri,
+            at = DateTime.UtcNow.ToString("o"), status = "running", error = "", total = Total(operation), Operation = operation, Source = source };
+        string directory = Path.Combine(DirectoryRoot(), item.id); Directory.CreateDirectory(directory);
+        item.path = Path.Combine(directory, item.name); items.Add(item);
+        try { Save(); } catch { items.Remove(item); throw; }
+        args.ResultFilePath = item.path; args.Handled = true;
+        operation.StateChanged += delegate { if (item.Operation != null) { Update(item); Publish(); } };
+        Publish();
+    }
+    private bool Update(BrowserDownloadRecord item) {
+        var operation = item.Operation; if (operation == null) return false;
+        long received = operation.BytesReceived, total = Total(operation);
+        bool changed = item.received != received || item.total != total;
+        item.received = received; item.total = total;
+        if (operation.State != CoreWebView2DownloadState.InProgress) {
+            item.status = operation.State == CoreWebView2DownloadState.Completed ? "completed" : item.Cancelled || operation.InterruptReason == CoreWebView2DownloadInterruptReason.UserCanceled ? "cancelled" : "interrupted";
+            item.error = item.status == "interrupted" ? "下载中断：" + operation.InterruptReason : "";
+            var source = item.Source; item.Source = null; item.Operation = null;
+            try { Save(); } catch { }
+            source.ReleaseDownloadView(); changed = true;
+        }
+        return changed;
+    }
+    private void Save() {
+        string temporary = history + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try {
+            var bytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(json.Serialize(items)), Encoding.UTF8.GetBytes("QQClaw/downloads/v1"), DataProtectionScope.CurrentUser);
+            File.WriteAllText(temporary, Convert.ToBase64String(bytes));
+            if (File.Exists(history)) File.Replace(temporary, history, null); else File.Move(temporary, history);
+        } catch { storageError = "下载记录保存失败，现有记录文件已保留，请检查磁盘空间和数据目录权限。"; throw new Exception(storageError); }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+    internal object State() {
+        return new { revision = ++revision, items = items.AsEnumerable().Reverse().Select(item => new { item.id, item.owner, item.name, item.path, item.url, item.at, item.status, item.error, item.received, item.total, available = item.status == "completed" && File.Exists(item.path) }).ToArray(), storageError = storageError };
+    }
+    private void Publish() { notify(State()); }
+    internal object Handle(Dictionary<string, object> p) {
+        string action = BrowserHost.Value(p, "action");
+        if (action == "state") return State();
+        if (storageError != "") throw new Exception(storageError);
+        if (action == "clear") { var original = items.ToArray(); items.RemoveAll(entry => entry.status != "running"); try { Save(); } catch { items.Clear(); items.AddRange(original); throw; } Publish(); return State(); }
+        var item = items.Find(value => value.id == BrowserHost.Value(p, "id"));
+        if (item == null) throw new Exception("下载记录已不存在。");
+        if (action == "cancel") { if (item.Operation != null) { item.Cancelled = true; item.Operation.Cancel(); Update(item); Publish(); } return State(); }
+        if (action != "open" && action != "reveal") throw new Exception("不支持的下载操作。");
+        if (item.status != "completed" || !File.Exists(item.path)) throw new Exception("下载文件尚未完成，或已被移动或删除。");
+        if (action == "open") Process.Start(new ProcessStartInfo(item.path) { UseShellExecute = true });
+        else Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + item.path + "\"") { UseShellExecute = true });
+        return State();
     }
 }

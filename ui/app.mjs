@@ -21,6 +21,7 @@ import { PanelTabActions } from "./panel-tab-actions.mjs";
 import { ViewPreferences } from "./view-preferences.mjs";
 import { ConversationView } from "./conversation-view.mjs";
 import { SessionSearch, MessageFind } from "./message-search.mjs";
+import { BrowserDownloads } from "./browser-downloads.mjs";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -425,7 +426,7 @@ const resizeEdges = () =>
 function applicationRail() {
   const item = (name, title, ico, active = false, attrs = "") => ib(name, title, ico, `${attrs} ${active ? 'aria-current="page"' : ""}`, active ? "active" : "");
   return `<nav class="application-rail" aria-label="应用导航栏">
-    ${item("return", "工作台", "home", !ui.page)}${item("history", "最近会话", "clock")}${item("notifications", "任务通知", "bell", false, ui.notifications.length ? `data-count="${ui.notifications.length}"` : "")}
+    ${item("return", "工作台", "home", !ui.page)}${item("history", "最近会话", "clock")}${item("notifications", "任务通知", "bell", false, ui.notifications.length ? `data-count="${ui.notifications.length}"` : "")}${item("browser-downloads", "下载", "download")}
     <span class="grow"></span>${item("wechat", "连接到微信", "wechat", false, state.accounts.some(a => a.connected) ? 'data-connected="true"' : "")}${item("settings", "设置", "settings", Boolean(ui.page))}</nav>`;
 }
 function applicationFrame(content) {
@@ -757,6 +758,7 @@ function rememberPanel() {
     "panel-maximized": String(Boolean(ui.panelMax)) });
 }
 const browserStates = new Map();
+const browserDownloads = new BrowserDownloads({ rpc, ready: () => environmentReady(), changed: () => scheduleBrowserView() });
 const closingBrowserTabs = new Map();
 const creatingBrowserTabs = new Set();
 const panelTabs = new PanelTabs();
@@ -923,7 +925,7 @@ function browserPanel() {
     ${panelTabsBar()}
     <div class="browser-toolbar"><div class="browser-navigation">${ib("browser-back", "后退", "back", b.canGoBack ? "" : "disabled")}${ib("browser-forward", "前进", "chevron", b.canGoForward ? "" : "disabled")}${ib(b.loading ? "browser-stop" : "browser-reload", b.loading ? "停止加载" : "刷新网页", b.loading ? "close" : "refresh", b.url ? "" : "disabled")}</div>
     <form id="browser-form" class="browser-address">${icon(b.url?.startsWith("https:") ? "shield" : "search")}<input id="browser-address" name="url" data-owner="${esc(panelOwner())}" data-key="${esc(tab?.key)}" aria-label="网页地址或搜索" placeholder="${creating ? "正在创建标签页…" : "搜索或输入网址"}" autocomplete="off" spellcheck="false" maxlength="8192" ${creating ? "disabled" : ""} value="${esc(tab?.addressDraft ?? b.url ?? "")}"></form>
-    ${ib("browser-external", "在系统浏览器打开", "external", b.url ? "" : "disabled")}</div>
+    ${ib("browser-downloads", "下载", "download")}${ib("browser-external", "在系统浏览器打开", "external", b.url ? "" : "disabled")}</div>
     <div class="browser-connection-note" role="status"><span>手动预览 · 官方扩展尚未接通</span><button data-action="runtime">配置</button></div>
     ${b.error ? `<div class="browser-error" role="status">${icon("info")}<span>${esc(b.error)}</span></div>` : ""}
     <div id="browser-viewport" class="browser-viewport">${!b.url ? `<div class="browser-start">${icon("browser")}<strong>网页预览</strong><span>输入网址或搜索内容。自动操作需接通官方 ChatGPT 扩展。</span><button class="outline" data-action="browser-google">${icon("search")}Google 搜索</button></div>` : ""}</div>
@@ -1260,6 +1262,7 @@ function render() {
   if (environmentReady()) viewStorage.patch({ "active-session": ui.active, "active-project": ui.project || session()?.workspace || "",
     "sidebar-open": String(ui.sidebar), "expanded-projects": JSON.stringify([...ui.expanded]) });
   hydrateAttachments();
+  browserDownloads.refresh();
 }
 function defaultConnection() {
   return {
@@ -1579,6 +1582,9 @@ async function action(name, element) {
   if (external[name]) return rpc("shell.open", { url: external[name] });
   if (name.startsWith("window.")) return rpc(name);
   switch (name) {
+    case "browser-downloads":
+      closePicker(); applicationMenu.close();
+      return browserDownloads.show(element);
     case "toggle-message":
       return conversationView.toggleMessage(Number(element.dataset.index));
     case "conversation-outline":
@@ -2541,6 +2547,8 @@ function onEvent(event, data) {
     action(data.action).catch(error => toast(error.message));
   } else if (event === "browser-state") {
     updateBrowserState(data);
+  } else if (event === "browser-downloads") {
+    browserDownloads.update(data);
   } else if (event === "approval") {
     const key = `${data.sessionId}:${data.requestId}`;
     ui.approvals.set(key, { ...data, key });

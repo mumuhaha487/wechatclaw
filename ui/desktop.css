@@ -1,4 +1,25 @@
 /* White desktop surfaces with black text; an optional dark theme is retained. */
+.downloads-backdrop { z-index: 150; display: grid; place-items: center; padding: 16px; }
+.downloads-dialog { display: flex; flex-direction: column; width: min(640px, 100%); max-height: calc(100dvh - 32px); min-width: 0; background: var(--page); color: var(--text); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 48px #0002; overflow: hidden; }
+.downloads-dialog > header { display: flex; justify-content: space-between; align-items: flex-start; padding: 20px 20px 10px; gap: 12px; flex: 0 0 auto; }
+.downloads-dialog h2 { margin: 0 0 5px; font-size: 18px; font-weight: 600; }
+.downloads-summary, .downloads-note, .downloads-error { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.downloads-note, .downloads-error { padding: 0 20px 12px; overflow-wrap: anywhere; }
+.downloads-error { color: var(--text); }
+.downloads-tools, .download-actions { display: flex; flex: 0 0 auto; gap: 4px; }
+.downloads-list { overflow: auto; min-height: 0; border-block: 1px solid var(--line); }
+.download-row { display: flex; gap: 12px; padding: 16px 20px; align-items: flex-start; border-bottom: 1px solid var(--line); min-width: 0; }
+.download-row:last-child { border-bottom: 0; }
+.download-row > .icon { flex: 0 0 auto; margin-top: 3px; color: var(--muted); }
+.download-detail { flex: 1; min-width: 0; }
+.download-detail strong { display: block; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.download-detail p { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.download-path { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.download-detail progress { display: block; width: 100%; height: 4px; margin: 10px 0 7px; accent-color: var(--accent); }
+.download-detail progress[hidden], .download-actions button[hidden], .downloads-dialog [hidden] { display: none; }
+.downloads-empty { padding: 30px 20px; text-align: center; color: var(--muted); font-size: 13px; margin: 0; }
+.downloads-dialog > footer { display: flex; justify-content: space-between; gap: 8px; padding: 12px 20px; flex: 0 0 auto; }
+@media (max-width: 620px) { .download-row { gap: 8px; padding: 12px; } .download-actions { flex-direction: column; } }
 :root {
   --sidebar-width: 275px;
   --panel-width: 340px;

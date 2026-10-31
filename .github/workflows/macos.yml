@@ -207,7 +207,7 @@ jobs:
                       _ = try await host.handle("window.theme", ["theme": "light"])
                       guard browserWindow.appearance?.name == .aqua, host.web.appearance?.name == .aqua else { throw failure("Light native appearance failed") }
                       print("PASS: native window and WKWebView monochrome appearance switching")
-                      let browser = BrowserHost(resources: host.resources, parent: host.web) { _ in }
+                      let browser = BrowserHost(resources: host.resources, parent: host.web, data: host.data.appendingPathComponent("download-verification")) { _ in }
                       let owner = UUID().uuidString.lowercased()
                       browser.setView(["owner": owner, "visible": true, "x": 0, "y": 0, "width": 1000, "height": 760, "viewportWidth": 1000, "viewportHeight": 760])
                       let fixture = env["QQCLAW_BROWSER_FIXTURE_URL"]!
@@ -239,6 +239,47 @@ jobs:
                       guard let closedRevision = empty["revision"] as? Int64,
                             let currentRevision = stillEmpty["revision"] as? Int64,
                             currentRevision > closedRevision else { throw failure("Browser state revision did not increase") }
+                      func downloadItems() -> [[String: Any]] { browser.downloads.state()["items"] as! [[String: Any]] }
+                      func awaitDownload(_ url: String, _ status: String) async throws -> [String: Any] {
+                          for _ in 0..<250 {
+                              if let item = downloadItems().first(where: { $0["url"] as? String == url && $0["status"] as? String == status }) { return item }
+                              try await Task.sleep(nanoseconds: 100_000_000)
+                          }
+                          throw failure("Download did not reach " + status + ": " + url + " " + String(describing: downloadItems()))
+                      }
+                      let downloadURL = fixture + "download"
+                      let downloadResult = try await control("open", ["url": downloadURL]) as! [String: Any]
+                      guard downloadResult["downloadStarted"] as? Bool == true else { throw failure("Download navigation was treated as a webpage") }
+                      let completedDownload = try await awaitDownload(downloadURL, "completed")
+                      let actualFile = try Data(contentsOf: URL(fileURLWithPath: completedDownload["path"] as! String))
+                      let expectedFile = Data(repeating: 65, count: 524288)
+                      guard actualFile == expectedFile else { throw failure("WKDownload file bytes differ") }
+                      print("PASS: native WKDownload attachment navigation, actual destination and complete file bytes")
+                      let slowURL = fixture + "slow-download"
+                      _ = try await control("open", ["url": slowURL])
+                      _ = try await awaitDownload(slowURL, "running")
+                      let duringDownload = try await control("state") as! [String: Any]
+                      _ = try await control("closeTab", ["tabId": duringDownload["activeTab"]!])
+                      let closedDuringDownload = try await control("state") as! [String: Any]
+                      guard (closedDuringDownload["tabs"] as! [[String: Any]]).isEmpty else { throw failure("Closing download source left a ghost tab") }
+                      let slowCompleted = try await awaitDownload(slowURL, "completed")
+                      guard try Data(contentsOf: URL(fileURLWithPath: slowCompleted["path"] as! String)) == Data(repeating: 65, count: 2097152) else { throw failure("Closing tab truncated WKDownload") }
+                      print("PASS: actual WKDownload continues to complete after closing its last source tab")
+                      let cancelURL = fixture + "cancel-download"
+                      _ = try await control("open", ["url": cancelURL])
+                      let cancelDownload = try await awaitDownload(cancelURL, "running")
+                      _ = try browser.downloads.handle(["action": "cancel", "id": cancelDownload["id"]!])
+                      _ = try await awaitDownload(cancelURL, "cancelled")
+                      let restoredDownloads = BrowserDownloads(directory: host.data.appendingPathComponent("download-verification")) { _ in }
+                      let restoredItems = restoredDownloads.state()["items"] as! [[String: Any]]
+                      guard restoredItems.count == 3, restoredItems.contains(where: { $0["status"] as? String == "cancelled" }) else { throw failure("Encrypted download history did not reload") }
+                      let encryptedDownloads = try String(contentsOf: host.data.appendingPathComponent("download-verification/browser-downloads.json"), encoding: .utf8)
+                      guard encryptedDownloads.hasPrefix("mac1:"), !encryptedDownloads.contains(downloadURL) else { throw failure("Download history was not encrypted") }
+                      _ = try browser.downloads.handle(["action": "clear"])
+                      guard downloadItems().isEmpty, FileManager.default.fileExists(atPath: completedDownload["path"] as! String) else { throw failure("Clearing records removed files") }
+                      print("PASS: WKDownload cancellation, Keychain-encrypted history reload and clear without file deletion")
+                      let afterCancel = try await control("state") as! [String: Any]
+                      _ = try await control("closeTab", ["tabId": afterCancel["activeTab"]!])
                       let reopened = try await control("newTab") as! [String: Any]
                       guard (reopened["tabs"] as? [[String: Any]])?.count == 1 else { throw failure("First new tab created twice") }
                       guard let reopenedRevision = reopened["revision"] as? Int64,
@@ -313,6 +354,12 @@ jobs:
           const fixture = spawn(process.execPath,['-e',String.raw`
             const http=require('node:http');
             const server=http.createServer((req,res)=>{
+              if(['/download','/slow-download','/cancel-download'].includes(req.url)) {
+                const slow=req.url!='/download',size=slow?2097152:524288;
+                res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="cloud-download.txt"','Content-Length':String(size)});
+                if(!slow)return res.end(Buffer.alloc(size,65));
+                let count=0;const timer=setInterval(()=>{res.write(Buffer.alloc(32768,65));count+=32768;if(count>=size)res.end()},30);res.on('close',()=>clearInterval(timer));return;
+              }
               res.setHeader('Content-Type','text/html; charset=utf-8');
               const query=new URL(req.url,'http://localhost').searchParams.get('q');
               res.end(query===null?'<title>QQClaw Browser Check</title><form><label>Search<input name="q"></label><button>Search</button></form>':'<title>Search Result</title><h1>Search received: '+query.replace(/[<>&]/g,'')+'</h1>');
@@ -321,7 +368,7 @@ jobs:
           `],{stdio:['ignore','pipe','inherit']});
           try {
             const port = await new Promise((resolve,reject)=>{fixture.stdout.once('data',bytes=>resolve(Number(String(bytes).trim())));fixture.once('error',reject);fixture.once('exit',()=>reject(new Error('Browser fixture exited')));});
-            console.log(run(executable,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(temporary,'data'),QQCLAW_CONVERSATIONS_DIR:path.join(temporary,'conversations'),QQCLAW_VERIFY_RESOURCES:path.join(app,'Contents/Resources'),QQCLAW_BROWSER_FIXTURE_URL:'http://127.0.0.1:'+port+'/'}}));
+            console.log(run(executable,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(temporary,'data'),QQCLAW_CONVERSATIONS_DIR:path.join(temporary,'conversations'),QQCLAW_DOWNLOADS_DIR:path.join(temporary,'download-files'),QQCLAW_VERIFY_RESOURCES:path.join(app,'Contents/Resources'),QQCLAW_BROWSER_FIXTURE_URL:'http://127.0.0.1:'+port+'/'}}));
           } finally { fixture.kill(); }
           await fs.rm(temporary,{recursive:true,force:true});
           NODE
