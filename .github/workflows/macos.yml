@@ -159,6 +159,13 @@ jobs:
                       host.menuCommand(newChat)
                       let dispatched = try await host.web.evaluateJavaScript("JSON.stringify(window.__menuEvents)") as? String ?? ""
                       guard dispatched.contains("menu-action"), dispatched.contains("new-session") else { throw failure("Native menu action did not reach WebKit bridge") }
+                      guard let searchMenu = menuCommand("search"), let findMenu = menuCommand("find-message"), searchMenu.keyEquivalent == "k", findMenu.keyEquivalent == "f", host.validateMenuItem(searchMenu), !host.validateMenuItem(findMenu) else { throw failure("Native search menu or no-session gate failed") }
+                      _ = try await host.handle("window.menuState",["ready":true,"hasSession":true,"sidebar":true,"panel":false,"fontSize":14])
+                      guard host.validateMenuItem(findMenu) else { throw failure("Native find menu did not enable for current session") }
+                      host.menuCommand(searchMenu); host.menuCommand(findMenu)
+                      let searchEvents = try await host.web.evaluateJavaScript("JSON.stringify(window.__menuEvents)") as? String ?? ""
+                      guard searchEvents.contains("search"), searchEvents.contains("find-message") else { throw failure("Native search/find actions did not reach WebKit bridge") }
+                      print("PASS: AppKit global search/current-chat find shortcuts, session gate and command dispatch")
                       print("PASS: AppKit file/view/help menus, setup gating, checked state, font limits and WebKit command dispatch")
                       let browserWindow = NSWindow(contentRect: host.web.frame, styleMask: [.titled], backing: .buffered, defer: false)
                       browserWindow.contentView = host.web; browserWindow.orderFront(nil)

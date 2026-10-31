@@ -1860,3 +1860,33 @@ select:focus-visible {
 .document-markdown { min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
 .document-markdown > :first-child { margin-top: 0; }
 .document-markdown pre { max-width: 100%; overflow: auto; }
+
+/* Search uses the same light/dark neutral surfaces as the rest of the app. */
+.session-search-modal { display: flex; flex-direction: column; width: min(760px, calc(100vw - 48px)); height: auto; max-height: min(680px, calc(100dvh - 48px)); min-width: 0; min-height: 0; overflow: hidden; }
+.session-search-modal .modal-header { flex: 0 0 auto; }
+.session-search-modal .modal-body { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 12px; }
+.session-search-modal input { width: 100%; flex: 0 0 auto; }
+.session-search-modal .search-results { flex: 1; min-height: 0; max-height: min(480px, calc(100dvh - 240px)); margin-top: 0; overscroll-behavior: contain; }
+.search-summary { flex: 0 0 auto; font-size: 12px; color: var(--muted); margin: 0; }
+.search-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.search-row .search-result { min-width: 0; border: 1px solid transparent; border-radius: 7px; background: var(--tile); align-items: flex-start; }
+.search-row .search-result:hover, .search-row .search-result:focus-visible { border-color: var(--line); background: var(--hover); }
+.search-result > .icon { flex: 0 0 auto; margin-top: 2px; color: var(--muted); }
+.search-result-content { display: flex; flex-direction: column; min-width: 0; gap: 5px; }
+.search-title, .search-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-title { font-weight: 600; font-size: var(--font-size); }
+.search-path { font-size: 11px; color: var(--muted); }
+.search-snippet { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.65; font-size: 12px; color: var(--text); }
+.search-role { margin-right: 8px; font-size: 11px; color: var(--muted); }
+.search-more { flex: 0 0 auto; align-self: center; font-size: 12px; }
+.search-more[hidden] { display: none; }
+.search-result mark, mark[data-message-find] { background: var(--active); color: var(--text); border-radius: 2px; }
+mark[data-message-find].current-match { background: var(--text); color: var(--page); }
+.message:focus { outline: 1px solid var(--line); outline-offset: 6px; border-radius: 4px; }
+.message-find { position: fixed; z-index: 55; display: flex; align-items: center; gap: 4px; min-width: 0; box-sizing: border-box; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--page); color: var(--text); box-shadow: 0 3px 12px #00000014; }
+.message-find input { width: 0; min-width: 0; flex: 1; height: 28px; padding: 2px 6px; border: 0; background: transparent; font-size: 12px; }
+.message-find .icon-button { width: 26px; height: 28px; flex: 0 0 auto; }
+.message-find .icon { width: 15px; height: 15px; }
+.message-find-count { flex: 0 0 auto; white-space: nowrap; font-size: 11px; color: var(--muted); }
+.message-find[hidden] { display: none; }
+.message-find input::-webkit-search-cancel-button, #session-search::-webkit-search-cancel-button { filter: grayscale(1); opacity: .65; }

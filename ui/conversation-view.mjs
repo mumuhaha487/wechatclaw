@@ -35,6 +35,19 @@ export class ConversationView {
       root.scrollTop += article.getBoundingClientRect().top - root.getBoundingClientRect().top - 16;
     this.captureReading();
   }
+  reveal(index, focus = true) {
+    const session = this.current(), root = this.root(), message = session?.messages[index];
+    const article = root?.querySelector(`[data-message-index="${index}"]`);
+    if (!message || !article || root.dataset.session !== session.id) return false;
+    if (message.role === "user") {
+      const entries = this.folds.get(session.id) || new Map();
+      entries.set(index, message.text); this.folds.set(session.id, entries); this.updateFolds();
+    }
+    root.scrollTop += article.getBoundingClientRect().top - root.getBoundingClientRect().top - 16;
+    if (focus) article.focus({ preventScroll: true });
+    this.captureReading();
+    return true;
+  }
   updateFolds() {
     const root = this.root();
     if (!root) return;

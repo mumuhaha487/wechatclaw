@@ -220,7 +220,7 @@ final class Backend: @unchecked Sendable {
     var quitting = false, allowQuit = false, restarting = false, installing = false
     var requestSequence = 0
     var browserHost: BrowserHost?
-    var menuAvailable = false, menuReady = false, menuSidebar = true, menuPanel = false
+    var menuAvailable = false, menuReady = false, menuSidebar = true, menuPanel = false, menuHasSession = false
     var menuFont = 14
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
@@ -274,6 +274,7 @@ final class Backend: @unchecked Sendable {
         command(file, "打开工作目录", "open-folder"); file.addItem(.separator()); command(file, "配置运行环境…", "runtime")
         section("编辑", edit)
         for (name, action, key) in [("撤销", "undo:", "z"), ("重做", "redo:", "Z"), ("剪切", "cut:", "x"), ("复制", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] { edit.addItem(withTitle: name, action: Selector(action), keyEquivalent: key) }
+        edit.addItem(.separator()); command(edit, "搜索会话…", "search", "k"); command(edit, "查找会话内容…", "find-message", "f")
         section("视图", view)
         command(view, "侧栏", "toggle-sidebar", "b"); command(view, "工作面板", "toggle-panel", "B")
         command(view, "展开工作面板", "maximize-panel"); command(view, "网页预览", "open-browser-window"); view.addItem(.separator())
@@ -296,6 +297,7 @@ final class Backend: @unchecked Sendable {
         if name == "font-increase" { return menuReady && menuFont < 20 }
         if name == "font-decrease" { return menuReady && menuFont > 12 }
         if name == "font-reset" { return menuReady && menuFont != 14 }
+        if name == "find-message" { return menuReady && menuHasSession }
         return menuReady
     }
     func alert(_ text: String) { let alert = NSAlert(); alert.messageText = "QQClaw"; alert.informativeText = text; alert.runModal() }
@@ -320,6 +322,7 @@ final class Backend: @unchecked Sendable {
             menuAvailable = true; menuReady = p["ready"] as? Bool == true
             menuSidebar = p["sidebar"] as? Bool == true; menuPanel = p["panel"] as? Bool == true
             menuFont = p["fontSize"] as? Int ?? 14
+            menuHasSession = p["hasSession"] as? Bool == true
             return true
         case "window.theme":
             let dark = p["theme"] as? String == "dark"

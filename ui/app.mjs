@@ -19,6 +19,7 @@ import { ApplicationMenu } from "./application-menu.mjs";
 import { PanelTabs, workspaceFileReference } from "./panel-tabs.mjs";
 import { ViewPreferences } from "./view-preferences.mjs";
 import { ConversationView } from "./conversation-view.mjs";
+import { SessionSearch, MessageFind } from "./message-search.mjs";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -192,10 +193,13 @@ const session = () => state.sessions.find((s) => s.id === ui.active);
 const previews = new AttachmentPreviews(rpc);
 const navigation = new NavigationHistory();
 const conversationView = new ConversationView({ sessions: () => state.sessions, current: session, root: () => $("chat-scroll") });
+const messageFind = new MessageFind({ current: session, root: () => $("chat-scroll"), view: conversationView });
+const sessionSearch = new SessionSearch({ sessions: () => state.sessions, select: id => { selectSession(id); exposeConversation(); }, reveal: index => conversationView.reveal(index),
+  dismiss: () => { ui.overlay = ""; renderOverlay(); }, error: toast });
 const draftKey = () => ui.active || `new:${workspaceKey(project()?.workspace || "")}`;
 const applicationMenu = new ApplicationMenu({
   state: () => ({ ready: environmentReady(), workspace: project()?.workspace, fontSize: state.settings.fontSize,
-    sidebar: ui.sidebar, panel: ui.panel, isMac, draftKey: draftKey() }),
+    sidebar: ui.sidebar, panel: ui.panel, isMac, hasSession: Boolean(session()), draftKey: draftKey() }),
   dispatch: name => action(name), readClipboard: () => rpc("clipboard.read"), copy: copyText, error: error => toast(error.message),
   pasteAttachments: async value => {
     if (value.files) return addAttachments(value.files, true);
@@ -530,7 +534,7 @@ function sidebar() {
         icon("folder") +
         "打开项目</button>") +
     '</div><div class="side-footer">' +
-    '<button class="version" data-action="about">v0.3.20</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v0.3.21</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -718,6 +722,7 @@ function workspace() {
     ib("new-session", "新建会话", "new") +
     ib("search", "搜索会话", "search") +
     "</div>" +
+    ib("session-menu", "会话菜单", "more", `data-id="${esc(s?.id || "")}" ${s ? "" : "disabled"}`) +
     ib("conversation-outline", "会话目录", "outline", `aria-haspopup="dialog" aria-expanded="false" ${s?.messages.some(m => m.role === "user") ? "" : "disabled"}`) +
     ib("panel-new", "新建面板", "plus") +
     ib("maximize-panel", "展开工作面板", "expand") +
@@ -1080,7 +1085,7 @@ function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.20 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.21 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
@@ -1141,7 +1146,7 @@ function render() {
   }
   applicationMenu.afterRender();
   if (isMac) {
-    const menuState = JSON.stringify({ ready: environmentReady(), sidebar: ui.sidebar, panel: ui.panel, fontSize: state.settings.fontSize });
+    const menuState = JSON.stringify({ ready: environmentReady(), sidebar: ui.sidebar, panel: ui.panel, fontSize: state.settings.fontSize, hasSession: Boolean(session()) });
     if (menuState !== ui.nativeMenuState) {
       ui.nativeMenuState = menuState;
       rpc("window.menuState", JSON.parse(menuState)).catch(() => { ui.nativeMenuState = undefined; });
@@ -1164,6 +1169,7 @@ function render() {
       } catch {}
   }
   conversationView.restoreReading();
+  messageFind.refresh();
   if (document.querySelector(".settings-content"))
     document.querySelector(".settings-content").scrollTop = settingsScroll;
   const documentScroll = document.querySelector(".document-scroll");
@@ -1218,6 +1224,7 @@ function accountForm(d, prefix) {
 }
 function renderOverlay() {
   closePicker();
+  if (!["search", "history"].includes(ui.overlay)) sessionSearch.hide();
   if (!ui.overlay || !environmentReady()) {
     $("overlay").innerHTML = "";
     return;
@@ -1289,14 +1296,15 @@ function renderOverlay() {
       ${login ? `<div class="qr-layout"><div class="qr-frame"><img src="${esc(login.qr)}" alt="微信 ClawBot 登录二维码"></div><div class="qr-description"><h3>${status[login.status] || "正在连接…"}</h3><p>用手机微信扫描二维码，并确认连接。<br>连接成功后，账户会出现在上方列表中。</p><p class="small">${esc(login.workspace)}</p>${login.error ? `<p class="error">${esc(login.error)}</p>` : ""}${login.status === "need_verifycode" ? `<div class="verify-row"><input id="verify-code" aria-label="微信验证码" inputmode="numeric" placeholder="数字验证码">${button("verify-code", "确认", "", "primary")}</div>` : ""}<div class="row">${["expired", "error", "verify_code_blocked"].includes(login.status) ? button("retry-login", "重新生成", "refresh", "green") : ""}${button("cancel-login", "取消连接")}</div></div></div>` : ui.editingAccount ? "" : `<div class="login-form"><h3>${state.accounts.length ? "添加另一个账户" : "连接第一个微信账户"}</h3>${accountForm(d, "login")}<div class="row">${button("start-login", ui.loading ? "正在获取二维码…" : "生成登录二维码", "wechat", "green", ui.loading ? "disabled" : "")}<span class="small muted">仅接收扫码账户的私聊消息</span></div></div>`}
       <div class="connection-footer">微信中发送 <b>/new</b> 开始新会话，<b>/status</b> 查看目录和模型。支持文字与已转写的语音。<br>保持本机和应用运行。${button("connection-models", "管理模型与 API", "external", "", 'style="font-size:11px;padding:2px 6px"')}</div></div></section></div>`;
   } else if (ui.overlay === "search" || ui.overlay === "history") {
-    const query = ui.sessionSearch || "";
-    const results = state.sessions.filter((s) =>
-      `${s.title} ${s.workspace}`.toLowerCase().includes(query.toLowerCase()),
-    );
-    $("overlay").innerHTML =
-      `<div class="overlay-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="会话历史" style="width:650px"><div class="modal-header">${icon("clock")}<h2>会话历史</h2><span class="grow"></span>${ib("close-overlay", "关闭", "close")}</div><div class="modal-body"><input id="session-search" aria-label="搜索会话历史" placeholder="搜索会话名称或目录…" value="${esc(query)}" style="width:100%"><div class="search-results">${results.map((s) => `<div class="row"><button class="search-result grow" data-action="select-session" data-id="${s.id}">${icon(s.source === "wechat" ? "wechat" : "new")}<div><strong class="small">${esc(s.title)}</strong><p>${esc(s.workspace)}</p></div></button>${ib("remove-session", "移除会话", "trash", `data-id="${s.id}" ${s.busy ? "disabled" : ""}`)}</div>`).join("") || '<p class="empty-note">没有找到会话。</p>'}</div></div></section></div>`;
+    sessionSearch.render($("overlay"), ui.overlay);
   }
   enhancePickers($("overlay"));
+}
+function exposeConversation() {
+  const chat = $("chat-scroll")?.getBoundingClientRect(), panel = document.querySelector(".work-panel")?.getBoundingClientRect();
+  if (ui.panelMax || panel && chat && panel.left < chat.left + 180 && panel.right > chat.left) {
+    ui.panel = false; ui.panelMax = false; rememberPanel(); render();
+  }
 }
 function selectSession(id) {
   if (!state.sessions.some((s) => s.id === id)) return toast("该会话已不存在，请重新选择。");
@@ -1589,11 +1597,21 @@ async function action(name, element) {
     case "session-menu":
       if (!id) return;
       return showContext(element, [
+        { label: "查找会话内容", icon: "search", action: "find-message", id },
         { label: "在 Codex Desktop 中继续", icon: "external", action: "continue-desktop", id },
         { label: "重命名", icon: "file", action: "rename-session", id },
         { label: "复制会话内容", icon: "copy", action: "copy-session", id },
         { label: "移除会话", icon: "trash", action: "remove-session", id },
       ]);
+    case "find-message": {
+      if (id && !state.sessions.some(s => s.id === id)) return toast("该会话已不存在，请重新选择。");
+      if (id && id !== ui.active) selectSession(id);
+      if (!session()) return;
+      ui.overlay = ""; renderOverlay();
+      if (ui.page) { ui.page = ""; render(); }
+      exposeConversation();
+      return messageFind.open();
+    }
     case "message-menu":
       return showContext(element, [
         { label: "复制回复", icon: "copy", action: "copy-message", id },
@@ -2052,11 +2070,13 @@ async function action(name, element) {
     }
     case "search":
     case "history":
+      messageFind.close(false);
+      sessionSearch.open(name);
       ui.overlay = name;
-      ui.sessionSearch = "";
       renderOverlay();
       return $("session-search")?.focus();
     case "close-overlay":
+      if (["search", "history"].includes(ui.overlay)) return sessionSearch.close();
       ui.overlay = "";
       return renderOverlay();
     case "remove-session":
@@ -2193,6 +2213,7 @@ async function action(name, element) {
 }
 document.addEventListener("click", (event) => {
   if (event.target.classList.contains("overlay-backdrop")) {
+    if (["search", "history"].includes(ui.overlay)) return sessionSearch.close();
     ui.overlay = "";
     renderOverlay();
     return;
@@ -2281,13 +2302,6 @@ document.addEventListener("input", (event) => {
     ui.search = el.value;
     render();
     $("settings-search")?.setSelectionRange(start, start);
-  }
-  if (el.id === "session-search") {
-    const start = el.selectionStart;
-    ui.sessionSearch = el.value;
-    renderOverlay();
-    $("session-search")?.focus();
-    $("session-search")?.setSelectionRange(start, start);
   }
 });
 document.addEventListener("compositionstart", event => {
@@ -2407,6 +2421,9 @@ document.addEventListener("change", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (!environmentReady() && (event.ctrlKey || event.metaKey)) return;
+  if (environmentReady() && !event.isComposing && (isMac ? event.metaKey : event.ctrlKey) && event.key.toLowerCase() === "f") {
+    event.preventDefault(); action("find-message").catch(e => toast(e.message)); return;
+  }
   if (["Enter", " "].includes(event.key) && event.target.matches(".session-row,.project-row")) {
     event.preventDefault();
     action(event.target.dataset.action, event.target).catch(error => toast(error.message));
@@ -2420,6 +2437,7 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.key === "Escape") {
+    if (["search", "history"].includes(ui.overlay)) return sessionSearch.close();
     ui.overlay = "";
     renderOverlay();
     return;
@@ -2505,7 +2523,7 @@ function onEvent(event, data) {
     const panelChanged = beforePanel !== panelContext();
     if (panelChanged) invalidatePanel();
     render();
-    if (["wechat", "wechat-bind", "history", "notifications"].includes(ui.overlay)) renderOverlay();
+    if (["wechat", "wechat-bind", "search", "history", "notifications"].includes(ui.overlay)) renderOverlay();
     if (panelChanged && ["files", "review"].includes(ui.panelPage)) loadPanel();
   } else if (event === "wechat") {
     const wasLogin = ui.login;
@@ -2638,7 +2656,7 @@ function showContext(anchor, items) {
 document.addEventListener("click", (e) => {
   if (
     !e.target.closest(
-      '.row-more,.project-tools,.conversation-title,[data-action="composer-add"],[data-action="panel-add-tab"],[data-action="context-info"],[data-action="message-menu"],[data-action="app-menu"],.application-menu-popup,.conversation-outline,[data-action="conversation-outline"]',
+      '.row-more,.project-tools,[data-action="session-menu"],[data-action="composer-add"],[data-action="panel-add-tab"],[data-action="context-info"],[data-action="message-menu"],[data-action="app-menu"],.application-menu-popup,.conversation-outline,[data-action="conversation-outline"]',
     )
   )
     document.querySelector(".context-menu")?.remove();
