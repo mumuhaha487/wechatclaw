@@ -178,10 +178,16 @@ export class MessageFind {
     this.paint(false); this.position();
   }
   textNodes(article) {
-    const nodes = [];
+    const nodes = []; let previousBlock;
     for (const part of article.querySelectorAll(".message-content,.attachment-name")) {
       const walker = document.createTreeWalker(part, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement.closest(".message-expand") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
-      while (walker.nextNode()) nodes.push(walker.currentNode);
+      while (walker.nextNode()) {
+        const node = walker.currentNode, block = node.parentElement.closest("p,div,pre,li,h1,h2,h3,h4,h5,h6,blockquote,td,th") || part;
+        // Inline formatting remains contiguous; separate paragraphs and
+        // attachment labels must not manufacture a word spanning two blocks.
+        if (nodes.length && block !== previousBlock) nodes.push(document.createTextNode("\n"));
+        nodes.push(node); previousBlock = block;
+      }
     }
     return nodes;
   }
@@ -208,6 +214,7 @@ export class MessageFind {
     let offset = nodes.reduce((n, node) => n + node.length, 0);
     for (const node of nodes.reverse()) {
       offset -= node.length;
+      if (!node.parentNode) continue;
       for (const match of [...matches].reverse()) {
         const start = Math.max(0, match.start - offset), end = Math.min(node.length, match.end - offset);
         if (end <= start) continue;
