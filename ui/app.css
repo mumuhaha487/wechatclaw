@@ -10,7 +10,7 @@
   --line: #ededed;
   --input: #fff;
   --shadow: 0 4px 28px #0000000b;
-  --green: #07a45c;
+  --green: #242424;
   --red: #bc4141;
   --font-size: 15px;
   font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
@@ -147,7 +147,7 @@ p {
 }
 .btn.green {
   background: var(--green);
-  color: white;
+  color: var(--page);
 }
 .btn.outline {
   border: 1px solid var(--line);
@@ -1071,7 +1071,7 @@ p {
   width: 62px;
   height: 62px;
   border-radius: 18px;
-  background: #07a45c0b;
+  background: var(--hover);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1107,7 +1107,7 @@ p {
   align-items: center;
   justify-content: center;
   color: var(--green);
-  background: #07a45c0c;
+  background: var(--hover);
 }
 .account-title {
   font-size: 14px;

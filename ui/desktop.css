@@ -5,15 +5,15 @@
   --toolbar-height: 46px;
   --page: #ffffff;
   --input: #ffffff;
-  --text: #29312b;
-  --muted: #636d64;
-  --rail: #f0f2ed;
-  --tile: #f3f5f0;
-  --hover: #eceee9;
-  --active: #e4e6e2;
-  --line: #dce1d7;
-  --green: #148052;
-  --focus: #607a61;
+  --text: #202020;
+  --muted: #737373;
+  --rail: #f5f5f5;
+  --tile: #f8f8f8;
+  --hover: #eeeeee;
+  --active: #e7e7e7;
+  --line: #e3e3e3;
+  --green: #242424;
+  --focus: #737373;
   --radius-control: 6px;
   --radius-surface: 8px;
   --font-size: 14px;
@@ -22,17 +22,17 @@
     -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
 }
 :root[data-theme="dark"] {
-  --page: #1b1b1b;
-  --rail: #151515;
-  --tile: #232323;
-  --hover: #2c2c2c;
-  --active: #353535;
-  --text: #e8e8e8;
-  --muted: #ababab;
-  --line: #363636;
-  --input: #202020;
-  --green: #5fcb90;
-  --focus: #b4bdb4;
+  --page: #171717;
+  --rail: #101010;
+  --tile: #1c1c1c;
+  --hover: #272727;
+  --active: #303030;
+  --text: #eeeeee;
+  --muted: #9c9c9c;
+  --line: #303030;
+  --input: #1c1c1c;
+  --green: #eeeeee;
+  --focus: #858585;
   --shadow: none;
 }
 button,
@@ -1248,7 +1248,7 @@ select:focus-visible {
   color: var(--muted);
 }
 .overlay-backdrop {
-  background: #18201752;
+  background: #00000066;
   backdrop-filter: none;
 }
 .modal {
@@ -1285,7 +1285,7 @@ select:focus-visible {
 }
 .account-avatar {
   border-radius: 8px;
-  background: #07a45c10;
+  background: var(--hover);
   width: 38px;
   height: 38px;
 }
@@ -1318,7 +1318,7 @@ select:focus-visible {
   border-radius: var(--radius-surface);
   width: 64px;
   height: 64px;
-  background: #07a45c0d;
+  background: var(--hover);
 }
 .login-form {
   border-radius: var(--radius-surface);
@@ -1616,8 +1616,8 @@ select:focus-visible {
 
 .message.progress-message { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
 .progress-label { font-size: 11px; opacity: .65; margin-bottom: 5px; }
-.message-attachment { display: flex; align-items: center; gap: 12px; max-width: 100%; min-width: 210px; text-align: left; padding: 12px 15px; margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius-surface); background: var(--tile); color: inherit; cursor: pointer; }
-.message-attachment > span { flex: 1; overflow-wrap: anywhere; }
+.message-attachment { display: flex; align-items: center; gap: 12px; max-width: 100%; min-width: 0; text-align: left; padding: 12px 15px; margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius-surface); background: var(--tile); color: inherit; cursor: pointer; }
+.message-attachment > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .message-attachment small { display: block; font-size: 11px; opacity: .6; margin-top: 4px; }
 .wechat-advanced { margin: 4px 0 18px; font-size: 12px; }
 .wechat-advanced summary { cursor: pointer; margin-bottom: 12px; }
@@ -1631,6 +1631,36 @@ select:focus-visible {
 :root[data-platform="darwin"] pre { font-family: Menlo, Monaco, monospace; }
 
 /* Browser chrome stays in the workbench; only page pixels use a native view. */
+.content-area { overflow: hidden; }
+.chat-column { min-height: 0; overflow: hidden; container-type: inline-size; }
+.chat-scroll { overflow-x: hidden; min-width: 0; }
+.message-content { min-width: 0; max-width: 100%; }
+.message-content img, .message-content video, .message-content canvas, .file-preview img { display: block; max-width: 100%; height: auto; object-fit: contain; }
+.message pre { max-width: 100%; }
+.message table { display: block; max-width: 100%; overflow-x: auto; }
+.message-attachment > .icon { flex-shrink: 0; }
+.composer { min-width: 0; overflow: hidden; }
+.composer textarea { width: 100%; min-width: 0; resize: none; }
+.composer-left, .composer-right { max-width: 100%; }
+.composer-control .picker-trigger > span { overflow: hidden; text-overflow: ellipsis; }
+.send-button { color: var(--page); }
+.qr-frame { max-width: 100%; overflow: hidden; }
+.qr-frame img { max-width: 100%; height: auto; object-fit: contain; }
+@container (max-width: 520px) {
+  .chat-scroll { padding-left: 22px; padding-right: 22px; }
+  .composer-wrap { padding-left: 18px; padding-right: 18px; }
+  .composer-left, .composer-right { gap: 1px; }
+  .model-control .picker-trigger { max-width: 125px; }
+  .composer-bottom { gap: 5px; }
+}
+@container (max-width: 360px) {
+  .composer-bottom { flex-direction: column; align-items: stretch; }
+  .composer-right { width: 100%; }
+  .provider-control .picker-trigger { max-width: 60px; }
+  .model-control .picker-trigger { max-width: 100px; }
+  .effort-control .picker-trigger { max-width: 66px; }
+  .context-usage { display: none; }
+}
 .work-panel.browser-panel { display: flex; flex-direction: column; width: clamp(360px, 42vw, 620px); max-width: 62%; flex: 0 0 auto; padding: 0; overflow: hidden; background: var(--page); }
 .browser-tabs-bar { display: flex; align-items: center; gap: 2px; height: 45px; min-height: 45px; padding: 5px 8px 4px; border-bottom: 1px solid var(--line); background: var(--tile); }
 .browser-tabs { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }

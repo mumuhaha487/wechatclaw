@@ -91,7 +91,7 @@ function rpc(method, params = {}) {
 }
 let state = {
   settings: {
-    theme: "light",
+    theme: "dark",
     fontSize: 14,
     showStatus: true,
     defaultProvider: "local",
@@ -302,7 +302,7 @@ function applyTheme() {
     String((state.settings.fontSize || 14) / 14),
   );
   document.documentElement.style.fontFamily = {
-    system: '-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif',
+    system: isMac ? '-apple-system,BlinkMacSystemFont,system-ui,sans-serif' : '"Microsoft YaHei UI","Segoe UI",system-ui,sans-serif',
     yahei: '"Microsoft YaHei UI",sans-serif',
     consolas: 'Consolas,"Microsoft YaHei UI",monospace',
   }[state.settings.fontFamily || "system"];
@@ -2174,6 +2174,6 @@ document.addEventListener("submit", (event) => {
 });
 
 // Native web content must track the HTML viewport and hide beneath app menus.
-new MutationObserver(scheduleBrowserView).observe(document.body, { childList: true, subtree: true });
+new MutationObserver(scheduleBrowserView).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "open", "aria-expanded"] });
 window.addEventListener("resize", scheduleBrowserView);
 scheduleBrowserView();

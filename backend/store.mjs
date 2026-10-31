@@ -8,7 +8,8 @@ import { workspaceKey } from "../shared/workspace.mjs";
 export const defaults = () => ({
   version: 2,
   settings: {
-    theme: "light",
+    theme: "dark",
+    appearanceVersion: 1,
     fontSize: 14,
     fontFamily: "system",
     showCounts: true,
@@ -51,6 +52,11 @@ export class Store {
         ...data,
         settings: { ...defaults().settings, ...data.settings },
       };
+      // Adopt the new monochrome appearance once; later theme choices persist.
+      if (!data.settings?.appearanceVersion) {
+        this.state.settings.theme = "dark";
+        this.state.settings.appearanceVersion = 1;
+      }
       if (!data.settings?.codexSource && this.state.settings.codexPath) this.state.settings.codexSource = "custom";
     } catch (error) {
       if (error.code !== "ENOENT")
