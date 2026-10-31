@@ -96,7 +96,7 @@ internal static class Program {
                         using (var source = entry.Open()) using (var destination = File.Create(target)) source.CopyTo(destination);
                     }
                 }
-                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.24");
+                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.25");
             }
             CleanupOldRuntimes(hash);
             SetDllDirectory(RuntimeDirectory);
@@ -329,7 +329,7 @@ internal sealed class DesktopWindow : Form {
                 }
             } catch (Exception failure) { error = failure.Message; }
         }
-        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.24", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
+        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.25", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
     }
     private Task<string> ReadNodeVersion(string node) { return ReadNodeVersion(node, 5); }
     private async Task<string> ReadNodeVersion(string node, int timeoutSeconds) {

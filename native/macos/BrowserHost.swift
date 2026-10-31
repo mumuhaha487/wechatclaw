@@ -131,16 +131,33 @@ private struct BrowserHistoryRecord: Codable {
                 "canGoBack": tab?.web.canGoBack ?? false, "canGoForward": tab?.web.canGoForward ?? false, "error": tab?.errorText ?? ""]
     }
     func publish(_ session: BrowserSession, reveal: Bool = false) { if !session.disposed { notify(state(session, reveal: reveal)) } }
-    func newTab(_ session: BrowserSession) throws {
+    @discardableResult func newTab(_ session: BrowserSession, configuration: WKWebViewConfiguration? = nil) throws -> BrowserWindow {
         guard session.tabs.count < 12 else { throw failure("最多打开 12 个标签页，请先关闭不用的页面。") }
         // macOS 13 lacks persistent stores by identifier. Share only the same
         // account's in-memory store; never borrow the app or system login store.
         let store = stores[session.profile] ?? WKWebsiteDataStore.nonPersistent(); stores[session.profile] = store
-        let tab = BrowserWindow(resources: resources, store: store, downloads: downloads, history: history, owner: session.owner) { [weak self, weak session] in
+        let tab = BrowserWindow(resources: resources, store: store, downloads: downloads, history: history, owner: session.owner, configuration: configuration) { [weak self, weak session] in
             guard let self, let session else { return }; self.publish(session)
+        }
+        tab.createWindow = { [weak self, weak session] source, configuration in
+            guard let self, let session, !session.disposed, !source.closed, session.tabs.contains(where: { $0 === source }) else { return nil }
+            do {
+                let child = try self.newTab(session, configuration: configuration)
+                self.layout(); self.publish(session); return child.web
+            } catch { source.errorText = "无法打开新标签页：\(error.localizedDescription)"; self.publish(session); return nil }
+        }
+        tab.closeWindow = { [weak self, weak session] page in
+            guard let self, let session else { return }; self.closeTab(session, page)
         }
         parent.addSubview(tab.web); tab.web.isHidden = true
         session.tabs.append(tab); session.active = tab
+        return tab
+    }
+    private func closeTab(_ session: BrowserSession, _ tab: BrowserWindow) {
+        guard !session.disposed, let index = session.tabs.firstIndex(where: { $0 === tab }) else { return }
+        session.tabs.remove(at: index)
+        if session.active === tab { session.active = session.tabs.isEmpty ? nil : session.tabs[min(index, session.tabs.count - 1)] }
+        tab.stop(); tab.close(); layout(); publish(session)
     }
     func handle(_ p: [String: Any]) async throws -> Any {
         let owner = p["owner"] as? String ?? "", action = p["action"] as? String ?? ""
@@ -180,9 +197,7 @@ private struct BrowserHistoryRecord: Codable {
                 let tab = session.tabs[index]
                 if action == "selectTab" { session.active = tab }
                 else {
-                    session.tabs.remove(at: index)
-                    if session.active === tab { session.active = session.tabs.isEmpty ? nil : session.tabs[min(index, session.tabs.count - 1)] }
-                    tab.stop(); tab.close()
+                    self.closeTab(session, tab)
                 }
             default: break
             }
@@ -208,16 +223,22 @@ private struct BrowserHistoryRecord: Codable {
     let changed: () -> Void
     let downloads: BrowserDownloads, owner: String
     let history: BrowserHistory
+    var createWindow: ((BrowserWindow, WKWebViewConfiguration) -> WKWebView?)?
+    var closeWindow: ((BrowserWindow) -> Void)?
     var closed = false, downloadNavigation = false
     var errorText = ""
     var url: String { web.url?.absoluteString == "about:blank" ? "" : web.url?.absoluteString ?? "" }
     var observations: [NSKeyValueObservation] = []
     var navigation: CheckedContinuation<Void, Error>?, navigationToken: UUID?
-    init(resources: URL, store: WKWebsiteDataStore, downloads: BrowserDownloads, history: BrowserHistory, owner: String, changed: @escaping () -> Void) {
+    init(resources: URL, store: WKWebsiteDataStore, downloads: BrowserDownloads, history: BrowserHistory, owner: String, configuration: WKWebViewConfiguration? = nil, changed: @escaping () -> Void) {
         self.resources = resources; self.changed = changed
         self.downloads = downloads; self.owner = owner
         self.history = history
-        let config = WKWebViewConfiguration(); config.websiteDataStore = store
+        // Preserve WebKit's supplied configuration, form bodies and opener.
+        // The source has neither the application's scheme nor message bridge.
+        let config = configuration ?? WKWebViewConfiguration()
+        if configuration == nil { config.websiteDataStore = store }
+        config.preferences.javaScriptCanOpenWindowsAutomatically = false
         // No application URL scheme or script-message handler on page views.
         web = WKWebView(frame: NSRect(x: -2000, y: 0, width: 1000, height: 760), configuration: config)
         super.init()
@@ -285,8 +306,13 @@ private struct BrowserHistoryRecord: Codable {
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { becameDownload(download) }
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { becameDownload(download) }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = action.request.url, BrowserHost.allowed(url.absoluteString) { web.load(action.request) }; return nil
+        let value = action.request.url?.absoluteString ?? ""
+        guard !closed, value == "about:blank" || BrowserHost.allowed(value) else {
+            errorText = "已阻止不支持的链接。"; changed(); return nil
+        }
+        return createWindow?(self, configuration)
     }
+    func webViewDidClose(_ webView: WKWebView) { closeWindow?(self) }
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) { decisionHandler(.deny) }
     func page(_ p: [String: Any]) async throws -> Any {
         let script = try String(contentsOf: resources.appendingPathComponent("browser-page.js"), encoding: .utf8)

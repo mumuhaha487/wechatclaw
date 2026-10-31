@@ -952,6 +952,13 @@ function updateBrowserState(data) {
   }
   browserStates.set(data.owner, data);
   panelTabs.syncBrowser(owner, data);
+  // A webpage can create a native tab without a toolbar command. Follow that
+  // native selection only while the old browser tab still owns this group;
+  // updates to hidden pages must not steal a file/tool selection or reopen it.
+  if (data.activeTab && data.activeTab !== previous?.activeTab && before === `browser:${previous?.activeTab}` &&
+      panelTabs.group(owner).tabs.some(tab => tab.key === before)) {
+    panelTabs.select(owner, `browser:${data.activeTab}`);
+  }
   if (owner !== panelOwner()) return;
   if (ui.panelPage === "browser" && before !== panelTabs.group(owner).selected) {
     applyPanelTab(); rememberPanel(); render();

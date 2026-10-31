@@ -271,6 +271,58 @@ jobs:
                       let corruptHistory = BrowserHistory(directory: historyChecks) { _ in }; corruptHistory.visit(fixture, title: "Must not overwrite")
                       guard !(corruptHistory.state()["storageError"] as? String ?? "").isEmpty, try String(contentsOf: historyCheckFile, encoding: .utf8) == "corrupt-history" else { throw failure("Corrupt history silently replaced") }
                       print("PASS: browsing history hour/day/all ranges, 500-URL bound and corrupt-file preservation (isolated fixtures)")
+                      let popups = BrowserHost(resources: host.resources, parent: host.web, data: host.data.appendingPathComponent("popup-verification")) { _ in }
+                      let popupOwner = UUID().uuidString.lowercased()
+                      popups.setView(["owner": popupOwner, "visible": true, "x": 0, "y": 0, "width": 1000, "height": 760, "viewportWidth": 1000, "viewportHeight": 760])
+                      func popupControl(_ action: String, _ values: [String: Any] = [:]) async throws -> Any {
+                          try await popups.handle(values.merging(["action": action, "owner": popupOwner, "profile": String(repeating: "b", count: 32)]) { _, value in value })
+                      }
+                      func awaitPopup(_ predicate: ([String: Any]) -> Bool) async throws -> [String: Any] {
+                          for _ in 0..<100 {
+                              let value = popups.state(popups.sessions[popupOwner]!)
+                              if predicate(value) { return value }
+                              try await Task.sleep(nanoseconds: 100_000_000)
+                          }
+                          throw failure("Popup state did not settle: " + String(describing: popups.state(popups.sessions[popupOwner]!)))
+                      }
+                      _ = try await popupControl("open", ["url": fixture + "popup-origin"])
+                      let popupSource = popups.sessions[popupOwner]!.active!
+                      guard !popupSource.web.configuration.preferences.javaScriptCanOpenWindowsAutomatically else { throw failure("Automatic popup policy is not disabled") }
+                      _ = try await popupSource.web.evaluateJavaScript("window.open('/popup-child?kind=blocked','_blank'); true")
+                      try await Task.sleep(nanoseconds: 300_000_000)
+                      guard popups.sessions[popupOwner]!.tabs.count == 1 else { throw failure("Unsolicited popup bypassed WebKit policy") }
+                      // This CI component check enables scripted popup creation
+                      // only in its isolated view. It is not trusted pointer UI.
+                      popupSource.web.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+                      _ = try await popupSource.web.evaluateJavaScript("window.open('/popup-child?kind=script','cloud-popup'); true")
+                      let popupOpened = try await awaitPopup { ($0["tabs"] as? [[String: Any]])?.count == 2 && ($0["title"] as? String ?? "").contains("Popup script opener=true") && $0["loading"] as? Bool == false }
+                      let popupChild = popups.sessions[popupOwner]!.active!
+                      guard popupSource.url == fixture + "popup-origin", popupChild !== popupSource,
+                            popupChild.web.configuration.websiteDataStore === popupSource.web.configuration.websiteDataStore,
+                            popupChild.web.configuration.urlSchemeHandler(forURLScheme: "qqclaw") == nil,
+                            popupChild.web.configuration.userContentController.userScripts.isEmpty else { throw failure("New window lost source, profile or application isolation") }
+                      let popupCookie = try await popupChild.web.evaluateJavaScript("document.cookie") as? String ?? ""
+                      guard popupCookie.contains("popup_profile=mac") else { throw failure("Popup did not inherit its source profile") }
+                      popupSource.web.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+                      _ = try await popupSource.web.evaluateJavaScript("window.open('/popup-child?kind=reused','cloud-popup'); true")
+                      _ = try await awaitPopup { ($0["title"] as? String ?? "").contains("Popup reused") }
+                      guard popups.sessions[popupOwner]!.tabs.count == 2, popups.sessions[popupOwner]!.active === popupChild else { throw failure("Named popup created a duplicate") }
+                      _ = try await popupChild.web.evaluateJavaScript("window.close(); true")
+                      _ = try await awaitPopup { ($0["tabs"] as? [[String: Any]])?.count == 1 }
+                      guard popupChild.web.superview == nil, popups.sessions[popupOwner]!.active === popupSource else { throw failure("Page close retained native view or selected wrong source") }
+                      print("PASS: real WebKit popup delegates, native new-window configuration, opener/named reuse, profile, application isolation and page close (CI scripted-view fixture, not trusted pointer GUI)")
+                      popupSource.web.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+                      _ = try await popupSource.web.evaluateJavaScript("document.querySelector('form').submit(); true")
+                      _ = try await awaitPopup { ($0["tabs"] as? [[String: Any]])?.count == 2 && ($0["title"] as? String ?? "").contains("Popup POST message=body+must+survive") }
+                      let postedPopup = popups.sessions[popupOwner]!.active!
+                      guard popupSource.url == fixture + "popup-origin" else { throw failure("POST popup replaced the source") }
+                      _ = try await popupControl("closeTab", ["tabId": popupSource.id])
+                      guard popups.sessions[popupOwner]!.active === postedPopup else { throw failure("Closing opener removed its child") }
+                      _ = try await postedPopup.web.evaluateJavaScript("window.close(); true")
+                      _ = try await awaitPopup { ($0["tabs"] as? [[String: Any]])?.isEmpty == true }
+                      _ = try await popupControl("dispose")
+                      guard popups.sessions[popupOwner] == nil, postedPopup.web.superview == nil else { throw failure("Last popup resurrected or disposal leaked its view") }
+                      print("PASS: real WebKit target-blank POST request/body, source retention, closing opener and empty last-popup disposal (isolated fixture)")
                       guard !BrowserHost.allowed("file:///etc/passwd"), !BrowserHost.allowed("https://qqclaw.local") else { throw failure("Browser accepted forbidden URL") }
                       let tabState = try await control("newTab") as! [String: Any]
                       guard (tabState["tabs"] as? [[String: Any]])?.count == 2 else { throw failure("Browser tab creation failed") }
@@ -415,7 +467,18 @@ jobs:
           run('/usr/bin/xcrun',['swiftc','-swift-version','5','-parse-as-library','-O','-sdk',sdk,'-framework','AppKit','-framework','WebKit','-framework','Security','-framework','CryptoKit',verifier,path.join(root,'native/macos/BrowserHost.swift'),'-o',executable]);
           const fixture = spawn(process.execPath,['-e',String.raw`
             const http=require('node:http');
-            const server=http.createServer((req,res)=>{
+            const server=http.createServer(async(req,res)=>{
+              if(req.url==='/popup-origin') {
+                res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Set-Cookie':'popup_profile=mac; SameSite=Lax; Path=/'});
+                return res.end('<title>Popup origin</title><form method="POST" action="/popup-post" target="_blank"><input name="message" value="body must survive"></form>');
+              }
+              if(req.url.startsWith('/popup-child')||req.url==='/popup-post') {
+                let body='';for await(const bytes of req)body+=bytes;
+                const kind=new URL(req.url,'http://localhost').searchParams.get('kind');
+                const label=req.method==='POST'?'POST '+body:kind;
+                res.setHeader('Content-Type','text/html; charset=utf-8');
+                return res.end('<title>Popup '+label+'</title><script>document.title+=" opener="+!!window.opener</script>');
+              }
               if(['/download','/slow-download','/cancel-download','/held-download'].includes(req.url)) {
                 const slow=req.url!='/download',size=slow?2097152:524288;
                 res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="cloud-download.txt"','Content-Length':String(size)});

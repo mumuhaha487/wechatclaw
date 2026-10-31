@@ -87,9 +87,7 @@ internal sealed class BrowserHost {
                 if (tab == null) throw new Exception("浏览器标签页已关闭。");
                 if (action == "selectTab") session.Active = tab;
                 else {
-                    int index = session.Tabs.IndexOf(tab); session.Tabs.Remove(tab);
-                    if (session.Active == tab) session.Active = session.Tabs.Count == 0 ? null : session.Tabs[Math.Min(index, session.Tabs.Count - 1)];
-                    tab.Close();
+                    CloseTab(session, tab);
                 }
             }
             // Empty sessions stay empty after the last tab closes. Only an
@@ -101,10 +99,36 @@ internal sealed class BrowserHost {
             return await session.Active.Run(p);
         } finally { Publish(session, false); session.Serial.Release(); }
     }
-    private void NewTab(BrowserSession session) {
+    private BrowserTab NewTab(BrowserSession session) {
         if (session.Tabs.Count >= 12) throw new Exception("最多打开 12 个标签页，请先关闭不用的页面。");
-        var tab = new BrowserTab(parent, session.Profile, () => Publish(session, false), Downloads, session.Owner, History);
+        var tab = new BrowserTab(parent, session.Profile, () => Publish(session, false), Downloads, session.Owner, History,
+            opener => OpenWindow(session, opener), page => CloseTab(session, page));
         session.Tabs.Add(tab); session.Active = tab;
+        return tab;
+    }
+    private void CloseTab(BrowserSession session, BrowserTab tab) {
+        int index = session.Tabs.IndexOf(tab); if (index < 0 || session.Disposed) return;
+        session.Tabs.RemoveAt(index);
+        if (session.Active == tab) session.Active = session.Tabs.Count == 0 ? null : session.Tabs[Math.Min(index, session.Tabs.Count - 1)];
+        tab.Stop(); tab.Close(); Layout(); Publish(session, false);
+    }
+    private async Task<BrowserTab> OpenWindow(BrowserSession session, BrowserTab opener) {
+        if (session.Disposed || !session.Tabs.Contains(opener)) throw new Exception("来源标签页已关闭。");
+        var previous = session.Active;
+        var tab = NewTab(session); Layout(); Publish(session, false);
+        try {
+            // A native window target must share the opener's exact environment,
+            // remain unnavigated, and be returned to WebView2. Navigating its URL
+            // ourselves would lose POST bodies, window.opener and window names.
+            await tab.EnsureReady(opener.Web.CoreWebView2.Environment);
+            if (session.Disposed || !session.Tabs.Contains(opener) || !session.Tabs.Contains(tab)) throw new Exception("来源或新标签页已关闭。");
+            return tab;
+        } catch {
+            bool selected = session.Active == tab;
+            CloseTab(session, tab);
+            if (selected && !session.Disposed && session.Tabs.Contains(previous)) session.Active = previous;
+            Layout(); Publish(session, false); throw;
+        }
     }
     private object State(BrowserSession s, bool reveal) {
         var tab = s.Active;
@@ -234,13 +258,22 @@ internal sealed class BrowserTab {
     private readonly BrowserDownloads downloads;
     private readonly BrowserHistory history;
     private readonly string owner;
-    internal BrowserTab(Form parent, string profile, Action changed, BrowserDownloads downloads, string owner, BrowserHistory history) {
+    private readonly Func<BrowserTab, Task<BrowserTab>> openWindow;
+    private readonly Action<BrowserTab> closeWindow;
+    internal BrowserTab(Form parent, string profile, Action changed, BrowserDownloads downloads, string owner, BrowserHistory history,
+        Func<BrowserTab, Task<BrowserTab>> openWindow, Action<BrowserTab> closeWindow) {
         this.profile = profile; this.changed = changed;
         this.downloads = downloads; this.owner = owner; this.history = history;
+        this.openWindow = openWindow; this.closeWindow = closeWindow;
         Web.Bounds = new Rectangle(-2000, 0, 1000, 760); parent.Controls.Add(Web);
     }
-    private async Task Initialize() {
-        var environment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(Program.DataDirectory, "browsers", profile));
+    internal async Task EnsureReady(CoreWebView2Environment environment = null) {
+        if (closed) throw new Exception("浏览器标签页已关闭。");
+        ready = ready ?? Initialize(environment); await ready;
+        if (closed || Web.IsDisposed) throw new Exception("浏览器标签页已关闭。");
+    }
+    private async Task Initialize(CoreWebView2Environment environment) {
+        environment = environment ?? await CoreWebView2Environment.CreateAsync(null, Path.Combine(Program.DataDirectory, "browsers", profile));
         await Web.EnsureCoreWebView2Async(environment);
         Web.CoreWebView2.Settings.IsWebMessageEnabled = false;
         Web.CoreWebView2.Settings.AreHostObjectsAllowed = false;
@@ -261,9 +294,26 @@ internal sealed class BrowserTab {
         Web.CoreWebView2.SourceChanged += delegate { changed(); };
         Web.CoreWebView2.DocumentTitleChanged += delegate { if (!Loading && !closed && !downloadNavigation) history.UpdateTitle(Url, Title); changed(); };
         Web.CoreWebView2.HistoryChanged += delegate { changed(); };
-        Web.CoreWebView2.NewWindowRequested += delegate(object sender, CoreWebView2NewWindowRequestedEventArgs e) {
-            e.Handled = true; if (BrowserHost.Allowed(e.Uri)) Web.CoreWebView2.Navigate(e.Uri);
+        Web.CoreWebView2.NewWindowRequested += async delegate(object sender, CoreWebView2NewWindowRequestedEventArgs e) {
+            e.Handled = true;
+            if (closed) return;
+            if (!e.IsUserInitiated || e.Uri != "about:blank" && !BrowserHost.Allowed(e.Uri)) {
+                Error = "已阻止自动弹窗或不支持的链接。"; changed(); return;
+            }
+            using (var deferral = e.GetDeferral()) {
+                BrowserTab target = null;
+                try { target = await openWindow(this); e.NewWindow = target.Web.CoreWebView2; }
+                catch (Exception error) {
+                    if (target != null) closeWindow(target);
+                    if (!closed) { Error = "无法打开新标签页：" + error.Message; changed(); }
+                }
+                finally {
+                    try { deferral.Complete(); }
+                    catch (Exception error) { if (!closed) { Error = "新标签页请求已取消：" + error.Message; changed(); } }
+                }
+            }
         };
+        Web.CoreWebView2.WindowCloseRequested += delegate { closeWindow(this); };
         Web.CoreWebView2.PermissionRequested += delegate(object sender, CoreWebView2PermissionRequestedEventArgs e) { e.State = CoreWebView2PermissionState.Deny; };
         Web.CoreWebView2.DownloadStarting += delegate(object sender, CoreWebView2DownloadStartingEventArgs e) {
             try { downloads.Start(e, this, owner); Error = ""; }
@@ -308,7 +358,7 @@ internal sealed class BrowserTab {
     }
     internal async Task<object> Run(Dictionary<string, object> p) {
         try {
-            stopping = false; ready = ready ?? Initialize(); await ready;
+            stopping = false; await EnsureReady();
             if (stopping) throw new Exception("浏览器操作已停止。");
             string action = BrowserHost.Value(p, "action");
             if (action == "open") {
