@@ -486,7 +486,9 @@ export class App {
         return this.continueDesktop(p);
       case "browser.open": {
         const session = this.getSession(p.sessionId);
-        return (await this.client(session)).browser.call("open", { url: p.url || "https://www.google.com/" });
+        const browser = (await this.client(session)).browser;
+        await browser.start();
+        return browser.call("open", { url: p.url || "https://www.google.com/" });
       }
       case "attachment.reveal": {
         const session = this.getSession(p.sessionId);
