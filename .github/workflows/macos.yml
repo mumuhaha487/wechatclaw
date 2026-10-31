@@ -9,12 +9,82 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm ci
       - run: npm run build:mac
+      - name: Verify native backend and encrypted data persistence
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+          import {execFileSync} from 'node:child_process';
+          const root = process.env.GITHUB_WORKSPACE;
+          const temporary = await fs.mkdtemp(path.join(process.env.RUNNER_TEMP, 'qqclaw-verify-'));
+          const run = (exe, args, options={}) => execFileSync(exe, args, {encoding:'utf8',timeout:180000,...options});
+          run('/usr/bin/ditto', ['-x','-k',path.join(root,'release/macos/QQClaw.zip'),temporary]);
+          const app = path.join(temporary,'QQClaw.app');
+          const binary = path.join(app,'Contents/MacOS/QQClaw');
+          console.log(run('/usr/bin/lipo',[binary,'-archs']).trim());
+          run('/usr/bin/codesign',['--verify','--deep','--strict',app]);
+          const libraries = run('/usr/bin/otool',['-L',binary]);
+          if (/\/opt\/homebrew\/|\/usr\/local\//.test(libraries)) throw new Error('Non-system runtime dependency found');
+          const source = await fs.readFile(path.join(root,'native/macos/QQClaw.swift'),'utf8');
+          const bootstrap = source.indexOf('@main struct QQClawMain');
+          if (bootstrap < 0) throw new Error('Native entrypoint missing');
+          // Only this temporary verifier replaces main. The shipped .app is unchanged.
+          const main = String.raw`
+          @main struct VerifyMain {
+              @MainActor static func main() async {
+                  launchBackendIfRequested()
+                  signal(SIGPIPE, SIG_IGN)
+                  let env = ProcessInfo.processInfo.environment
+                  let host = Host()
+                  host.data = URL(fileURLWithPath: env["QQCLAW_DATA_DIR"]!)
+                  host.resources = URL(fileURLWithPath: env["QQCLAW_VERIFY_RESOURCES"]!)
+                  host.vault = Vault(directory: host.data)
+                  host.quitting = true
+                  do {
+                      try FileManager.default.createDirectory(at: host.data, withIntermediateDirectories: true)
+                      let status = try await host.handle("system.status", [:]) as! [String: Any]
+                      guard status["nodeReady"] as? Bool == true else { throw failure("Node discovery failed") }
+                      let first = try await host.startBackend()
+                      _ = try await host.call(first, "snapshot")
+                      let session = try await host.call(first, "session.create", params: ["workspace": host.data.path, "title": "native-persistence-check"]) as! [String: Any]
+                      let id = session["id"] as! String
+                      try await host.shutdown()
+                      let file = host.data.appendingPathComponent("state.json")
+                      let bytes = try Data(contentsOf: file)
+                      guard !String(decoding: bytes, as: UTF8.self).contains("native-persistence-check") else { throw failure("Snapshot was not encrypted") }
+                      let encrypted = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+                      let plain = try host.vault.handle("vault.decrypt", encrypted["protected"] as! String)
+                      guard plain.contains(id) else { throw failure("Keychain decrypt failed") }
+                      let second = try await host.startBackend()
+                      let snapshot = try await host.call(second, "snapshot") as! [String: Any]
+                      guard (snapshot["sessions"] as? [[String: Any]])?.contains(where: { $0["id"] as? String == id }) == true else { throw failure("Native restart lost session") }
+                      try await host.shutdown()
+                      SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.qqclaw.desktop.vault", kSecAttrAccount as String: host.vault.account] as CFDictionary)
+                      print("PASS: native process launch, pipe RPC, Keychain encryption and restart persistence")
+                  } catch {
+                      host.backend?.killGroup()
+                      fputs("Native verification failed: \(error.localizedDescription)\n", stderr)
+                      exit(1)
+                  }
+              }
+          }
+          `;
+          const verifier = path.join(temporary,'Verify.swift');
+          await fs.writeFile(verifier,source.slice(0,bootstrap)+main);
+          const executable = path.join(temporary,'QQClawVerify');
+          const sdk = run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-path']).trim();
+          run('/usr/bin/xcrun',['swiftc','-swift-version','5','-parse-as-library','-O','-sdk',sdk,'-framework','AppKit','-framework','WebKit','-framework','Security','-framework','CryptoKit',verifier,'-o',executable]);
+          console.log(run(executable,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(temporary,'data'),QQCLAW_CONVERSATIONS_DIR:path.join(temporary,'conversations'),QQCLAW_VERIFY_RESOURCES:path.join(app,'Contents/Resources')}}));
+          await fs.rm(temporary,{recursive:true,force:true});
+          NODE
       - uses: actions/upload-artifact@v4
         with:
           name: QQClaw-macOS-Universal

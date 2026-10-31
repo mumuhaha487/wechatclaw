@@ -53,7 +53,7 @@ export async function buildMac(root = project) {
     }
     const executable = path.join(binaries, "QQClaw");
     await run("/usr/bin/lipo", ["-create", ...compiled, "-output", executable]);
-    await run("/usr/bin/lipo", ["-verify_arch", "arm64", "x86_64", executable]);
+    await run("/usr/bin/lipo", [executable, "-verify_arch", "arm64", "x86_64"]);
     await fs.chmod(executable, 0o755);
     const icons = path.join(temporary, "AppIcon.iconset"); await fs.mkdir(icons);
     for (const size of [16, 32, 128, 256, 512]) for (const scale of [1, 2]) await fs.writeFile(path.join(icons, `icon_${size}x${size}${scale === 2 ? "@2x" : ""}.png`), iconPNG(size * scale));

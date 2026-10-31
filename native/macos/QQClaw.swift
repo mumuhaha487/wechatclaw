@@ -339,11 +339,11 @@ final class Backend: @unchecked Sendable {
         child.killGroup()
         if backend === child { backend = nil; if !quitting { event("backend-exit", "后台已退出，请在设置中重新检测运行环境。") } }
     }
-    func call(_ child: Backend, _ method: String, timeout: Double = 20) async throws -> Any {
+    func call(_ child: Backend, _ method: String, params: [String: Any] = [:], timeout: Double = 20) async throws -> Any {
         requestSequence += 1; let id = "host-\(requestSequence)"
         return try await withCheckedThrowingContinuation { continuation in
             child.requests[id] = { continuation.resume(with: $0) }
-            do { try child.send(["id": id, "method": method, "params": [:]]) }
+            do { try child.send(["id": id, "method": method, "params": params]) }
             catch { child.requests.removeValue(forKey: id)?(.failure(error)) }
             DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { child.requests.removeValue(forKey: id)?(.failure(failure("后台保存或关闭超时。请稍后重试。"))) }
         }
