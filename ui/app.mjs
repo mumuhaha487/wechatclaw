@@ -113,6 +113,7 @@ const ui = {
   sidebar: viewStorage.getItem("sidebar-open") !== "false",
   browserHidden: new Set(),
   projectLimits: new Map(),
+  detailStates: new Map(),
   expanded: new Set(),
   draft: "",
   overlay: "",
@@ -459,9 +460,9 @@ function messageView(m, index, s) {
   const time = m.at && !Number.isNaN(Date.parse(m.at)) ? `<time datetime="${esc(m.at)}" title="${esc(new Date(m.at).toLocaleString())}">${esc(new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time>` : "";
   const changes = m.runStats?.changes || [];
   return `<article class="message ${m.role}${m.kind === "progress" ? " progress-message" : ""}">
-    ${m.kind === "progress" ? '<div class="progress-label">过程进度</div>' : assistant && m.runStats ? runSummary(m.runStats) : ""}
+    ${m.kind === "progress" ? '<div class="progress-label">过程进度</div>' : assistant && m.runStats ? runSummary(m.runStats, `${s.id}-${index}`) : ""}
     <div class="message-content">${m.role === "assistant" ? markdown(m.text) : esc(m.text)}</div>${attachments}
-    ${changes.length ? `<details class="change-card"><summary>${icon("review")}<strong>已修改 ${new Set(changes.map(c => c.path)).size} 个文件</strong>${icon("down")}</summary><div class="change-list">${changes.map(c => `<details class="changed-file"><summary><span class="ellipsis" title="${esc(c.path)}">${esc(c.path)}</span><span>${esc({ add: "新增", delete: "删除", update: "修改" }[c.kind] || "修改")}</span></summary><pre>${esc(c.diff || "本次事件未提供补丁内容。")}</pre></details>`).join("")}</div><button data-action="panel-review">查看工作区更改${icon("external")}</button></details>` : ""}
+    ${changes.length ? `<details class="change-card" data-detail-key="${s.id}-${index}-changes"><summary>${icon("review")}<strong>已修改 ${new Set(changes.map(c => c.path)).size} 个文件</strong>${icon("down")}</summary><div class="change-list">${changes.map((c, ci) => `<details class="changed-file" data-detail-key="${s.id}-${index}-change-${ci}"><summary><span class="ellipsis" title="${esc(c.path)}">${esc(c.path)}</span><span>${esc({ add: "新增", delete: "删除", update: "修改" }[c.kind] || "修改")}</span></summary><pre>${esc(c.diff || "本次事件未提供补丁内容。")}</pre></details>`).join("")}</div><button data-action="panel-review">查看工作区更改${icon("external")}</button></details>` : ""}
     ${assistant ? `<div class="message-actions">${ib("copy-message", "复制回复", "copy", `data-index="${index}"`)}${ib("message-menu", "回复菜单", "more", `data-id="${index}"`)}${time}<span class="message-model" title="${esc(s.model || "Codex")}">${esc(s.model || "Codex")}</span></div>` : ""}</article>`;
 }
 function composer() {
@@ -872,6 +873,7 @@ function settings() {
     )}<button class="settings-back" data-action="return">${icon("back")}返回应用</button></aside><div class="settings-main"><div class="settings-titlebar" data-drag>${windowButtons()}</div><main class="settings-content"><div class="settings-inner">${({ general: generalSettings, models: modelSettings, projects: projectSettings, runtime: runtimeSettings, about: aboutSettings }[ui.page] || generalSettings)()}</div></main></div></div>`;
 }
 function render() {
+  for (const detail of document.querySelectorAll("details[data-detail-key]")) ui.detailStates.set(detail.dataset.detailKey, detail.open);
   const active = document.activeElement;
   const focusId = active?.id;
   const start = active?.selectionStart,
@@ -893,6 +895,7 @@ function render() {
       : `<div class="app-shell">${sidebar()}${workspace()}</div>`) +
     resizeEdges();
   applyTheme();
+  for (const detail of document.querySelectorAll("details[data-detail-key]")) detail.open = ui.detailStates.get(detail.dataset.detailKey) || false;
   enhancePickers($("app"));
   if (focusId && $(focusId)) {
     $(focusId).focus({ preventScroll: true });
@@ -2249,14 +2252,14 @@ setInterval(() => {
     refreshEnvironment();
 }, 5000);
 
-function runSummary(stats) {
+function runSummary(stats, key) {
   const seconds = Math.round((stats.durationMs || 0) / 1000);
   const duration =
     seconds >= 60
       ? Math.floor(seconds / 60) + "m " + (seconds % 60) + "s"
       : seconds + "s";
   return (
-    '<details class="run-summary"><summary>' +
+    '<details class="run-summary" data-detail-key="' + esc(key) + '-run"><summary>' +
     icon("spark") +
     "运行完成 · " +
     duration +

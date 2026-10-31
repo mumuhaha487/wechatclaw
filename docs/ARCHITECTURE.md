@@ -163,19 +163,18 @@ Codex 新线程显式非临时保存，保留服务返回的真实 thread.path�
 Mac 分发改为单一 `release/macos/QQClaw.dmg`：只读压缩磁盘映像包含通用应用、指向 `/Applications` 的安装入口和中文说明。构建使用系统 `hdiutil` 创建并校验；开发启动和 CI 从磁盘映像复制应用后执行。可选 Developer ID 签名及公证针对完整 DMG，未配置证书时应用仍使用 ad hoc 签名。
 
 
-## QQClaw 内置浏览器（0.3.10）
+## 网页预览与官方扩展边界（0.3.11）
 
-`CodexClient` 启动前调用 `BrowserTools.start()`，为该会话创建带随机 Bearer token 的 loopback HTTP MCP 服务，并通过该子进程的 `-c mcp_servers.qqclaw_browser=...` 注入。服务验证鉴权、Host、Origin、参数大小和工具白名单，不修改用户全局配置。`App.client` 的连接签名包括权限，切换权限会重建连接。全自动模式只预授权本服务的 click/fill/press/select；询问模式遵循 Codex 的 MCP elicitation 审批；只读模式在工具发现与执行两层禁用交互。
+`backend/browser.mjs` 不再启动 HTTP MCP；`BrowserViewer` 仅供用户手动触发 `browser.open` / `browser.command`。`browser.officialStatus` 只检查 Chrome/Edge 官方扩展 ID 的安装文件，明确返回尚未连接，不能用安装状态推断授权成功。
 
-工具通过内部 `browser.control` 调用原生宿主。每个 session UUID 对应独立标签组，原生网页视图嵌入主窗口右侧；通过 browser-state 事件更新标签/地址/加载状态，通过主 UI 的 browser.view 测量与同步位置。弹窗与菜单出现时隐藏网页层。profile 为 accountId（本地会话则 sessionId）的 SHA-256 截断值。Windows 的 WebView2 profile 位于应用数据的 `browsers/`；macOS 13.3 为兼容账户隔离，使用按账户复用的 nonPersistent WKWebsiteDataStore，登录态不跨应用重启。
+`CodexClient` 隔离不适用于独立子进程的官方 Desktop 插件及旧 `qqclaw_browser` 配置；每轮 application context 都说明官方连接尚未完成，不得使用其他远控替代。未修改用户全局设置或复用别的会话身份。官方通道的实际阻碍及文档证据见根目录 result.md。
 
-网页视图不暴露 QQClaw 的应用桥、虚拟应用域或 HostObjects，仅允许 HTTP/HTTPS。`shared/browser-page.js` 只实现固定 DOM 操作，不提供任意 JS 工具；快照中的元素引用随新快照失效，密码值遮盖。跨域 iframe 只返回网址，不自动操作其内容。下载和上传暂不支持。截图经 MCP image 返回，保留原始 PNG。
+原生 `BrowserHost` 仍管理手动网页预览：空会话不隐式创建标签，关闭最后标签保持空组；新标签/导航才创建网页。UI 通过 `browser.view` 同步 DOM 视口与 DPI 坐标，在弹窗/菜单时隐藏外部网页层。Windows 按账户/会话存储网站登录态；Mac 当前使用账户隔离内存存储。
 
-MCP 调用按会话排队；interrupt 使排队调用失效并停止当前加载。关闭空闲 Codex 连接会关闭端口和 socket，保留用户网页和标签；浏览器只随 QQClaw 本身退出。Windows 使用 NavigationCompleted、Mac 使用 WKNavigationDelegate 等待打开/返回，网页加载有单次超时，Codex 整个任务仍没有总时长截止。
+侧面板默认 340 CSS 像素，拖动/键盘/双击调整并保存；分屏保留至少 400 CSS 像素聊天宽度，空间不足改为可关闭的覆盖面板。收起/关闭面板不销毁标签；标签上的叉销毁网页。手动关闭后，后台网页事件不得强行展开面板。
 
-独立子进程通过 CLI 配置覆盖关闭 Desktop 专用浏览器插件及 node_repl；全局配置不变。每轮 additionalContext(application) 更新浏览器运行说明，以免旧历史误导工具选择。
+`shared/context-usage.mjs` 使用 Codex `last` 样本的当前输入+输出占比，禁止使用整段历史的 `total` 累计统计；缓存输入不重复相加，缺窗口/样本显示待统计。真实消耗证据见 result.md。
 
-该实现没有引入 CodexHost 代码、程序或身份。它使用 QQClaw 的浏览器，不等于复用 Codex Desktop 的内置浏览器，也不需要用户安装 Chrome 扩展。
 
 ## Desktop 接续（可选）
 
