@@ -22,6 +22,7 @@ import { ViewPreferences } from "./view-preferences.mjs";
 import { ConversationView } from "./conversation-view.mjs";
 import { SessionSearch, MessageFind } from "./message-search.mjs";
 import { BrowserDownloads } from "./browser-downloads.mjs";
+import { version as appVersion } from "../package.json";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -536,7 +537,7 @@ function sidebar() {
         icon("folder") +
         "打开项目</button>") +
     '</div><div class="side-footer">' +
-    '<button class="version" data-action="about">v0.3.22</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v' + appVersion + '</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -1160,7 +1161,7 @@ function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v0.3.22 · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v${appVersion} · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
