@@ -1,8 +1,19 @@
 # macOS 适配与对话保存
 
-2026-10-31，源码与 Mac 安装包 **0.3.8**。新增父 Desktop 工具连接的环境隔离修复。Windows 正式 EXE 已在用户确认退出后更新为 0.3.8（568,832 字节），核对与已验证候选字节一致，新版运行资源和后台已启动。Mac 双架构编译、DMG 安装复制、原生后台、对话保存与重启恢复均通过云端检查；完整 GUI、Desktop 内置浏览器交互与真实微信 Mac 链路仍需实机验收。
+2026-10-31，当前源码与 Windows / Mac 成品为 **0.3.9**。QQClaw 自带浏览器，微信任务直接调用，无需 Desktop、CodexHost 或浏览器扩展。
 
-## 当前成品与 Desktop 接续
+## 当前成品
+
+- Windows：唯一 `release/QQClaw.exe`，589,312 字节，SHA-256 `A57DFE69A7474D7365A928AE45736AFC457AAFCDE2E4897C765DFB77709D7435`。真实 EXE 已完成输入任务、调用 Codex、内置浏览器填写/提交、显示真实结果的验证。正式程序在确认空闲后正常退出并替换，现已重启；现有 2 个账户、3 个会话保留，新版资源与后台已核对。
+- Mac：唯一 `release/macos/QQClaw.dmg`，633,978 字节，SHA-256 `2d2c44f037fbfd139dd7432006d52ee744ea08ecd4a4ff0abf884e77e42fdff0`。macOS 13.3+、Intel / Apple Silicon Universal，ad hoc 签名，尚未 Apple 公证。Artifact 官方摘要、ZIP CRC 和 DMG UDIF 文件尾已核对。
+- [云构建 41188625183](https://github.com/mumuhaha487/wechatclaw/actions/runs/41188625183)，应用代码 `18b9e8afd6f67db15c067cc99cfc968d1c1249fe`。通过双架构编译、签名、DMG 挂载安装、原生 WKWebView 打开/填写/提交/截图及协议限制、Node 发现、原生后台、钥匙串、保存与重启恢复检查。
+- Windows 使用系统 WebView2，Mac 使用系统 WebKit。Mac 浏览器按账户隔离，但因兼容 macOS 13.3 使用内存数据存储，退出应用后网站登录态不保留；QQClaw 对话、账户和 Codex 原生历史仍正常持久保存。Windows 网站登录态保存在应用数据目录的 `browsers/` 中。
+- 119 项既有回归、24 项浏览器检查及断开后重开检查通过；真实 Codex 全自动/询问模式的交互已验证。微信链路采用 API 夹具，模型和原生浏览器真实运行，已核对 typing、进度和最终出站、桌面消息不发微信以及原生历史。Mac 线上微信和完整人工 GUI 仍需实机验收。
+- Google 实测触发人机验证，只能确认实际打开与如实回报，不能认定热点结果搜索成功。当前浏览器不支持自动上传/下载、跨域 iframe 内部操作；不绕过验证码或网站登录限制。
+
+浏览器与数据模块索引见 [ARCHITECTURE.md](ARCHITECTURE.md)。对话文件保存格式与备份方法见下方“对话数据”相关章节，0.3.9 不改变保存位置。
+
+## 0.3.8 历史成品与可选 Desktop 接续
 
 - Mac：`release/macos/QQClaw.dmg`，575,226 字节，SHA-256 `e5287be773a1ef033affbf37bc9464c7a5b5e1e97190b37867911dbd5357674d`。仍为 macOS 13.3+、Intel / Apple Silicon 通用、ad hoc 签名且未 Apple 公证。
 - 云构建：[GitHub Actions 41182366453](https://github.com/mumuhaha487/wechatclaw/actions/runs/41182366453)，应用源码提交 `85ed1aa382488f347d16f3d8750ea8059991d10d`。下载后核对 Artifact 摘要、ZIP CRC 与 DMG 文件尾；旧 DMG 仅保存在项目外。
@@ -11,7 +22,7 @@
 - 0.3.7 历史验证：119 项既有回归与 19 项新增检查通过。独立 CODEX_HOME 与本地受控 API 下，真实 Codex 完成第三方首轮、原生 fork、新进程恢复及继续回复；分别验证配置模型与动态默认模型，原线程保持 1 轮，副本独立完成 2 轮。额外确认未配置思考等级时不能传 null TOML 覆盖，已改为省略。
 - Windows 原生 API 确认商店版 Desktop 可通过 AppUserModelID 检测，UUID/工作目录链接校验通过。Mac 云端检查 Desktop 链接编码和非法 threadId 拒绝。界面模拟验证 Windows 接续提示、来源保存、Mac 缺环境引导与 CLI 恢复，没有控制台错误；模拟页面不能代替原生 GUI 验收。
 
-使用：QQClaw 会话右上角 **Desktop 中继续**，或会话菜单 **在 Codex Desktop 中继续**。已有原生历史复制为独立的 Codex 持久线程；空会话打开当前工作目录。草稿留在 QQClaw，请到 Desktop 发送下一条任务并使用其内置浏览器。Desktop 后续回复不会回传 QQClaw 或微信。
+可选接续仍在会话菜单 **在 Codex Desktop 中继续**：已有原生历史复制为独立的 Codex 持久线程，空会话打开当前工作目录；Desktop 后续回复不会回传 QQClaw 或微信。QQClaw 自带浏览器的任务不需要此步骤，右上角入口现为「内置浏览器」。
 
 「设置 → 运行环境 → Codex 来源」可选自动检测、Desktop 附带程序、独立 CLI 或手动指定。自动模式 Desktop 优先，失败回退 CLI；显式来源失败会提示配置。保存后后续任务采用新来源，模型目录随之刷新。切换不修改账户凭证或 Codex 的 config.toml。
 

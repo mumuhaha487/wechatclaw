@@ -147,8 +147,18 @@ Codex 对接依据 [App Server](https://developers.openai.com/codex/app-server)�
 
 微信功能的源码核对表、消息路由及验证边界见 [docs/WECHAT-PARITY.md](docs/WECHAT-PARITY.md)。
 
-## 0.3.8 交付记录（2026-10-31）
+## 0.3.9 交付记录（2026-10-31）
+
+Windows 唯一 `release/QQClaw.exe` 已更新并重启（589,312 字节），替换前确认没有运行、排队或待回复任务，正常关闭后保留现有 2 个账户和 3 个会话。正式文件与通过真实界面测试的候选完全一致，SHA-256 `A57DFE69A7474D7365A928AE45736AFC457AAFCDE2E4897C765DFB77709D7435`；新版后台和浏览器资源已启动。
+
+Mac 唯一 `release/macos/QQClaw.dmg` 已更新（633,978 字节），SHA-256 `2d2c44f037fbfd139dd7432006d52ee744ea08ecd4a4ff0abf884e77e42fdff0`。[云构建 41188625183](https://github.com/mumuhaha487/wechatclaw/actions/runs/41188625183) 通过双架构编译、安装映像检查、原生 WKWebView 填写/提交/截图、钥匙串及对话保存恢复验证。
+
+本地 119 项既有回归及 24 项浏览器检查通过。真实 Codex 在全自动、询问模式均完成页面填写与提交；Windows EXE 实际输入任务后显示网页真实结果，无界面脚本错误。另以微信 API 夹具验证真实 App → Codex → WebView2 → 进度/结果出站，核对 typing、推送额度、桌面消息不回微信及原生 Codex 历史；该检查不等于微信线上实发。
+
+Google 实际导航触发异常流量人机验证，程序已如实回报，**本次没有验收 Google 热点搜索结果**。Mac 云端原生浏览器检查通过，Mac 线上微信、完整人工界面和网站兼容性仍需实机确认。
+
+## 0.3.8 历史交付记录（2026-10-31）
 
 142 项检查及真实 Codex 的第三方 API、原会话恢复和副本接续验证通过。用户确认退出后，Windows 唯一 `release/QQClaw.exe` 已替换为已验证的 0.3.8 候选原字节并启动；新版运行资源与内嵌代码一致，后台启动记录已核对。替换前后应用数据文件指纹一致。Mac 唯一 `release/macos/QQClaw.dmg` 已更新为 0.3.8，[云构建及原生验证通过](https://github.com/mumuhaha487/wechatclaw/actions/runs/41182366453)。
 
-当前 Desktop 会话已实际打开网页，未发现全局浏览器禁用；该检查不等同于已验收 QQClaw 接续副本中的浏览器操作。内置浏览器仍由 Desktop 提供，需要点击「Desktop 中继续」并在那里发送任务。
+0.3.8 当时的浏览器方案依赖 Desktop 接续，未验收 QQClaw 副本的浏览器操作。0.3.9 已改为本项目自带浏览器，上述历史限制不再适用。
