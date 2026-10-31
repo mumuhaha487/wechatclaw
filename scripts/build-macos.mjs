@@ -16,6 +16,7 @@ export async function macPayload(root, resources) {
   await build({ entryPoints: [path.join(root, "backend/main.mjs")], outfile: path.join(resources, "backend.cjs"), bundle: true, platform: "node", target: "node22", format: "cjs", minify: true, legalComments: "none" });
   await build({ entryPoints: [path.join(root, "ui/app.mjs")], outfile: path.join(resources, "ui/app.js"), bundle: true, platform: "browser", target: "safari16.4", format: "iife", minify: true, legalComments: "none" });
   for (const file of ["index.html", "app.css", "desktop.css"]) await fs.copyFile(path.join(root, "ui", file), path.join(resources, "ui", file));
+  await fs.copyFile(path.join(root, "shared/browser-page.js"), path.join(resources, "browser-page.js"));
   await fs.cp(path.join(root, "ui/assets"), path.join(resources, "ui/assets"), { recursive: true });
   const notices = [await fs.readFile(path.join(root, "LICENSE"), "utf8")];
   for (const file of ["CODEX-WEIXIN-LICENSE.txt", "PI-DESKTOP-LICENSE.txt"]) notices.push(`${file}\n${await fs.readFile(path.join(root, "docs", file), "utf8")}`);
@@ -50,7 +51,7 @@ export async function buildMac(root = project) {
     const compiled = [];
     for (const target of macTargets) {
       const binary = path.join(temporary, target.split("-")[0]); compiled.push(binary);
-      await run("/usr/bin/xcrun", ["swiftc", "-swift-version", "5", "-parse-as-library", "-O", "-whole-module-optimization", "-sdk", sdk, "-target", target, "-framework", "AppKit", "-framework", "WebKit", "-framework", "Security", "-framework", "CryptoKit", path.join(root, "native/macos/QQClaw.swift"), "-o", binary]);
+      await run("/usr/bin/xcrun", ["swiftc", "-swift-version", "5", "-parse-as-library", "-O", "-whole-module-optimization", "-sdk", sdk, "-target", target, "-framework", "AppKit", "-framework", "WebKit", "-framework", "Security", "-framework", "CryptoKit", path.join(root, "native/macos/QQClaw.swift"), path.join(root, "native/macos/BrowserHost.swift"), "-o", binary]);
     }
     const executable = path.join(binaries, "QQClaw");
     await run("/usr/bin/lipo", ["-create", ...compiled, "-output", executable]);

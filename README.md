@@ -1,6 +1,6 @@
 # QQClaw
 
-当前源码为 **0.3.8**：修复独立 Codex 后台继承父 Desktop 工具连接、执行器身份的问题，并为已有会话更新工具边界说明。发布包状态以本文件末尾的交付记录为准。
+当前源码为 **0.3.9**：新增 QQClaw 自带浏览器，桌面和微信任务均可通过独立 Codex CLI 操作，无需 Codex Desktop、CodexHost 或 Chrome 扩展。发布包状态以本文件末尾的交付记录为准。
 
 轻量 Windows / macOS Codex 工作台。在桌面上编程，也可以通过腾讯 iLink / ClawBot 从微信操作各自的项目目录。
 
@@ -28,13 +28,23 @@ Mac：把 **`release/macos/QQClaw.dmg`** 传到 Mac，双击打开，将 QQClaw 
 
 微信需要本机和应用保持运行；关闭窗口会停止接收，下一次启动会恢复已保存的账户。支持文字、语音转写、图片、视频、文件，以及未转写语音的原始音频附件。附件下载并解密后交给 Codex 读取；生成的图片、视频和文件通过腾讯 CDN 加密上传，以微信原生卡片发送。单附件上限 100 MiB。不处理群聊。
 
-## 在 Codex Desktop 中继续
+## 内置浏览器
 
-1. 在 QQClaw 会话右上角点击 **Desktop 中继续**，或从会话菜单选择 **在 Codex Desktop 中继续**。
+直接在 QQClaw 或微信发送「调用内置浏览器打开谷歌搜索 AI 热点」，Codex 会调用 `qqclaw_browser` 工具，在 QQClaw 自己的浏览器窗口打开网页、读取内容并返回结果。也可点击会话右上角「内置浏览器」手动查看。无需先点击接续按钮，不会控制其他浏览器中的私人标签页。
+
+支持打开网址、读取页面、点击、填写、提交搜索、选择下拉项、滚动、返回和截图。全自动模式按用户任务执行网页操作；询问/允许编辑模式的网页交互会在桌面显示审批；只读模式仅提供打开、阅读、滚动、返回和截图。第三方模型服务沿用当前会话配置，模型本身需支持工具调用。
+
+Windows 使用系统 WebView2，Mac 使用系统 WebKit，不随安装包打包完整 Chromium。Windows 浏览器登录态保存在应用数据目录，按微信账户或本地会话隔离；Mac 当前使用账户隔离的内存会话，退出应用后需重新登录网站。当前不支持自动下载或上传文件、跨域 iframe 内操作；下载请使用系统浏览器。验证码、网络限制或网站拒绝嵌入式登录时会如实报告，不能保证任意网站均可自动操作。
+
+浏览器 MCP 服务只监听本机随机端口，使用独立随机令牌，随各自 Codex 连接关闭；仅向该子进程注入配置，不写入全局 Codex 配置、不依赖 CodexHost。网页窗口没有 QQClaw 应用消息桥或本地文件读取接口。
+
+## 在 Codex Desktop 中继续（可选）
+
+1. 从会话菜单选择 **在 Codex Desktop 中继续**。
 2. 已有原生历史会保存为独立的 Codex 对话副本，并通过官方深链接打开 Desktop；空会话直接打开当前工作目录。草稿保留在 QQClaw，请在 Desktop 中发送下一条任务。
 3. 在 Desktop 使用其内置浏览器及可用工具。Desktop 副本的后续消息不会自动同步回 QQClaw 或微信；原会话仍可继续使用。
 
-QQClaw 后台与 Desktop 的浏览器执行器相互独立。仅将运行来源切换为「Desktop 附带的运行程序」，不会让 QQClaw 或微信获得 Desktop 内置浏览器。如果后台提示 `Local browser use is disabled in Work settings`，这也可能表示共享工具不属于当前执行器，不能据此判断用户关闭了设置。请点击「Desktop 中继续」，并在 Desktop 中发送下一条任务。若 Desktop 自己的会话也提示禁用，则需检查 Desktop / Work 的浏览器设置与账户策略。QQClaw 不会修改或绕过这些限制。
+QQClaw 后台与 Desktop 的工具相互独立。QQClaw 的网页任务使用本项目自带的 `qqclaw_browser`，不会复用或修改 Desktop 的私有浏览器连接与权限。
 
 副本使用本机 Codex 配置和动态默认模型，避免继续依赖 QQClaw 的临时第三方 API 转发进程。Desktop 的模型、登录和工具需在 Desktop 中配置。同一历史重复点击会复用已有副本；QQClaw 有新历史后会创建新副本。目录中有运行或排队任务时，先等待任务结束。两端编辑同一目录时请协调操作。
 
@@ -102,6 +112,9 @@ Windows 构建始终只输出 `release/QQClaw.exe`。构建前请关闭程序；
 | `backend/wechat-*.mjs` | codex-weixin 的媒体加解密、消息解析、发送动作、提示词、合并缓冲与微信命令 |
 | `backend/codex.mjs` | Codex App Server JSON-RPC、模型列表、流式事件与权限 |
 | `backend/codex-runtime.mjs` | Desktop / CLI 来源发现、真实版本验证、自动回退与环境隔离 |
+| `backend/browser.mjs` | 每会话独立、带鉴权的浏览器 MCP 服务及权限配置 |
+| `shared/browser-page.js` | 网页快照、元素引用和固定页面操作 |
+| `native/BrowserHost.cs` / `native/macos/BrowserHost.swift` | 独立 WebView2 / WKWebView 浏览器窗口 |
 | `backend/adapter.mjs` | 第三方 Chat Completions 与 Responses 兼容层 |
 | `backend/app.mjs` | 项目、会话、模型服务、目录任务队列和操作路由 |
 | `backend/store.mjs` | 合并尾随保存、快照时序保证、原子替换、凭证过滤与 DPAPI 桥接 |

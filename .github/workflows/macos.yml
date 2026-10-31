@@ -22,7 +22,7 @@ jobs:
           node --input-type=module <<'NODE'
           import fs from 'node:fs/promises';
           import path from 'node:path';
-          import {execFileSync} from 'node:child_process';
+          import {execFileSync,spawn} from 'node:child_process';
           const root = process.env.GITHUB_WORKSPACE;
           const temporary = await fs.mkdtemp(path.join(process.env.RUNNER_TEMP, 'qqclaw-verify-'));
           const run = (exe, args, options={}) => execFileSync(exe, args, {encoding:'utf8',timeout:180000,...options});
@@ -52,6 +52,9 @@ jobs:
               @MainActor static func main() async {
                   launchBackendIfRequested()
                   signal(SIGPIPE, SIG_IGN)
+                  let application = NSApplication.shared
+                  application.setActivationPolicy(.accessory)
+                  application.finishLaunching()
                   let env = ProcessInfo.processInfo.environment
                   let host = Host()
                   host.data = URL(fileURLWithPath: env["QQCLAW_DATA_DIR"]!)
@@ -70,6 +73,28 @@ jobs:
                       do { _ = try DesktopIntegration.url(["threadId": "https://invalid"]); throw failure("Invalid thread accepted") }
                       catch let error as NSError { guard error.localizedDescription.contains("会话 ID 无效") else { throw error } }
                       print("PASS: Desktop URL encoding and invalid thread rejection")
+                      let browser = BrowserHost(resources: host.resources)
+                      let owner = UUID().uuidString.lowercased()
+                      let fixture = env["QQCLAW_BROWSER_FIXTURE_URL"]!
+                      func control(_ action: String, _ values: [String: Any] = [:]) async throws -> Any {
+                          try await browser.handle(values.merging(["action": action, "owner": owner, "profile": String(repeating: "a", count: 32)]) { _, value in value })
+                      }
+                      let page = try await control("open", ["url": fixture]) as! [String: Any]
+                      guard page["title"] as? String == "QQClaw Browser Check", let elements = page["elements"] as? [[String: Any]], let ref = elements.first(where: { $0["role"] as? String == "input" })?["ref"] as? String else { throw failure("Native browser snapshot failed") }
+                      _ = try await control("fill", ["ref": ref, "text": "native-mac-search"])
+                      _ = try await control("press", ["ref": ref, "key": "Enter"])
+                      var found = false
+                      for _ in 0..<40 {
+                          let result = try await control("snapshot") as! [String: Any]
+                          if (result["text"] as? String ?? "").contains("Search received: native-mac-search") { found = true; break }
+                          try await Task.sleep(nanoseconds: 100_000_000)
+                      }
+                      guard found else { throw failure("Native browser form submission failed") }
+                      let screenshot = try await control("screenshot") as! [String: Any]
+                      guard let encoded = screenshot["imageBase64"] as? String, let png = Data(base64Encoded: encoded), png.count > 100 else { throw failure("Native browser screenshot failed") }
+                      guard !BrowserHost.allowed("file:///etc/passwd"), !BrowserHost.allowed("https://qqclaw.local") else { throw failure("Browser accepted forbidden URL") }
+                      browser.windows.values.forEach { $0.window.orderOut(nil) }
+                      print("PASS: native WKWebView navigation, DOM snapshot, input, form submission, screenshot and URL restrictions")
                       let first = try await host.startBackend()
                       _ = try await host.call(first, "snapshot")
                       print("PASS: native backend startup and small pipe response")
@@ -102,8 +127,20 @@ jobs:
           await fs.writeFile(verifier,source.slice(0,bootstrap)+main);
           const executable = path.join(temporary,'QQClawVerify');
           const sdk = run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-path']).trim();
-          run('/usr/bin/xcrun',['swiftc','-swift-version','5','-parse-as-library','-O','-sdk',sdk,'-framework','AppKit','-framework','WebKit','-framework','Security','-framework','CryptoKit',verifier,'-o',executable]);
-          console.log(run(executable,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(temporary,'data'),QQCLAW_CONVERSATIONS_DIR:path.join(temporary,'conversations'),QQCLAW_VERIFY_RESOURCES:path.join(app,'Contents/Resources')}}));
+          run('/usr/bin/xcrun',['swiftc','-swift-version','5','-parse-as-library','-O','-sdk',sdk,'-framework','AppKit','-framework','WebKit','-framework','Security','-framework','CryptoKit',verifier,path.join(root,'native/macos/BrowserHost.swift'),'-o',executable]);
+          const fixture = spawn(process.execPath,['-e',String.raw`
+            const http=require('node:http');
+            const server=http.createServer((req,res)=>{
+              res.setHeader('Content-Type','text/html; charset=utf-8');
+              const query=new URL(req.url,'http://localhost').searchParams.get('q');
+              res.end(query===null?'<title>QQClaw Browser Check</title><form><label>Search<input name="q"></label><button>Search</button></form>':'<title>Search Result</title><h1>Search received: '+query.replace(/[<>&]/g,'')+'</h1>');
+            });
+            server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
+          `],{stdio:['ignore','pipe','inherit']});
+          try {
+            const port = await new Promise((resolve,reject)=>{fixture.stdout.once('data',bytes=>resolve(Number(String(bytes).trim())));fixture.once('error',reject);fixture.once('exit',()=>reject(new Error('Browser fixture exited')));});
+            console.log(run(executable,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(temporary,'data'),QQCLAW_CONVERSATIONS_DIR:path.join(temporary,'conversations'),QQCLAW_VERIFY_RESOURCES:path.join(app,'Contents/Resources'),QQCLAW_BROWSER_FIXTURE_URL:'http://127.0.0.1:'+port+'/'}}));
+          } finally { fixture.kill(); }
           await fs.rm(temporary,{recursive:true,force:true});
           NODE
       - uses: actions/upload-artifact@v4

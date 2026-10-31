@@ -96,7 +96,7 @@ internal static class Program {
                         using (var source = entry.Open()) using (var destination = File.Create(target)) source.CopyTo(destination);
                     }
                 }
-                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.8");
+                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.9");
             }
             CleanupOldRuntimes(hash);
             SetDllDirectory(RuntimeDirectory);
@@ -122,6 +122,7 @@ internal static class Program {
 }
 
 internal sealed class DesktopWindow : Form {
+    private BrowserHost browserHost;
     private WebView2 view;
     private Process backend;
     private BackendPipeWriter backendInput;
@@ -293,7 +294,7 @@ internal sealed class DesktopWindow : Form {
                 }
             } catch (Exception failure) { error = failure.Message; }
         }
-        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.8", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
+        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.9", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
     }
     private Task<string> ReadNodeVersion(string node) { return ReadNodeVersion(node, 5); }
     private async Task<string> ReadNodeVersion(string node, int timeoutSeconds) {
@@ -393,6 +394,15 @@ internal sealed class DesktopWindow : Form {
         if (backend != owner) return;
         try {
             if (Get(message, "kind") == "native") {
+                if (Get(message, "method") == "browser.control") {
+                    BeginInvoke(new Action(async delegate {
+                        object browserResult = null; string browserError = null;
+                        try { browserHost = browserHost ?? new BrowserHost(this); browserResult = await browserHost.Handle(Params(message)); }
+                        catch (Exception failure) { browserError = failure.Message; }
+                        if (backend == owner) WriteBackend(new { kind = "nativeResponse", id = message["id"], result = browserResult, error = browserError });
+                    }));
+                    return;
+                }
                 object result = null; string error = null;
                 try {
                     var p = Params(message); var value = Get(p, "value"); var method = Get(message, "method");

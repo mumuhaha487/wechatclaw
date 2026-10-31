@@ -163,7 +163,19 @@ Codex 新线程显式非临时保存，保留服务返回的真实 thread.path�
 Mac 分发改为单一 `release/macos/QQClaw.dmg`：只读压缩磁盘映像包含通用应用、指向 `/Applications` 的安装入口和中文说明。构建使用系统 `hdiutil` 创建并校验；开发启动和 CI 从磁盘映像复制应用后执行。可选 Developer ID 签名及公证针对完整 DMG，未配置证书时应用仍使用 ad hoc 签名。
 
 
-## Desktop 接续
+## QQClaw 内置浏览器（0.3.9）
+
+`CodexClient` 启动前调用 `BrowserTools.start()`，为该会话创建带随机 Bearer token 的 loopback HTTP MCP 服务，并通过该子进程的 `-c mcp_servers.qqclaw_browser=...` 注入。服务验证鉴权、Host、Origin、参数大小和工具白名单，不修改用户全局配置。`App.client` 的连接签名包括权限，切换权限会重建连接。全自动模式只预授权本服务的 click/fill/press/select；询问模式遵循 Codex 的 MCP elicitation 审批；只读模式在工具发现与执行两层禁用交互。
+
+工具通过内部 `browser.control` 调用原生宿主。每个 session UUID 对应独立窗口，profile 为 accountId（本地会话则 sessionId）的 SHA-256 截断值。Windows 的 WebView2 profile 位于应用数据的 `browsers/`；macOS 13.3 为兼容账户隔离，使用按账户复用的 nonPersistent WKWebsiteDataStore，登录态不跨应用重启。
+
+网页视图不暴露 QQClaw 的应用桥、虚拟应用域或 HostObjects，仅允许 HTTP/HTTPS。`shared/browser-page.js` 只实现固定 DOM 操作，不提供任意 JS 工具；快照中的元素引用随新快照失效，密码值遮盖。跨域 iframe 只返回网址，不自动操作其内容。下载和上传暂不支持。截图经 MCP image 返回，保留原始 PNG。
+
+MCP 调用按会话排队；interrupt 使排队调用失效并停止当前加载。关闭空闲 Codex 连接会关闭端口和 socket，保留用户网页窗口；浏览器只随 QQClaw 本身退出。Windows 使用 NavigationCompleted、Mac 使用 WKNavigationDelegate 等待打开/返回，网页加载有单次超时，Codex 整个任务仍没有总时长截止。
+
+该实现没有引入 CodexHost 代码、程序或身份。它使用 QQClaw 的浏览器，不等于复用 Codex Desktop 的内置浏览器，也不需要用户安装 Chrome 扩展。
+
+## Desktop 接续（可选）
 
 `codex-runtime.mjs` 负责验证并选择实际执行的 Desktop / CLI 程序。`app.mjs` 的 `desktop.continue` 保存源会话，使用独立本机客户端调用原生 `thread/fork`，保存 `desktopCopy`，再交由宿主生成并打开 `codex://threads/<id>`。空会话用 `codex://threads/new?path=...`。复制持有工作目录锁，运行/排队任务完成前拒绝接续；同一历史重复点击复用副本。
 

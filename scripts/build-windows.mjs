@@ -59,6 +59,7 @@ for (const file of ["index.html", "app.css", "desktop.css"])
     path.join(root, "ui", file),
     path.join(staging, "ui", file),
   );
+await fs.copyFile(path.join(root, "shared", "browser-page.js"), path.join(staging, "browser-page.js"));
 
 const notices = [await fs.readFile(path.join(root, "LICENSE"), "utf8")];
 notices.push("codex-weixin · https://github.com/XavierJiezou/codex-weixin\n" + await fs.readFile(path.join(root, "docs", "CODEX-WEIXIN-LICENSE.txt"), "utf8"));
@@ -252,6 +253,7 @@ const args = [
   `/resource:${archive},payload.zip`,
   ...references.map((r) => `/reference:${r}`),
   path.join(root, "native", "Program.cs"),
+  path.join(root, "native", "BrowserHost.cs"),
 ];
 try {
   const result = await exec(compiler, args, {

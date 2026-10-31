@@ -219,6 +219,7 @@ final class Backend: @unchecked Sendable {
     var data: URL!, resources: URL!, vault: Vault!, lockFD: Int32 = -1
     var quitting = false, allowQuit = false, restarting = false, installing = false
     var requestSequence = 0
+    var browserHost: BrowserHost?
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             let env = ProcessInfo.processInfo.environment
@@ -282,6 +283,9 @@ final class Backend: @unchecked Sendable {
         case "window.maximize": window.zoom(nil); return true
         case "window.close": NSApp.terminate(nil); return true
         case "window.drag", "window.resize": return true // Native titlebar and resize handles.
+        case "browser.control":
+            if browserHost == nil { browserHost = BrowserHost(resources: resources) }
+            return try await browserHost!.handle(p)
         case "desktop.status": return DesktopIntegration.status()
         case "desktop.open": return try await DesktopIntegration.open(p)
         case "dialog.folder", "dialog.file", "dialog.executable":
@@ -380,7 +384,7 @@ final class Backend: @unchecked Sendable {
         guard backend === child else { return }
         let kind = message["kind"] as? String ?? "", id = message["id"] as? String ?? ""
         if kind == "native" {
-            guard let method = message["method"] as? String, ["vault.encrypt", "vault.decrypt", "shell.reveal", "shell.folder", "desktop.status", "desktop.open"].contains(method) else { try? child.send(["kind": "nativeResponse", "id": id, "error": "不支持的内部请求。"]); return }
+            guard let method = message["method"] as? String, ["vault.encrypt", "vault.decrypt", "shell.reveal", "shell.folder", "desktop.status", "desktop.open", "browser.control"].contains(method) else { try? child.send(["kind": "nativeResponse", "id": id, "error": "不支持的内部请求。"]); return }
             let p = message["params"] as? [String: Any] ?? [:]
             if method.hasPrefix("vault.") {
                 let vault = self.vault!

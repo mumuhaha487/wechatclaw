@@ -9,6 +9,7 @@ import { validateBaseUrl } from "./adapter.mjs";
 import { parseActionBlocksSafe } from "./wechat-actions.mjs";
 import { buildPrompt } from "./wechat-format.mjs";
 import { sameWorkspace, workspaceKey } from "../shared/workspace.mjs";
+import { BrowserTools } from "./browser.mjs";
 
 export const EFFORTS = [
   "",
@@ -162,13 +163,18 @@ export class App {
       this.store.state.settings.codexPath,
       this.store.state.settings.codexSource,
       executable,
+      session.permission,
     ]);
     let entry = this.clients.get(session.id);
     if (entry?.signature !== signature) {
       entry?.client.close();
       entry = {
         signature,
-        client: this.clientFactory({ executable, profile }),
+        client: this.clientFactory({ executable, profile,
+          browser: new BrowserTools({ native: this.native, session,
+            onActivity: ({ action }) => this.emit("activity", { sessionId: session.id, text: `内置浏览器：${action}` }),
+          }),
+        }),
         lastUsed: Date.now(),
       };
       this.clients.set(session.id, entry);
@@ -478,6 +484,10 @@ export class App {
         return { ...this.store.snapshot(), wechat: this.bridge.status() };
       case "desktop.continue":
         return this.continueDesktop(p);
+      case "browser.open": {
+        const session = this.getSession(p.sessionId);
+        return (await this.client(session)).browser.call("open", { url: p.url || "https://www.google.com/" });
+      }
       case "attachment.reveal": {
         const session = this.getSession(p.sessionId);
         const message = session.messages[Number(p.message)];
