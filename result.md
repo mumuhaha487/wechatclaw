@@ -1,6 +1,6 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-10-31。此文件供后续开发与独立审核使用。**当前源码与 Windows 正式包为 0.3.13，已替换启动；本轮 Mac 云构建待执行。官方扩展仍未接通，未达到全部目标，不能写成整体通过。** 下文保留历史交付记录，最新状态见文末。
+更新时间：2026-10-31。此文件供后续开发与独立审核使用。**当前源码与两端正式包为 0.3.13，Windows 已替换启动；Mac 云构建与原生检查成功。官方扩展仍未接通，未达到全部目标，不能写成整体通过。** 下文保留历史交付记录，最新状态见文末。
 
 ## 用户目标与不可替换的要求
 
@@ -203,3 +203,8 @@ Mac 未在用户自有实机上做完整 GUI 或线上微信验收，签名仍�
 Windows 同名正式程序已在确认运行/排队/待回复均为 0 后正常关闭、替换并重启。新 EXE 为 604,160 bytes，SHA-256 `8615AC4BE4CCFA3F55656BB32EE44E69A20D191BEAE659C6EE258F50B6253542`。原账户/消息/配置保留比较见 `replacement-v0313/after.json`；升级前加密数据和旧 EXE 保存在项目外。
 
 本次只交付外观与图片边界调整。`backend/checkpoints.mjs`、`shared/change-stats.mjs` 是上轮开始但尚未接入、未验收的开发中模块，不在运行 bundle 内，不能据此声称逐轮撤销已实现。官方扩展接入和其余主页差异仍未完成，整体目标继续保留。
+
+
+0.3.13 运行代码提交为 `bd24eadfb9c32a0ec8ecdd2adb38bb1eb7f889cd`。[本次 Mac 云构建](https://github.com/mumuhaha487/wechatclaw/actions/runs/41198403060) 成功；已读取实际执行输出，确认 Universal `x86_64 arm64`、DMG 校验/挂载/应用复制、签名/系统库、Node 检测、原生窗口和 WKWebView 主题切换、手动网页预览/最后标签关闭、附件导入/预览、钥匙串、后台重启后附件和会话持久化。artifact ZIP SHA-256 为 `e3a90c8374d2547b71110e098d4172b48b795edad7638d2c9aadb48d0691f9b1`，与上传日志 digest 一致。新版 `release/macos/QQClaw.dmg` 为 **667,437 bytes**，SHA-256 `48B37417D1FE7D60790358A9D96927ABD8F568363AD0BF960FEBEAF8250E3A52`，已替换同名安装包；旧包保存在项目外。Mac 未做用户实机完整人工 GUI 检查，仍为本地签名、未 Apple 公证。
+
+正式数据复核仍为 **2 个账户、3 个会话、134 条消息**；账户身份/目录、threadId/逐条消息、Provider URL/Key 保留比较均为 true，主题为 dark、appearanceVersion=3。正式 Windows 运行资源目录为 `C:\Users\admin\AppData\Local\QQClaw\app\3C4C6D76E50BB34A`，`.complete=0.3.13`。`runtime-audit.json` 验证实际运行的后台、UI JavaScript、两份 CSS 及 HTML 分别与正式 EXE 内嵌资源完全一致；CSS 和 HTML 也与当前源文件一致。测试、截图、构建依赖、加密备份和旧成品均留在项目外，release 中继续仅有一份 Windows EXE 和一份 Mac DMG。

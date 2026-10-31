@@ -2,7 +2,7 @@
 
 2026-10-31，当前源码为 **0.3.13**，按最新要求默认深色黑白。官方 ChatGPT 扩展自动调用尚未完成，本版本仅保留手动网页预览；微信/QQClaw 的自动浏览器任务会如实报告无法完成。最新验收、源码及成品指纹见根目录 `result.md`；下方早期交付记录保留为历史，不能作为当前官方插件成功的证据。
 
-## 当前成品
+## 历史成品记录（非当前版本）
 
 - Windows：唯一 `release/QQClaw.exe`，589,312 字节，SHA-256 `A57DFE69A7474D7365A928AE45736AFC457AAFCDE2E4897C765DFB77709D7435`。真实 EXE 已完成输入任务、调用 Codex、内置浏览器填写/提交、显示真实结果的验证。正式程序在确认空闲后正常退出并替换，现已重启；现有 2 个账户、3 个会话保留，新版资源与后台已核对。
 - Mac：唯一 `release/macos/QQClaw.dmg`，633,978 字节，SHA-256 `2d2c44f037fbfd139dd7432006d52ee744ea08ecd4a4ff0abf884e77e42fdff0`。macOS 13.3+、Intel / Apple Silicon Universal，ad hoc 签名，尚未 Apple 公证。Artifact 官方摘要、ZIP CRC 和 DMG UDIF 文件尾已核对。
