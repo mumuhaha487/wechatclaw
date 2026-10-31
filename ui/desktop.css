@@ -1961,4 +1961,13 @@ mark[data-message-find].current-match { background: var(--text); color: var(--pa
 .message-find .icon { width: 15px; height: 15px; }
 .message-find-count { flex: 0 0 auto; white-space: nowrap; font-size: 11px; color: var(--muted); }
 .message-find[hidden] { display: none; }
+.browser-find { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; padding: 5px 10px; border-bottom: 1px solid var(--line); background: var(--page); }
+.browser-find input { flex: 1; width: 0; min-width: 50px; height: 29px; border: 0; padding: 2px 4px; background: transparent; font-size: 12px; }
+.browser-find .icon-button { flex: 0 0 auto; width: 26px; height: 28px; }
+.browser-find .icon { width: 15px; height: 15px; }
+.browser-find-status { flex: 0 0 auto; max-width: 85px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.browser-find-error { width: 100%; margin: 2px 0 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.browser-find-error[hidden] { display: none; }
+.document-scroll mark[data-message-find] { color: inherit; background: #ddd; }
+.document-scroll mark.current-match { background: #222; color: #fff; }
 .message-find input::-webkit-search-cancel-button, #session-search::-webkit-search-cancel-button { filter: grayscale(1); opacity: .65; }

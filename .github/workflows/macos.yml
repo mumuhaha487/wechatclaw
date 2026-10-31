@@ -156,6 +156,26 @@ jobs:
             })().catch(error=>{window.__tabActionsDone=error.message});
           `+'</script>';
           const tabHTML64=Buffer.from(tabHTML).toString('base64');
+          const findBundle = await build({entryPoints:[path.join(root,'ui/message-search.mjs')],bundle:true,write:false,format:'iife',globalName:'QQClawFind',target:'safari16.4'});
+          const findHTML = '<!doctype html><div id="file" style="width:600px;height:300px;overflow:auto"><p>Alpha <strong>Beta</strong></p><p>alpha beta</p><p>中文 中文 [x].*</p></div><textarea id="other"></textarea><script>' + findBundle.outputFiles[0].text + `
+            try {
+              const assert=(condition,message)=>{if(!condition)throw Error(message)};
+              let owner='one';const root=document.getElementById('file');
+              const find=new QQClawFind.MessageFind({current:()=>({id:owner}),root:()=>root,documentMode:true,view:{closeOutline(){},reveal(){},captureReading(){}}});
+              find.open();const input=find.input;
+              const query=value=>{input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}))};
+              query('alpha beta');assert(find.total===2&&find.count.textContent==='1/2','WebKit file find lost inline text');
+              input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));assert(find.count.textContent==='2/2','WebKit find Enter failed');
+              input.dispatchEvent(new KeyboardEvent('keydown',{key:'g',metaKey:true,shiftKey:true,bubbles:true}));assert(find.count.textContent==='1/2','WebKit reverse find failed');
+              query('中文');assert(find.total===2,'WebKit Unicode file find failed');query('[x].*');assert(find.total===1,'WebKit literal find failed');
+              query('absent');assert(find.total===0&&find.next.disabled,'WebKit absent text count failed');
+              const other=document.getElementById('other');other.focus();other.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+              assert(!find.bar&&document.activeElement===other,'WebKit file escape stole chat focus');
+              find.open();query('alpha');owner='two';find.refresh();assert(!find.bar&&!root.querySelector('mark'),'WebKit file owner switch retained highlights');
+              window.__findDone='passed';
+            } catch(error) {window.__findDone=error.message}
+          ` + '</script>';
+          const findHTML64=Buffer.from(findHTML).toString('base64');
           // Only this temporary verifier replaces main. The shipped .app is unchanged.
           const main = String.raw`
           @main struct VerifyMain {
@@ -208,13 +228,20 @@ jobs:
                       host.menuCommand(newChat)
                       let dispatched = try await host.web.evaluateJavaScript("JSON.stringify(window.__menuEvents)") as? String ?? ""
                       guard dispatched.contains("menu-action"), dispatched.contains("new-session") else { throw failure("Native menu action did not reach WebKit bridge") }
-                      guard let searchMenu = menuCommand("search"), let findMenu = menuCommand("find-message"), searchMenu.keyEquivalent == "k", findMenu.keyEquivalent == "f", host.validateMenuItem(searchMenu), !host.validateMenuItem(findMenu) else { throw failure("Native search menu or no-session gate failed") }
-                      _ = try await host.handle("window.menuState",["ready":true,"hasSession":true,"sidebar":true,"panel":false,"fontSize":14])
+                      guard let searchMenu = menuCommand("search"), let findMenu = menuCommand("find-current"), searchMenu.keyEquivalent == "k", findMenu.keyEquivalent == "f", host.validateMenuItem(searchMenu), !host.validateMenuItem(findMenu) else { throw failure("Native search menu or no-content gate failed") }
+                      _ = try await host.handle("window.menuState",["ready":true,"workspaceAvailable":true,"canFind":true,"hasSession":true,"sidebar":true,"panel":false,"fontSize":14])
                       guard host.validateMenuItem(findMenu) else { throw failure("Native find menu did not enable for current session") }
                       host.menuCommand(searchMenu); host.menuCommand(findMenu)
                       let searchEvents = try await host.web.evaluateJavaScript("JSON.stringify(window.__menuEvents)") as? String ?? ""
-                      guard searchEvents.contains("search"), searchEvents.contains("find-message") else { throw failure("Native search/find actions did not reach WebKit bridge") }
-                      print("PASS: AppKit global search/current-chat find shortcuts, session gate and command dispatch")
+                      guard searchEvents.contains("search"), searchEvents.contains("find-current") else { throw failure("Native search/find actions did not reach WebKit bridge") }
+                      guard let nextFind = menuCommand("find-next"), let previousFind = menuCommand("find-previous"), let closeFind = menuCommand("find-close"),
+                            nextFind.keyEquivalent == "g", previousFind.keyEquivalentModifierMask == [.command,.shift], closeFind.keyEquivalent == "\u{1b}",
+                            !host.validateMenuItem(nextFind), !host.validateMenuItem(closeFind) else { throw failure("Native find menu keys or inactive gate failed") }
+                      _ = try await host.handle("window.menuState",["ready":true,"workspaceAvailable":true,"canFind":true,"findOpen":true,"canStepFind":true])
+                      guard host.validateMenuItem(nextFind), host.validateMenuItem(previousFind), host.validateMenuItem(closeFind) else { throw failure("Native active find menu gate failed") }
+                      _ = try await host.handle("window.menuState",["ready":true,"workspaceAvailable":false,"canFind":true,"findOpen":true,"canStepFind":true])
+                      guard !host.validateMenuItem(findMenu), !host.validateMenuItem(nextFind), !host.validateMenuItem(closeFind) else { throw failure("Native modal find menu gate failed") }
+                      print("PASS: AppKit current-content find, Cmd+G/Shift+Cmd+G, Escape, content/modal/result gates and command dispatch")
                       print("PASS: AppKit file/view/help menus, setup gating, checked state, font limits and WebKit command dispatch")
                       guard let newTabMenu = menuCommand("browser-new-tab"), let closeTabMenu = menuCommand("panel-close-active"), let addressMenu = menuCommand("browser-focus-address"), let nextTabMenu = menuCommand("panel-next-tab"), let previousTabMenu = menuCommand("panel-previous-tab"),
                             newTabMenu.keyEquivalent == "t", closeTabMenu.keyEquivalent == "w", addressMenu.keyEquivalent == "l",
@@ -253,6 +280,16 @@ jobs:
                       }
                       guard tabActionsResult == "passed" else { throw failure("WebKit tab-actions component: " + tabActionsResult) }
                       print("PASS: real WebKit tab-actions component keyboard/context menus, focus, disabled items and batch-close owner isolation (not full app GUI or trusted pointer gestures)")
+                      host.web.loadHTMLString(String(decoding: Data(base64Encoded: "${findHTML64}")!, as: UTF8.self), baseURL: nil)
+                      var fileFindResult = ""
+                      for _ in 0..<100 {
+                          fileFindResult = (try? await host.web.evaluateJavaScript("window.__findDone || ''")) as? String ?? ""
+                          if !fileFindResult.isEmpty { break }
+                          try await Task.sleep(nanoseconds: 50_000_000)
+                      }
+                      guard fileFindResult == "passed" else { throw failure("WebKit file-find component: " + fileFindResult) }
+                      print("PASS: real WebKit file-find component inline/Unicode/literal/absent matches, direction keys, Escape focus and owner cleanup (not trusted-key GUI)")
+                      _ = try await host.web.evaluateJavaScript("window.__menuEvents=[];window.__qqclawReceive=value=>window.__menuEvents.push(value);true")
                       let browserWindow = NSWindow(contentRect: host.web.frame, styleMask: [.titled], backing: .buffered, defer: false)
                       browserWindow.contentView = host.web; browserWindow.orderFront(nil)
                       host.window = browserWindow
@@ -262,6 +299,7 @@ jobs:
                       guard browserWindow.appearance?.name == .aqua, host.web.appearance?.name == .aqua else { throw failure("Light native appearance failed") }
                       print("PASS: native window and WKWebView monochrome appearance switching")
                       let browser = BrowserHost(resources: host.resources, parent: host.web, data: host.data.appendingPathComponent("download-verification")) { _ in }
+                      host.browserHost = browser
                       let owner = UUID().uuidString.lowercased()
                       browser.setView(["owner": owner, "visible": true, "x": 0, "y": 0, "width": 1000, "height": 760, "viewportWidth": 1000, "viewportHeight": 760])
                       let fixture = env["QQCLAW_BROWSER_FIXTURE_URL"]!
@@ -276,6 +314,30 @@ jobs:
                       browser.setView(["visible":false]); guard !browser.focus(owner: owner, tabId: focusTab.id) else { throw failure("Hidden page accepted focus") }
                       browser.setView(["owner": owner, "visible": true, "x": 0, "y": 0, "width": 1000, "height": 760, "viewportWidth": 1000, "viewportHeight": 760])
                       print("PASS: real WKWebView first-responder focus with owner, tab and visibility validation")
+                      let nativeMatch = try await control("find", ["tabId": focusTab.id,"operation":"search","query":"alpha beta"]) as! [String: Any]
+                      guard nativeMatch["found"] as? Bool == true, nativeMatch["total"] is NSNull, nativeMatch["index"] is NSNull, focusTab.findCanStep else { throw failure("WKWebView true find result or honest count failed") }
+                      for direction in ["next","previous"] {
+                          let result = try await control("find", ["tabId": focusTab.id,"operation":direction,"query":"alpha beta"]) as! [String: Any]
+                          guard result["found"] as? Bool == true else { throw failure("WebKit directional find failed") }
+                      }
+                      for term in ["中文","[x].*"] {
+                          let result = try await control("find", ["tabId": focusTab.id,"operation":"search","query":term]) as! [String: Any]
+                          guard result["found"] as? Bool == true else { throw failure("WebKit Unicode/literal find failed") }
+                      }
+                      guard browser.focus(owner:owner,tabId:focusTab.id), browser.focusedPage() === focusTab else { throw failure("Native focused-page detection failed") }
+                      _ = try await host.handle("window.menuState",["ready":true,"workspaceAvailable":true,"canFind":false,"findOpen":false,"canStepFind":false])
+                      guard host.validateMenuItem(findMenu), host.validateMenuItem(nextFind), host.validateMenuItem(closeFind) else { throw failure("Focused native page ignored its actual find state") }
+                      host.menuCommand(findMenu)
+                      let nativeFindEvents = try await host.web.evaluateJavaScript("JSON.stringify(window.__menuEvents)") as? String ?? ""
+                      guard nativeFindEvents.contains("browser-shortcut"), nativeFindEvents.contains("find-browser"), nativeFindEvents.contains(focusTab.id), nativeFindEvents.contains(owner) else { throw failure("Focused native find dispatch lost owner/tab") }
+                      guard browser.focusedPage() == nil else { throw failure("Main UI focus still reported native page") }
+                      let absentMatch = try await control("find", ["tabId": focusTab.id,"operation":"search","query":"absent-native-9872"]) as! [String: Any]
+                      guard absentMatch["found"] as? Bool == false, !focusTab.findCanStep else { throw failure("WebKit false find result failed") }
+                      _ = try await control("find", ["tabId": focusTab.id,"operation":"clear","query":""])
+                      guard !focusTab.findOpen, !focusTab.findCanStep else { throw failure("WebKit clear retained find state") }
+                      do { _ = try await control("find", ["tabId":"missing","operation":"search","query":"alpha"]); throw failure("Find accepted invalid tab") }
+                      catch let error as NSError { guard error.localizedDescription.contains("已关闭") else { throw error } }
+                      print("PASS: real WKWebView find true/false, inline/Unicode/literal text, directions, honest unavailable counts, clear, invalid tab and focused AppKit dispatch (component verification)")
                       guard page["title"] as? String == "QQClaw Browser Check", let elements = page["elements"] as? [[String: Any]], let ref = elements.first(where: { $0["role"] as? String == "input" })?["ref"] as? String else { throw failure("Native browser snapshot failed") }
                       _ = try await control("fill", ["ref": ref, "text": "native-mac-search"])
                       _ = try await control("press", ["ref": ref, "key": "Enter"])
@@ -577,7 +639,7 @@ jobs:
               }
               res.setHeader('Content-Type','text/html; charset=utf-8');
               const query=new URL(req.url,'http://localhost').searchParams.get('q');
-              res.end(query===null?'<title>QQClaw Browser Check</title><form><label>Search<input name="q"></label><button>Search</button></form>':'<title>Search Result</title><h1>Search received: '+query.replace(/[<>&]/g,'')+'</h1>');
+              res.end(query===null?'<title>QQClaw Browser Check</title><form><label>Search<input name="q"></label><button>Search</button></form><p>Alpha <strong>Beta</strong> alpha beta 中文 中文 [x].*</p>':'<title>Search Result</title><h1>Search received: '+query.replace(/[<>&]/g,'')+'</h1>');
             });
             server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
           `],{stdio:['ignore','pipe','inherit']});

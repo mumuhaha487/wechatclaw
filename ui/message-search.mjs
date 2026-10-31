@@ -140,8 +140,8 @@ export class SessionSearch {
 }
 
 export class MessageFind {
-  constructor({ current, root, view }) {
-    Object.assign(this, { current, root, view });
+  constructor({ current, root, view, documentMode = false, changed = () => {}, active = () => true }) {
+    Object.assign(this, { current, root, view, documentMode, changed, isActive: active });
     this.resize = new ResizeObserver(() => this.position());
     document.addEventListener("keydown", event => this.key(event), true);
     window.addEventListener("resize", () => this.position());
@@ -152,8 +152,8 @@ export class MessageFind {
     this.view.closeOutline(); document.querySelector(".context-menu")?.remove();
     if (!this.bar?.isConnected) {
       this.owner = session.id; this.opener = document.activeElement; this.query = ""; this.active = 0;
-      const bar = this.bar = element("section", "message-find"); bar.setAttribute("role", "search"); bar.setAttribute("aria-label", "在当前会话中查找");
-      const input = this.input = element("input", ""); input.type = "search"; input.maxLength = 512; input.placeholder = "查找此会话…"; input.setAttribute("aria-label", "查找当前会话内容");
+      const bar = this.bar = element("section", `message-find${this.documentMode ? " document-find" : ""}`); bar.setAttribute("role", "search"); bar.setAttribute("aria-label", this.documentMode ? "在当前文件中查找" : "在当前会话中查找");
+      const input = this.input = element("input", ""); input.type = "search"; input.maxLength = 512; input.placeholder = this.documentMode ? "查找此文件…" : "查找此会话…"; input.setAttribute("aria-label", this.documentMode ? "查找当前文件内容" : "查找当前会话内容");
       this.count = element("span", "message-find-count"); this.count.setAttribute("role", "status");
       input.addEventListener("input", () => { this.query = input.value; this.active = 0; this.paint(true); });
       const control = (label, glyph, action) => { const b = element("button", "icon-button"); b.type = "button"; b.setAttribute("aria-label", label); b.title = label; b.innerHTML = glyph; b.addEventListener("click", action); return b; };
@@ -169,7 +169,8 @@ export class MessageFind {
   }
   close(restore = true) {
     const open = this.bar?.isConnected; this.clear(); this.bar?.remove(); this.bar = null; this.resize.disconnect();
-    if (open && restore) (this.opener?.isConnected ? this.opener : document.querySelector("#composer-input"))?.focus({ preventScroll: true });
+    if (open && restore) (this.opener?.isConnected ? this.opener : this.documentMode ? this.root() : document.querySelector("#composer-input"))?.focus({ preventScroll: true });
+    this.changed();
   }
   refresh() {
     if (!this.bar?.isConnected) return;
@@ -179,7 +180,7 @@ export class MessageFind {
   }
   textNodes(article) {
     const nodes = []; let previousBlock;
-    for (const part of article.querySelectorAll(".message-content,.attachment-name")) {
+    for (const part of this.documentMode ? [article] : article.querySelectorAll(".message-content,.attachment-name")) {
       const walker = document.createTreeWalker(part, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement.closest(".message-expand") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
       while (walker.nextNode()) {
         const node = walker.currentNode, block = node.parentElement.closest("p,div,pre,li,h1,h2,h3,h4,h5,h6,blockquote,td,th") || part;
@@ -192,8 +193,8 @@ export class MessageFind {
     return nodes;
   }
   paint(move) {
-    this.clear(); const query = this.query.trim(); this.groups = []; this.total = 0;
-    if (query) for (const article of this.root().querySelectorAll("[data-message-index]")) {
+    this.clear(); const query = this.documentMode ? this.query : this.query.trim(); this.groups = []; this.total = 0;
+    if (query) for (const article of this.documentMode ? [this.root()] : this.root().querySelectorAll("[data-message-index]")) {
       const text = this.textNodes(article).map(n => n.data).join(""), positions = [];
       for (const match of text.matchAll(literal(query, true))) positions.push(match.index, match.index + match[0].length);
       if (positions.length) { this.groups.push({ article, positions, first: this.total }); this.total += positions.length / 2; }
@@ -202,8 +203,9 @@ export class MessageFind {
   }
   show(move) {
     this.clear();
-    this.count.textContent = this.query.trim() ? `${this.total ? this.active + 1 : 0}/${this.total}` : "";
+    this.count.textContent = (this.documentMode ? this.query : this.query.trim()) ? `${this.total ? this.active + 1 : 0}/${this.total}` : "";
     this.previous.disabled = this.next.disabled = !this.total;
+    this.changed();
     const group = this.groups.find(g => this.active >= g.first && this.active < g.first + g.positions.length / 2);
     if (!group) return;
     const local = this.active - group.first, matches = [], nodes = this.textNodes(group.article);
@@ -226,7 +228,11 @@ export class MessageFind {
     if (move) {
       this.view.reveal(Number(group.article.dataset.messageIndex), false);
       const first = matches.find(m => m.active)?.marks[0], root = this.root();
-      if (first) root.scrollTop += first.getBoundingClientRect().top - root.getBoundingClientRect().top - root.clientHeight / 2;
+      if (first) {
+        const match = first.getBoundingClientRect(), viewport = root.getBoundingClientRect();
+        root.scrollTop += match.top - viewport.top - root.clientHeight / 2;
+        if (this.documentMode && root.scrollWidth > root.clientWidth) root.scrollLeft += match.left - viewport.left - root.clientWidth / 2;
+      }
       this.view.captureReading();
     }
   }
@@ -237,7 +243,7 @@ export class MessageFind {
   position() {
     if (!this.bar?.isConnected || !this.root()) return;
     const r = this.root().getBoundingClientRect(), panel = document.querySelector(".work-panel")?.getBoundingClientRect();
-    const right = panel && panel.left < r.right && panel.right > r.left && panel.bottom > r.top && panel.top < r.bottom ? Math.min(r.right, panel.left - 6) : r.right;
+    const right = !this.documentMode && panel && panel.left < r.right && panel.right > r.left && panel.bottom > r.top && panel.top < r.bottom ? Math.min(r.right, panel.left - 6) : r.right;
     this.bar.hidden = right - r.left < 180;
     if (this.bar.hidden) {
       if (this.bar.contains(document.activeElement)) document.querySelector('.work-panel [data-action="close-panel"]')?.focus({ preventScroll: true });
@@ -249,7 +255,8 @@ export class MessageFind {
     if (!this.bar?.isConnected || this.bar.hidden || event.isComposing || document.querySelector(".overlay-backdrop,.context-menu,.application-menu-popup")) return;
     const next = event.key === "F3" || (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "g" || event.key === "Enter" && this.bar.contains(event.target);
     if (event.key !== "Escape" && !next) return;
+    if (next && !this.isActive()) return;
     event.preventDefault(); event.stopImmediatePropagation();
-    if (event.key === "Escape") this.close(); else this.step(event.shiftKey ? -1 : 1);
+    if (event.key === "Escape") this.close(!this.documentMode || Boolean(event.target.closest(".document-panel,.document-find"))); else this.step(event.shiftKey ? -1 : 1);
   }
 }

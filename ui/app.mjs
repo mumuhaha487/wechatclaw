@@ -24,6 +24,7 @@ import { ConversationView } from "./conversation-view.mjs";
 import { SessionSearch, MessageFind } from "./message-search.mjs";
 import { BrowserDownloads } from "./browser-downloads.mjs";
 import { BrowserHistory } from "./browser-history.mjs";
+import { BrowserFind } from "./browser-find.mjs";
 import { version as appVersion } from "../package.json";
 
 const $ = (id) => document.getElementById(id);
@@ -198,13 +199,25 @@ const session = () => state.sessions.find((s) => s.id === ui.active);
 const previews = new AttachmentPreviews(rpc);
 const navigation = new NavigationHistory();
 const conversationView = new ConversationView({ sessions: () => state.sessions, current: session, root: () => $("chat-scroll") });
-const messageFind = new MessageFind({ current: session, root: () => $("chat-scroll"), view: conversationView });
+const messageFind = new MessageFind({ current: session, root: () => $("chat-scroll"), view: conversationView,
+  changed: findChanged, active: () => findRegion() === "chat" });
+const fileFind = new MessageFind({ current: () => {
+  const tab = panelTabs.selected(panelOwner());
+  return ui.panel && ui.panelPage === "file" && tab?.loaded && !tab.loading && !tab.error ? { id: JSON.stringify([panelOwner(), tab.key]) } : null;
+}, root: () => document.querySelector(".document-scroll"), documentMode: true,
+  view: { closeOutline() {}, reveal() {}, captureReading: rememberDocumentScroll }, changed: findChanged, active: () => findRegion() === "panel" });
+const browserFind = new BrowserFind({ context: () => {
+  const tab = panelTabs.selected(panelOwner()), data = browserStates.get(session()?.id);
+  return ui.panel && !ui.page && ui.panelPage === "browser" && tab?.id && data?.activeTab === tab.id && data.url
+    ? { owner: panelOwner(), sessionId: session().id, tabId: tab.id, url: data.url } : null;
+}, rpc, layout: refreshBrowserPanel, changed: findChanged, active: () => findRegion() === "panel",
+  focusPage: target => target.owner === panelOwner() && target.tabId === panelTabs.selected(panelOwner())?.id ? focusPanelSelection(target.owner, true) : undefined });
 const sessionSearch = new SessionSearch({ sessions: () => state.sessions, select: id => { selectSession(id); exposeConversation(); }, reveal: index => conversationView.reveal(index),
   dismiss: () => { ui.overlay = ""; renderOverlay(); }, error: toast });
 const draftKey = () => ui.active || `new:${workspaceKey(project()?.workspace || "")}`;
 const applicationMenu = new ApplicationMenu({
   state: () => ({ ready: environmentReady(), workspace: project()?.workspace, fontSize: state.settings.fontSize,
-    sidebar: ui.sidebar, panel: ui.panel, workspaceAvailable: workspaceKeyboardAvailable(), canReopen: closedPanelTabs.available(panelOwner()), browser: ui.panel && ui.panelPage === "browser", tabNavigation: ui.panel && ["file", "browser"].includes(ui.panelPage) && panelTabs.group(panelOwner()).tabs.length > 1, isMac, hasSession: Boolean(session()), draftKey: draftKey() }),
+    sidebar: ui.sidebar, panel: ui.panel, workspaceAvailable: workspaceKeyboardAvailable(), canFind: canFindCurrent(), findOpen: findOpen(), canStepFind: canStepFind(), canReopen: closedPanelTabs.available(panelOwner()), browser: ui.panel && ui.panelPage === "browser", tabNavigation: ui.panel && ["file", "browser"].includes(ui.panelPage) && panelTabs.group(panelOwner()).tabs.length > 1, isMac, hasSession: Boolean(session()), draftKey: draftKey() }),
   dispatch: name => action(name), readClipboard: () => rpc("clipboard.read"), copy: copyText, error: error => toast(error.message),
   pasteAttachments: async value => {
     if (value.files) return addAttachments(value.files, true);
@@ -213,9 +226,20 @@ const applicationMenu = new ApplicationMenu({
   },
 });
 function workspaceKeyboardAvailable() { return !ui.page && !ui.overlay && !document.querySelector(".overlay-backdrop"); }
+function findRegion() { return ui.findRegion?.owner === panelOwner() && ui.findRegion.region === "panel" && ui.panel ? "panel" : "chat"; }
+function canFindCurrent() { return workspaceKeyboardAvailable() && (findRegion() === "chat" ? Boolean(session()) : ui.panelPage === "file" ? Boolean(fileFind.current()) : Boolean(browserFind.context())); }
+function findOpen() { return Boolean(messageFind.bar?.isConnected || fileFind.bar?.isConnected || browserFind.current()); }
+function canStepFind() { return workspaceKeyboardAvailable() && (findRegion() === "chat" ? Boolean(messageFind.bar?.isConnected && messageFind.total) : Boolean(fileFind.bar?.isConnected && fileFind.total || browserFind.canStep())); }
+function findChanged() { browserFind.afterRender(); applicationMenu.afterRender(); syncNativeMenuState(); scheduleBrowserView(); }
+for (const name of ["pointerdown", "focusin"]) document.addEventListener(name, event => {
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest(".application-menubar,.context-menu,.overlay-backdrop,.application-rail,.sidebar")) return;
+  const region = target.closest(".work-panel,.document-find") ? "panel" : target.closest(".workspace,.message-find") ? "chat" : "";
+  if (region) { ui.findRegion = { owner: panelOwner(), region }; findChanged(); }
+}, true);
 function syncNativeMenuState() {
   if (!isMac) return;
-  const menuState = JSON.stringify({ ready: environmentReady(), workspaceAvailable: workspaceKeyboardAvailable(), canReopen: closedPanelTabs.available(panelOwner()), sidebar: ui.sidebar, panel: ui.panel, browser: ui.panel && ui.panelPage === "browser", tabNavigation: ui.panel && ["file", "browser"].includes(ui.panelPage) && panelTabs.group(panelOwner()).tabs.length > 1, fontSize: state.settings.fontSize, hasSession: Boolean(session()) });
+  const menuState = JSON.stringify({ ready: environmentReady(), workspaceAvailable: workspaceKeyboardAvailable(), canFind: canFindCurrent(), findOpen: findOpen(), canStepFind: canStepFind(), canReopen: closedPanelTabs.available(panelOwner()), sidebar: ui.sidebar, panel: ui.panel, browser: ui.panel && ui.panelPage === "browser", tabNavigation: ui.panel && ["file", "browser"].includes(ui.panelPage) && panelTabs.group(panelOwner()).tabs.length > 1, fontSize: state.settings.fontSize, hasSession: Boolean(session()) });
   if (menuState !== ui.nativeMenuState) {
     ui.nativeMenuState = menuState;
     rpc("window.menuState", JSON.parse(menuState)).catch(() => { ui.nativeMenuState = undefined; });
@@ -1011,7 +1035,7 @@ function fileTabPanel() {
   const tab = panelTabs.selected(panelOwner());
   const markdownFile = /\.(md|markdown)$/i.test(tab?.name || "");
   const body = tab?.loading && !tab.loaded ? '<p class="panel-empty">正在读取文件…</p>' : tab?.error ? `<p class="panel-empty" role="status">${esc(tab.error)}</p>` : markdownFile && !tab.source ? `<div class="message-content document-markdown">${markdown(tab?.text || "")}</div>` : `<pre class="document-source">${esc(tab?.text || "")}</pre>`;
-  return `<aside class="work-panel document-panel${ui.panelMax ? " maximized" : ""}">${panelTabsBar()}<div class="document-toolbar"><span class="ellipsis grow" title="${esc(tab?.file)}">${esc(tab?.file)}</span>${markdownFile ? `<button class="outline" data-action="file-toggle-source">${tab.source ? "预览" : "源码"}</button>` : ""}${ib("file-reveal", "在文件夹中显示", "external")}${ib("file-refresh", "重新读取文件", "refresh", tab?.loading ? "disabled" : "")}</div><div class="document-scroll" data-owner="${esc(panelOwner())}" data-key="${esc(tab?.key)}" tabindex="0" aria-label="文件内容">${body}</div></aside>`;
+  return `<aside class="work-panel document-panel${ui.panelMax ? " maximized" : ""}">${panelTabsBar()}<div class="document-toolbar"><span class="ellipsis grow" title="${esc(tab?.file)}">${esc(tab?.file)}</span>${markdownFile ? `<button class="outline" data-action="file-toggle-source">${tab.source ? "预览" : "源码"}</button>` : ""}${ib("find-file", "查找文件内容", "search", tab?.loaded && !tab.loading && !tab.error ? "" : "disabled")}${ib("file-reveal", "在文件夹中显示", "external")}${ib("file-refresh", "重新读取文件", "refresh", tab?.loading ? "disabled" : "")}</div><div class="document-scroll" data-owner="${esc(panelOwner())}" data-key="${esc(tab?.key)}" tabindex="0" aria-label="文件内容">${body}</div></aside>`;
 }
 let browserViewFrame = 0, browserViewSignature = "", observedBrowserViewport;
 const browserResizeObserver = new ResizeObserver(() => scheduleBrowserView());
@@ -1046,8 +1070,9 @@ function browserPanel() {
     ${panelTabsBar()}
     <div class="browser-toolbar"><div class="browser-navigation">${ib("browser-back", "后退", "back", b.canGoBack ? "" : "disabled")}${ib("browser-forward", "前进", "chevron", b.canGoForward ? "" : "disabled")}${ib(b.loading ? "browser-stop" : "browser-reload", b.loading ? "停止加载" : "刷新网页", b.loading ? "close" : "refresh", b.url ? "" : "disabled")}</div>
     <form id="browser-form" class="browser-address">${icon(b.url?.startsWith("https:") ? "shield" : "search")}<input id="browser-address" name="url" data-owner="${esc(panelOwner())}" data-key="${esc(tab?.key)}" aria-label="网页地址或搜索" placeholder="${creating ? "正在创建标签页…" : "搜索或输入网址"}" autocomplete="off" spellcheck="false" maxlength="8192" ${creating ? "disabled" : ""} value="${esc(tab?.addressDraft ?? b.url ?? "")}"></form>
-    ${ib("browser-history", "浏览记录", "clock")}${ib("browser-downloads", "下载", "download")}${ib("browser-external", "在系统浏览器打开", "external", b.url ? "" : "disabled")}</div>
+    ${ib("browser-downloads", "下载", "download")}${ib("browser-more", "网页更多操作", "more")}</div>
     <div class="browser-connection-note" role="status"><span>手动预览 · 官方扩展尚未接通</span><button data-action="runtime">配置</button></div>
+    ${browserFind.html()}
     ${b.error ? `<div class="browser-error" role="status">${icon("info")}<span>${esc(b.error)}</span></div>` : ""}
     <div id="browser-viewport" class="browser-viewport">${!b.url ? `<div class="browser-start">${icon("browser")}<strong>网页预览</strong><span>输入网址或搜索内容。自动操作需接通官方 ChatGPT 扩展。</span><button class="outline" data-action="browser-google">${icon("search")}Google 搜索</button></div>` : ""}</div>
     ${b.loading ? '<div class="browser-loading-line"></div>' : ""}</aside>`;
@@ -1142,17 +1167,19 @@ async function runBrowserCommand(command, params = {}) {
   return data;
 }
 function refreshBrowserPanel() {
+  browserFind.sync();
   const panel = document.querySelector(".browser-panel");
   if (panel) {
     rememberPanelTabScroll();
-    const input = $("browser-address"), focus = document.hasFocus() && document.activeElement === input;
+    const input = document.activeElement, focus = document.hasFocus() && input instanceof HTMLInputElement && input.closest(".browser-panel") && ["browser-address", "browser-find-input"].includes(input.id);
     const identity = focus ? JSON.stringify([input.dataset.owner, input.dataset.key]) : "";
-    const start = focus ? $("browser-address").selectionStart : 0;
+    const start = focus ? input.selectionStart : 0, end = focus ? input.selectionEnd : 0, focusId = input?.id;
     panel.outerHTML = browserPanel();
     restorePanelTabScroll();
-    const next = $("browser-address");
-    if (focus && identity === JSON.stringify([next.dataset.owner, next.dataset.key])) { next.focus(); next.setSelectionRange(start, start); }
+    const next = $(focusId);
+    if (focus && next && identity === JSON.stringify([next.dataset.owner, next.dataset.key])) { next.focus({ preventScroll: true }); next.setSelectionRange(start, end); }
   }
+  browserFind.afterRender();
   panelTabActions.refresh();
   browserHistory.refresh();
   scheduleBrowserView();
@@ -1401,6 +1428,8 @@ function render() {
     }
     documentScroll.scrollTop = ui.filePreview.scrollTop || 0; documentScroll.scrollLeft = ui.filePreview.scrollLeft || 0;
   }
+  fileFind.refresh();
+  browserFind.sync(); browserFind.afterRender();
   restorePanelTabScroll();
   panelTabActions.refresh();
   if (environmentReady()) viewStorage.patch({ "active-session": ui.active, "active-project": ui.project || session()?.workspace || "",
@@ -1727,6 +1756,39 @@ async function action(name, element) {
   if (external[name]) return rpc("shell.open", { url: external[name] });
   if (name.startsWith("window.")) return rpc(name);
   switch (name) {
+    case "browser-more":
+      return showContext(element, [
+        ...(browserFind.context() ? [{ label: "查找网页内容", icon: "search", action: "find-browser" }] : []),
+        { label: "浏览记录", icon: "clock", action: "browser-history" },
+        ...(browserStates.get(session()?.id)?.url ? [{ label: "在系统浏览器打开", icon: "external", action: "browser-external" }] : []),
+      ]);
+    case "find-current":
+      if (!canFindCurrent()) return;
+      return action(findRegion() === "chat" ? "find-message" : ui.panelPage === "file" ? "find-file" : "find-browser");
+    case "find-file":
+      if (!workspaceKeyboardAvailable() || !fileFind.current()) return;
+      messageFind.close(false); browserFind.close(false);
+      ui.findRegion = { owner: panelOwner(), region: "panel" };
+      return fileFind.open();
+    case "find-browser":
+      if (!workspaceKeyboardAvailable() || !browserFind.context()) return;
+      messageFind.close(false); fileFind.close(false);
+      ui.findRegion = { owner: panelOwner(), region: "panel" };
+      return browserFind.open();
+    case "find-next": case "find-previous":
+    case "find-browser-next": case "find-browser-previous": {
+      if (!workspaceKeyboardAvailable()) return;
+      if (name.startsWith("find-browser-")) ui.findRegion = { owner: panelOwner(), region: "panel" };
+      const direction = name.endsWith("previous") ? -1 : 1;
+      if (findRegion() === "chat") return messageFind.bar?.isConnected && messageFind.step(direction);
+      if (ui.panelPage === "file") return fileFind.bar?.isConnected && fileFind.step(direction);
+      if (!browserFind.current()) return;
+      const owner = panelOwner(); await browserFind.step(direction);
+      if (name.startsWith("find-browser-") && browserFind.current()) return focusPanelSelection(owner, true);
+      return;
+    }
+    case "find-close": case "find-browser-close":
+      messageFind.close(); fileFind.close(); browserFind.close(); return;
     case "browser-history":
       closePicker(); applicationMenu.close(); browserDownloads.close();
       return browserHistory.show(element);
@@ -1838,6 +1900,8 @@ async function action(name, element) {
       ui.overlay = ""; renderOverlay();
       if (ui.page) { ui.page = ""; render(); }
       exposeConversation();
+      fileFind.close(false); browserFind.close(false);
+      ui.findRegion = { owner: panelOwner(), region: "chat" };
       return messageFind.open();
     }
     case "message-menu":
@@ -2654,8 +2718,8 @@ document.addEventListener("change", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (!environmentReady() && (event.ctrlKey || event.metaKey)) return;
-  if (environmentReady() && !event.isComposing && (isMac ? event.metaKey : event.ctrlKey) && event.key.toLowerCase() === "f") {
-    event.preventDefault(); action("find-message").catch(e => toast(e.message)); return;
+  if (environmentReady() && workspaceKeyboardAvailable() && !event.isComposing && !event.altKey && !event.shiftKey && (isMac ? event.metaKey : event.ctrlKey) && event.key.toLowerCase() === "f") {
+    event.preventDefault(); action("find-current").catch(e => toast(e.message)); return;
   }
   if (["Enter", " "].includes(event.key) && event.target.matches(".session-row,.project-row")) {
     event.preventDefault();
@@ -2722,7 +2786,8 @@ function onEvent(event, data) {
   } else if (event === "browser-shortcut") {
     const tab = panelTabs.selected(panelOwner());
     if (!workspaceKeyboardAvailable() || !ui.panel || ui.panelPage !== "browser" || data.owner !== session()?.id || data.tabId !== tab?.id ||
-        !["browser-new-tab", "panel-close-active", "panel-reopen-tab", "browser-focus-address", "panel-next-tab", "panel-previous-tab", "toggle-sidebar", "toggle-panel", "new-session", "search", "settings"].includes(data.command)) return;
+        !["find-browser", "find-browser-next", "find-browser-previous", "find-browser-close", "browser-new-tab", "panel-close-active", "panel-reopen-tab", "browser-focus-address", "panel-next-tab", "panel-previous-tab", "toggle-sidebar", "toggle-panel", "new-session", "search", "settings"].includes(data.command)) return;
+    ui.findRegion = { owner: panelOwner(), region: "panel" };
     const owner = panelOwner();
     action(data.command).then(() => { if (["toggle-sidebar", "toggle-panel"].includes(data.command)) return focusPanelSelection(owner); }).catch(error => toast(error.message));
   } else if (event === "browser-state") {
@@ -2900,7 +2965,7 @@ function showContext(anchor, items) {
 document.addEventListener("click", (e) => {
   if (
     !e.target.closest(
-      '.row-more,.project-tools,[data-action="session-menu"],[data-action="composer-add"],[data-action="panel-add-tab"],[data-action="context-info"],[data-action="message-menu"],[data-action="app-menu"],.application-menu-popup,.conversation-outline,[data-action="conversation-outline"]',
+      '.row-more,.project-tools,[data-action="session-menu"],[data-action="composer-add"],[data-action="panel-add-tab"],[data-action="context-info"],[data-action="message-menu"],[data-action="browser-more"],[data-action="app-menu"],.application-menu-popup,.conversation-outline,[data-action="conversation-outline"]',
     )
   )
     document.querySelector(".context-menu")?.remove();

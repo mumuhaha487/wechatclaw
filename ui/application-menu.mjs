@@ -44,7 +44,9 @@ export class ApplicationMenu {
       item("撤销输入", "edit:undo", "Ctrl+Z", e.writable && e.undo), item("重做输入", "edit:redo", "Ctrl+Shift+Z", e.writable && e.redo), null,
       item("剪切", "edit:cut", "Ctrl+X", e.writable && e.selected), item("复制", "edit:copy", "Ctrl+C", e.selected),
       item("粘贴", "edit:paste", "Ctrl+V", e.writable), item("全选", "edit:selectAll", "Ctrl+A", e.editable), null,
-      item("搜索会话…", "search", "Ctrl+K", s.ready), item("查找会话内容…", "find-message", "Ctrl+F", s.ready && s.hasSession),
+      item("搜索会话…", "search", "Ctrl+K", s.ready), item("查找当前内容…", "find-current", "Ctrl+F", s.ready && s.canFind),
+      item("下一个匹配", "find-next", "Ctrl+G", s.ready && s.canStepFind), item("上一个匹配", "find-previous", "Ctrl+Shift+G", s.ready && s.canStepFind),
+      item("关闭查找", "find-close", "Esc", s.ready && s.findOpen),
     ];
     if (group === "view") return [
       item("侧栏", "toggle-sidebar", "Ctrl+B", s.ready, s.sidebar), item("工作面板", "toggle-panel", "Ctrl+Shift+B", s.ready, s.panel),

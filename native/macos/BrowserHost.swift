@@ -135,6 +135,12 @@ private struct BrowserHistoryRecord: Codable {
                 "url": tab?.url ?? "", "title": tab?.web.title ?? "", "loading": tab?.web.isLoading ?? false,
                 "canGoBack": tab?.web.canGoBack ?? false, "canGoForward": tab?.web.canGoForward ?? false, "error": tab?.errorText ?? ""]
     }
+    func focusedPage() -> BrowserWindow? {
+        guard visible, let session = sessions[visibleOwner], !session.disposed, let page = session.active,
+              !page.closed, !page.web.isHidden, let responder = page.web.window?.firstResponder as? NSView,
+              responder === page.web || responder.isDescendant(of: page.web) else { return nil }
+        return page
+    }
     func publish(_ session: BrowserSession, reveal: Bool = false) { if !session.disposed { notify(state(session, reveal: reveal)) } }
     @discardableResult func newTab(_ session: BrowserSession, configuration: WKWebViewConfiguration? = nil) throws -> BrowserWindow {
         guard session.tabs.count < 12 else { throw failure("最多打开 12 个标签页，请先关闭不用的页面。") }
@@ -171,6 +177,11 @@ private struct BrowserHistoryRecord: Codable {
             let tabId = p["tabId"] as? String ?? ""
             sessions[owner]?.tabs.filter { tabId.isEmpty || $0.id == tabId }.forEach { $0.stop() }
             return ["stopped": true]
+        }
+        if action == "find" {
+            guard let session = sessions[owner], !session.disposed,
+                  let page = session.tabs.first(where: { $0.id == p["tabId"] as? String }) else { throw failure("浏览器标签页已关闭。") }
+            return try await page.find(p)
         }
         if action == "dispose" {
             if let session = sessions[owner] {
@@ -245,6 +256,9 @@ private struct BrowserHistoryRecord: Codable {
     var url: String { web.url?.absoluteString == "about:blank" ? "" : web.url?.absoluteString ?? "" }
     var observations: [NSKeyValueObservation] = []
     var navigation: CheckedContinuation<Void, Error>?, navigationToken: UUID?
+    var findRevision = 0
+    var findOpen = false, findCanStep = false
+    var findOperation: Task<[String: Any], Never>?
     init(resources: URL, store: WKWebsiteDataStore, downloads: BrowserDownloads, history: BrowserHistory, owner: String, configuration: WKWebViewConfiguration? = nil, changed: @escaping () -> Void) {
         self.resources = resources; self.changed = changed
         self.downloads = downloads; self.owner = owner
@@ -269,7 +283,7 @@ private struct BrowserHistoryRecord: Codable {
                         web.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in self?.changed() }]
     }
     func stop() { web.stopLoading(); finishNavigation(.failure(failure("浏览器操作已停止。"))); changed() }
-    func close() { closed = true; web.isHidden = true; releaseDownloadView() }
+    func close() { closed = true; findRevision += 1; findOpen = false; findCanStep = false; web.isHidden = true; releaseDownloadView() }
     func releaseDownloadView() {
         if closed && !downloads.active(id) { observations.removeAll(); web.navigationDelegate = nil; web.uiDelegate = nil; web.removeFromSuperview() }
     }
@@ -340,6 +354,30 @@ private struct BrowserHistoryRecord: Codable {
                 else { continuation.resume(throwing: failure(result["error"] as? String ?? "网页操作失败。")) }
             }
         }
+    }
+    func find(_ p: [String: Any]) async throws -> [String: Any] {
+        let operation = p["operation"] as? String ?? "", query = p["query"] as? String ?? ""
+        guard ["search", "next", "previous", "clear"].contains(operation), query.utf16.count <= 512 else { throw failure("网页查找参数无效。") }
+        if operation == "search" || operation == "clear" { findRevision += 1; findOpen = operation != "clear"; findCanStep = false }
+        let revision = findRevision, previous = findOperation
+        let task = Task { @MainActor () -> [String: Any] in
+            _ = await previous?.value
+            guard !self.closed, revision == self.findRevision else { return ["stale": true] }
+            let configuration = WKFindConfiguration()
+            configuration.caseSensitive = false; configuration.wraps = true
+            configuration.backwards = operation == "previous"
+            let term = operation == "clear" ? "" : query
+            let found = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                self.web.find(term, configuration: configuration) { result in continuation.resume(returning: result.matchFound) }
+            }
+            guard !self.closed, revision == self.findRevision else { return ["stale": true] }
+            self.findCanStep = found && !term.isEmpty
+            if term.isEmpty { return ["cleared": true, "found": false] }
+            // Public WebKit returns matchFound, not a total or match index.
+            return ["found": found, "total": NSNull(), "index": NSNull()]
+        }
+        findOperation = task
+        return await task.value
     }
     func run(_ p: [String: Any]) async throws -> Any {
         let action = p["action"] as? String ?? ""

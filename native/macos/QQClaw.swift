@@ -223,6 +223,7 @@ final class Backend: @unchecked Sendable {
     var menuAvailable = false, menuReady = false, menuSidebar = true, menuPanel = false, menuHasSession = false
     var menuFont = 14
     var menuBrowser = false, menuTabNavigation = false, menuWorkspaceAvailable = false, menuCanReopen = false
+    var menuCanFind = false, menuFindOpen = false, menuCanStepFind = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             let env = ProcessInfo.processInfo.environment
@@ -278,7 +279,9 @@ final class Backend: @unchecked Sendable {
         command(file, "打开工作目录", "open-folder"); file.addItem(.separator()); command(file, "配置运行环境…", "runtime")
         section("编辑", edit)
         for (name, action, key) in [("撤销", "undo:", "z"), ("重做", "redo:", "Z"), ("剪切", "cut:", "x"), ("复制", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] { edit.addItem(withTitle: name, action: Selector(action), keyEquivalent: key) }
-        edit.addItem(.separator()); command(edit, "搜索会话…", "search", "k"); command(edit, "查找会话内容…", "find-message", "f")
+        edit.addItem(.separator()); command(edit, "搜索会话…", "search", "k"); command(edit, "查找当前内容…", "find-current", "f")
+        command(edit, "下一个匹配", "find-next", "g"); command(edit, "上一个匹配", "find-previous", "g", modifiers: [.command, .shift])
+        command(edit, "关闭查找", "find-close", "\u{1b}", modifiers: [])
         section("视图", view)
         command(view, "侧栏", "toggle-sidebar", "b"); command(view, "工作面板", "toggle-panel", "B")
         command(view, "展开工作面板", "maximize-panel"); command(view, "网页预览", "open-browser-window"); view.addItem(.separator())
@@ -295,7 +298,11 @@ final class Backend: @unchecked Sendable {
     }
     @objc func menuCommand(_ sender: NSMenuItem) {
         guard validateMenuItem(sender), let name = sender.representedObject as? String else { return }
+        let page = browserHost?.focusedPage()
         window?.makeFirstResponder(web)
+        if let page, let command = ["find-current": "find-browser", "find-next": "find-browser-next", "find-previous": "find-browser-previous", "find-close": "find-browser-close"][name] {
+            event("browser-shortcut", ["owner": page.owner, "tabId": page.id, "command": command]); return
+        }
         event("menu-action", ["action": name])
     }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
@@ -306,7 +313,9 @@ final class Backend: @unchecked Sendable {
         if name == "font-increase" { return menuReady && menuFont < 20 }
         if name == "font-decrease" { return menuReady && menuFont > 12 }
         if name == "font-reset" { return menuReady && menuFont != 14 }
-        if name == "find-message" { return menuReady && menuHasSession }
+        if name == "find-current" { return menuReady && menuWorkspaceAvailable && ((browserHost?.focusedPage()).map { !$0.url.isEmpty } ?? menuCanFind) }
+        if ["find-next", "find-previous"].contains(name) { return menuReady && menuWorkspaceAvailable && (browserHost?.focusedPage()?.findCanStep ?? menuCanStepFind) }
+        if name == "find-close" { return menuReady && menuWorkspaceAvailable && (browserHost?.focusedPage()?.findOpen ?? menuFindOpen) }
         if name == "browser-new-tab" { return menuReady && menuWorkspaceAvailable }
         if name == "panel-reopen-tab" { return menuReady && menuWorkspaceAvailable && menuCanReopen }
         if name == "browser-focus-address" { return menuReady && menuWorkspaceAvailable && menuPanel && menuBrowser }
@@ -340,6 +349,7 @@ final class Backend: @unchecked Sendable {
             menuBrowser = p["browser"] as? Bool == true; menuTabNavigation = p["tabNavigation"] as? Bool == true
             menuWorkspaceAvailable = p["workspaceAvailable"] as? Bool == true
             menuCanReopen = p["canReopen"] as? Bool == true
+            menuCanFind = p["canFind"] as? Bool == true; menuFindOpen = p["findOpen"] as? Bool == true; menuCanStepFind = p["canStepFind"] as? Bool == true
             return true
         case "window.theme":
             let dark = p["theme"] as? String == "dark"

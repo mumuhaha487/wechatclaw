@@ -628,6 +628,12 @@ export class App {
         }
         return this.browserCommand(session, p.action, p.action === "restoreTab" ? { url: String(p.url || "") } : { tabId: String(p.tabId || "") });
       }
+      case "browser.find": {
+        const session = this.getSession(p.sessionId);
+        if (!["search", "next", "previous", "clear"].includes(p.operation) || typeof p.query !== "string" || p.query.length > 512)
+          throw new Error("网页查找参数无效，最多输入 512 个字符。");
+        return new BrowserViewer({ native: this.native, session }).call("find", { tabId: String(p.tabId || ""), operation: p.operation, query: p.query });
+      }
       case "browser.officialStatus":
         return officialBrowserStatus();
       case "attachment.import":

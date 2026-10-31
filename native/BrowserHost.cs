@@ -77,6 +77,12 @@ internal sealed class BrowserHost {
             if (sessions.TryGetValue(owner, out session)) foreach (var tab in session.Tabs) if (Value(p, "tabId") == "" || Value(p, "tabId") == tab.Id) tab.Stop();
             return new { stopped = true };
         }
+        if (action == "find") {
+            if (!sessions.TryGetValue(owner, out session) || session.Disposed) throw new Exception("浏览器会话已关闭。");
+            var page = session.Tabs.Find(t => t.Id == Value(p, "tabId"));
+            if (page == null) throw new Exception("浏览器标签页已关闭。");
+            return await page.Find(p);
+        }
         if (action == "dispose") {
             if (sessions.TryGetValue(owner, out session)) {
                 session.Disposed = true;
@@ -281,6 +287,11 @@ internal sealed class BrowserTab {
     private bool stopping;
     private bool closed;
     private bool downloadNavigation;
+    private readonly SemaphoreSlim findSerial = new SemaphoreSlim(1, 1);
+    private int findRevision;
+    private bool findOpen;
+    private string findQuery = "";
+    private CoreWebView2Find findSession;
     private TaskCompletionSource<bool> navigation;
     internal ulong NavigationId;
     private readonly BrowserDownloads downloads;
@@ -294,12 +305,15 @@ internal sealed class BrowserTab {
         this.downloads = downloads; this.owner = owner; this.history = history;
         this.openWindow = openWindow; this.closeWindow = closeWindow;
         Web.KeyDown += delegate(object sender, KeyEventArgs e) {
-            if (closed || !e.Control || e.Alt) return;
+            if (closed || e.Alt) return;
             string command = "";
-            if (e.KeyCode == Keys.Tab) command = e.Shift ? "panel-previous-tab" : "panel-next-tab";
-            else if (e.KeyCode == Keys.B) command = e.Shift ? "toggle-panel" : "toggle-sidebar";
-            else if (e.KeyCode == Keys.T && e.Shift) command = "panel-reopen-tab";
-            else if (!e.Shift) {
+            if (e.Control && e.KeyCode == Keys.F && !e.Shift) command = "find-browser";
+            else if (findOpen && (e.Control && e.KeyCode == Keys.G || !e.Control && e.KeyCode == Keys.F3)) command = e.Shift ? "find-browser-previous" : "find-browser-next";
+            else if (findOpen && !e.Control && e.KeyCode == Keys.Escape) command = "find-browser-close";
+            else if (e.Control && e.KeyCode == Keys.Tab) command = e.Shift ? "panel-previous-tab" : "panel-next-tab";
+            else if (e.Control && e.KeyCode == Keys.B) command = e.Shift ? "toggle-panel" : "toggle-sidebar";
+            else if (e.Control && e.KeyCode == Keys.T && e.Shift) command = "panel-reopen-tab";
+            else if (e.Control && !e.Shift) {
                 switch (e.KeyCode) {
                     case Keys.T: command = "browser-new-tab"; break;
                     case Keys.W: command = "panel-close-active"; break;
@@ -374,7 +388,7 @@ internal sealed class BrowserTab {
             Loading = false; changed();
         };
     }
-    internal void Close() { closed = true; Web.Visible = false; Web.Bounds = new Rectangle(-2000, 0, 1000, 760); ReleaseDownloadView(); }
+    internal void Close() { closed = true; findRevision++; Web.Visible = false; Web.Bounds = new Rectangle(-2000, 0, 1000, 760); ReleaseDownloadView(); }
     internal void ReleaseDownloadView() { if (closed && !downloads.Active(Id) && !Web.IsDisposed) Web.Dispose(); }
     internal void Stop() { stopping = true; if (Web.CoreWebView2 != null) Web.CoreWebView2.Stop(); Loading = false; changed(); }
     private async Task<bool> Navigate(Action action) {
@@ -410,6 +424,50 @@ internal sealed class BrowserTab {
         if (closed || stopping) throw new Exception("浏览器恢复已停止或标签页已关闭。");
         // A closed page is reopened by URL. Never replay an old POST body.
         Web.CoreWebView2.Navigate(url);
+    }
+    internal async Task<object> Find(Dictionary<string, object> p) {
+        string operation = BrowserHost.Value(p, "operation"), query = BrowserHost.Value(p, "query");
+        if (!new [] { "search", "next", "previous", "clear" }.Contains(operation) || query.Length > 512) throw new Exception("网页查找参数无效。");
+        int revision = operation == "search" || operation == "clear" ? ++findRevision : findRevision;
+        if (operation == "search" || operation == "clear") findOpen = operation != "clear";
+        await findSerial.WaitAsync();
+        try {
+            if (closed || revision != findRevision) return new { stale = true };
+            if (operation == "clear" || query == "") {
+                if (findSession != null) findSession.Stop();
+                findQuery = ""; return new { cleared = true, found = false };
+            }
+            await EnsureReady();
+            if (closed || revision != findRevision) return new { stale = true };
+            findSession = Web.CoreWebView2.Find;
+            if (operation == "search" || query != findQuery) {
+                var options = Web.CoreWebView2.Environment.CreateFindOptions();
+                options.FindTerm = query; options.IsCaseSensitive = false;
+                options.ShouldHighlightAllMatches = true; options.SuppressDefaultFindDialog = true;
+                findSession.Stop(); await findSession.StartAsync(options);
+                if (revision == findRevision) findQuery = query;
+            } else {
+                var changedIndex = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                EventHandler<object> changed = delegate { changedIndex.TrySetResult(true); };
+                findSession.ActiveMatchIndexChanged += changed;
+                try {
+                    int total = findSession.MatchCount;
+                    if (operation == "previous") findSession.FindPrevious(); else findSession.FindNext();
+                    if (total > 1 && await Task.WhenAny(changedIndex.Task, Task.Delay(2000)) != changedIndex.Task && revision == findRevision && !closed)
+                        throw new Exception("网页没有返回新的查找位置，请重试。");
+                } finally {
+                    try { findSession.ActiveMatchIndexChanged -= changed; }
+                    catch (System.Runtime.InteropServices.COMException) { if (!closed) throw; }
+                    catch (ObjectDisposedException) { if (!closed) throw; }
+                }
+            }
+            if (closed || revision != findRevision) return new { stale = true };
+            int count = findSession.MatchCount, index = findSession.ActiveMatchIndex;
+            return new { found = count > 0, total = (int?)Math.Max(0, count), index = index > 0 ? (int?)index : null };
+        } catch (System.Runtime.InteropServices.COMException error) {
+            if (error.ErrorCode == unchecked((int)0x80004002)) throw new Exception("当前 WebView2 不支持网页查找，请在运行环境中更新 WebView2。");
+            throw;
+        } finally { findSerial.Release(); }
     }
     internal async Task<object> Run(Dictionary<string, object> p) {
         try {

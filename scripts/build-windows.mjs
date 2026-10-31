@@ -10,6 +10,10 @@ import { fileURLToPath } from "node:url";
 const exec = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "qqclaw-build-"));
+const manifest = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
+if (!/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(manifest.version)) throw new Error("无效的构建版本。");
+const buildInfo = path.join(temporary, "BuildInfo.cs");
+await fs.writeFile(buildInfo, `internal static class BuildInfo { internal const string Version = ${JSON.stringify(manifest.version)}; }\n`);
 const staging = path.join(temporary, "payload");
 const sdkVersion = "1.0.4314.35";
 const sdkSha512 = "cOaiVqP3BmQHMnxGpZzANM22tUXgycrisyJHjIGNzIaMsm8iXj7Kx+ceYg+RbYwJtzT009qfcFTocvVLY+ekMw==";
@@ -254,6 +258,7 @@ const args = [
   ...references.map((r) => `/reference:${r}`),
   path.join(root, "native", "Program.cs"),
   path.join(root, "native", "BrowserHost.cs"),
+  buildInfo,
 ];
 try {
   const result = await exec(compiler, args, {
