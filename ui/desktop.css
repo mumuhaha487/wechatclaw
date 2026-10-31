@@ -1,4 +1,4 @@
-/* Monochrome desktop surfaces, with a dark default and an optional light theme. */
+/* White desktop surfaces with black text; an optional dark theme is retained. */
 :root {
   --sidebar-width: 275px;
   --panel-width: 340px;

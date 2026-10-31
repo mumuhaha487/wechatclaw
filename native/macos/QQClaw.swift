@@ -244,12 +244,12 @@ final class Backend: @unchecked Sendable {
             """
             config.userContentController.addUserScript(WKUserScript(source: bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             web = WKWebView(frame: .zero, configuration: config); web.navigationDelegate = self
-            web.appearance = NSAppearance(named: .darkAqua)
-            web.underPageBackgroundColor = NSColor(white: 17.0 / 255.0, alpha: 1)
+            web.appearance = NSAppearance(named: .aqua)
+            web.underPageBackgroundColor = .white
             window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1320, height: 850), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "QQClaw"; window.minSize = NSSize(width: 1000, height: 680)
-            window.appearance = NSAppearance(named: .darkAqua)
-            window.backgroundColor = NSColor(white: 17.0 / 255.0, alpha: 1)
+            window.appearance = NSAppearance(named: .aqua)
+            window.backgroundColor = .white
             window.setFrameAutosaveName("QQClawMain"); window.contentView = web; window.delegate = self
             window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
             web.load(URLRequest(url: URL(string: "qqclaw://app/index.html")!))

@@ -10,8 +10,8 @@ import { viewPreferences } from "../shared/view-preferences.mjs";
 export const defaults = () => ({
   version: 2,
   settings: {
-    theme: "dark",
-    appearanceVersion: 3,
+    theme: "light",
+    appearanceVersion: 4,
     fontSize: 14,
     fontFamily: "system",
     showCounts: true,
@@ -56,10 +56,10 @@ export class Store {
         ...data,
         settings: { ...defaults().settings, ...data.settings },
       };
-      // Adopt the requested dark monochrome appearance once; later choices persist.
-      if ((data.settings?.appearanceVersion || 0) < 3) {
-        this.state.settings.theme = "dark";
-        this.state.settings.appearanceVersion = 3;
+      // Adopt the latest light monochrome request once; later choices persist.
+      if ((data.settings?.appearanceVersion || 0) < 4) {
+        this.state.settings.theme = "light";
+        this.state.settings.appearanceVersion = 4;
       }
       if (!data.settings?.codexSource && this.state.settings.codexPath) this.state.settings.codexSource = "custom";
     } catch (error) {

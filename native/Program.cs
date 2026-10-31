@@ -96,7 +96,7 @@ internal static class Program {
                         using (var source = entry.Open()) using (var destination = File.Create(target)) source.CopyTo(destination);
                     }
                 }
-                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.19");
+                File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), "0.3.20");
             }
             CleanupOldRuntimes(hash);
             SetDllDirectory(RuntimeDirectory);
@@ -148,7 +148,7 @@ internal sealed class DesktopWindow : Form {
     internal DesktopWindow() {
         var work = Screen.PrimaryScreen.WorkingArea;
         Text = "QQClaw"; Size = new Size(Math.Min(1800, work.Width - 60), Math.Min(1100, work.Height - 70)); MinimumSize = new Size(1000, 680);
-        StartPosition = FormStartPosition.CenterScreen; BackColor = Color.FromArgb(17, 17, 17); ForeColor = Color.FromArgb(242, 242, 242); FormBorderStyle = FormBorderStyle.None;
+        StartPosition = FormStartPosition.CenterScreen; BackColor = Color.White; ForeColor = Color.FromArgb(32, 32, 32); FormBorderStyle = FormBorderStyle.None;
         AutoScaleMode = AutoScaleMode.Dpi;
         try { Icon = new Icon(Path.Combine(Program.RuntimeDirectory, "app.ico")); } catch { }
         fallback = new Label { Dock = DockStyle.Fill, Text = "正在打开 QQClaw…", TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Microsoft YaHei UI", 13) };
@@ -167,7 +167,7 @@ internal sealed class DesktopWindow : Form {
             int port;
             string flags = Int32.TryParse(debugPort, out port) && port > 1024 && port < 65536 ? "--remote-debugging-port=" + port : "";
             var environment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(Program.DataDirectory, "webview"), new CoreWebView2EnvironmentOptions(flags));
-            view = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(17, 17, 17) };
+            view = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.White };
             Controls.Add(view); view.BringToFront();
             await view.EnsureCoreWebView2Async(environment);
             view.CoreWebView2.Settings.AreDevToolsEnabled = !String.IsNullOrEmpty(flags);
@@ -325,7 +325,7 @@ internal sealed class DesktopWindow : Form {
                 }
             } catch (Exception failure) { error = failure.Message; }
         }
-        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.19", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
+        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = "0.3.20", desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
     }
     private Task<string> ReadNodeVersion(string node) { return ReadNodeVersion(node, 5); }
     private async Task<string> ReadNodeVersion(string node, int timeoutSeconds) {

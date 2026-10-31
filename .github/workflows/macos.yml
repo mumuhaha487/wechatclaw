@@ -218,7 +218,7 @@ jobs:
                       let first = try await host.startBackend()
                       let initial = try await host.call(first, "snapshot") as! [String: Any]
                       let settings = initial["settings"] as! [String: Any]
-                      guard settings["theme"] as? String == "dark", settings["appearanceVersion"] as? Int == 3 else { throw failure("Dark appearance default missing") }
+                      guard settings["theme"] as? String == "light", settings["appearanceVersion"] as? Int == 4 else { throw failure("Light appearance default missing") }
                       print("PASS: native backend startup and small pipe response")
                       let session = try await host.call(first, "session.create", params: ["workspace": host.data.path, "title": "native-persistence-check"]) as! [String: Any]
                       let id = session["id"] as! String
