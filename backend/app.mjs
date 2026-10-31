@@ -354,9 +354,12 @@ export class App {
           : event.method === "item/completed" && item?.type === "agentMessage" && item.phase === "commentary" ? item.text : "";
         if (progressText?.trim()) {
           const progress = progressText.trim();
-          if (!progressSeen.has(progress)) {
-            progressSeen.add(progress);
-            session.messages.push({ role: "assistant", kind: "progress", text: progress, at: new Date().toISOString(), taskKey });
+          const progressKey = event.method === "qqclaw/goalProgress" ? `goal:${event.params.turnId}` : progress;
+          if (!progressSeen.has(progressKey)) {
+            progressSeen.add(progressKey);
+            session.messages.push({ role: "assistant", kind: "progress", text: progress, at: new Date().toISOString(), taskKey,
+              ...(event.params.attachments?.length && event.method === "qqclaw/goalProgress" ? { attachments: event.params.attachments.map(attachment => ({ ...attachment, label: path.basename(attachment.path) })) } : {}),
+            });
             this.changed();
             progressChain = progressChain.then(async () => {
               await this.store.save();

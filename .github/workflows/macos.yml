@@ -26,6 +26,7 @@ jobs:
           import {answerTurns} from './backend/codex-answer.mjs';
           import {goalRequest} from './shared/goal.mjs';
           import {ConversationArchive} from './backend/conversations.mjs';
+          import {parseActionBlocksSafe} from './backend/wechat-actions.mjs';
           const client=new EventEmitter(),events=[],threadId='00000000-0000-4000-8000-000000000001';
           let goal=null,settled=false;
           const emit=(method,params)=>client.emit('notification',{method,params:{threadId,...params}});
@@ -37,13 +38,17 @@ jobs:
           const result=answerTurns(client,session,{},event=>events.push(event),{goal:goalRequest('Two stages')}).then(value=>{settled=true;return value});
           const tick=()=>new Promise(resolve=>setImmediate(resolve));
           await tick();
-          emit('turn/completed',{turn:{id:'one',status:'completed',items:[{type:'agentMessage',id:'m1',text:'Stage one'}]}});
+          const staged='Stage one\n\n```codex-weixin-actions\n'+JSON.stringify({send:[{type:'file',path:'/tmp/qqclaw-goal-stage.txt'}]})+'\n```';
+          emit('turn/completed',{turn:{id:'one',status:'completed',items:[{type:'agentMessage',id:'m1',text:staged}]}});
           await tick();assert.equal(settled,false);assert.ok(client.active);
           emit('turn/started',{turn:{id:'two'}});
           await client.writeGoal(session,{status:'complete'});assert.equal(settled,false);
           emit('turn/completed',{turn:{id:'two',status:'completed',items:[{type:'agentMessage',id:'m2',text:'Final result'}]}});
-          assert.equal(await result,'Final result');assert.equal(client.active,null);
+          const final=parseActionBlocksSafe(await result);
+          assert.equal(final.visibleText,'Final result');assert.equal(final.actions.send.length,1);
+          assert.equal(final.actions.send[0].path,'/tmp/qqclaw-goal-stage.txt');assert.equal(client.active,null);
           assert.equal(events.filter(event=>event.method==='qqclaw/goalProgress').length,1);
+          assert.equal(events.find(event=>event.method==='qqclaw/goalProgress').params.attachments.length,1);
           goal={...goal,status:'active'};
           let steered=false;
           client.request=async method=>{assert.equal(method,'turn/steer');steered=true;return {turnId:'resumed'}};

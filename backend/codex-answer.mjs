@@ -1,5 +1,7 @@
 import { goalSnapshot, goalStatusLabel } from "../shared/goal.mjs";
 import { safeError } from "./store.mjs";
+import { parseActionBlocksSafe } from "./wechat-actions.mjs";
+import { workspaceKey } from "../shared/workspace.mjs";
 
 // A persisted Codex goal can start another native turn after turn/completed.
 // Keep one application run (and its workspace lock/channel) until that goal
@@ -47,7 +49,10 @@ export async function answerTurns(client, session, turnParams, onEvent, { goal, 
     const progress = record => {
       if (!record.reply || reported.has(record.id)) return;
       reported.add(record.id);
-      onEvent({ method: "qqclaw/goalProgress", params: { threadId: session.threadId, turnId: record.id, text: record.reply } });
+      const parsed = parseActionBlocksSafe(record.reply);
+      const text = [parsed.visibleText || (parsed.actions.send.length ? "本阶段包含附件。" : ""),
+        parsed.discarded ? "（附件指令无法解析，相关文件未发送。）" : ""].filter(Boolean).join("\n");
+      onEvent({ method: "qqclaw/goalProgress", params: { threadId: session.threadId, turnId: record.id, text, attachments: parsed.actions.send } });
     };
     const settleIdle = () => {
       if (settled || starting || active.turnId || !completed.length) return;
@@ -60,7 +65,24 @@ export async function answerTurns(client, session, turnParams, onEvent, { goal, 
       if (trackingGoal) for (const record of completed.slice(0, -1)) progress(record);
       const status = active.interrupted || last.status === "interrupted" ? "任务已停止。"
         : trackingGoal && active.goal && active.goal.status !== "complete" ? `目标${goalStatusLabel(active.goal.status)}。` : "";
-      finish(null, [last.reply, status].filter(Boolean).join("\n\n") || "已完成。");
+      let reply = last.reply;
+      if (trackingGoal) {
+        const files = new Map(), parsedFinal = parseActionBlocksSafe(last.reply);
+        let discarded = 0;
+        for (const record of completed) {
+          const parsed = parseActionBlocksSafe(record.reply); discarded += parsed.discarded;
+          for (const attachment of parsed.actions.send) files.set(workspaceKey(attachment.path), attachment);
+        }
+        // A file requested by an intermediate native turn must survive even if
+        // the final summary does not repeat it. Delivery remains one outbox at
+        // task end, so progress cannot consume its file slots.
+        if (files.size || discarded) {
+          const actions = { send: [...files.values()], ...(parsedFinal.actions.control.length ? { control: parsedFinal.actions.control } : {}) };
+          reply = [parsedFinal.visibleText, discarded ? "（附件指令无法解析，相关文件未发送。）" : "",
+            files.size || actions.control ? "```codex-weixin-actions\n" + JSON.stringify(actions) + "\n```" : ""].filter(Boolean).join("\n\n");
+        }
+      }
+      finish(null, [reply, status].filter(Boolean).join("\n\n") || "已完成。");
     };
     const acceptGoal = value => {
       active.goal = goalSnapshot(value, session.threadId);
