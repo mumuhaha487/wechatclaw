@@ -764,7 +764,7 @@ const panelOwner = () => JSON.stringify([ui.active, workspaceKey(session()?.work
 const panelTabActions = new PanelTabActions({
   context: () => !ui.page && !ui.overlay && ui.panel && environmentReady() ? {
     owner: panelOwner(), workspace: session()?.workspace || project()?.workspace,
-    ...panelTabs.group(panelOwner()), tool: !["file", "browser"].includes(ui.panelPage),
+    ...panelTabs.group(panelOwner()), tool: ["files", "review"].includes(ui.panelPage) ? ui.panelPage : "",
     url: tab => browserStates.get(session()?.id)?.tabs?.find(value => value.id === tab.id)?.url || "",
   } : null,
   close: closePanelTabs,
@@ -779,9 +779,12 @@ const panelTabActions = new PanelTabActions({
   changed: scheduleBrowserView,
   error: error => toast(error.message),
 });
-async function closePanelTabs(owner, tabs) {
+async function closePanelTabs(owner, tabs, tool) {
   const group = panelTabs.group(owner), [id, workspace] = JSON.parse(owner);
   const target = state.sessions.find(s => s.id === id && workspaceKey(s.workspace) === workspace);
+  if (tool && owner === panelOwner() && ui.panelPage === tool.page && group.tabs.includes(tool.keep)) {
+    ui.panelIntent++; panelTabs.select(owner, tool.keep.key); applyPanelTab(); rememberPanel(); render();
+  }
   for (const tab of tabs) {
     if (!group.tabs.includes(tab)) continue;
     const current = owner === panelOwner();

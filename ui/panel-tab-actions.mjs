@@ -70,7 +70,7 @@ export class PanelTabActions {
     const others = context.tabs.filter(value => value !== tab), right = context.tabs.slice(index + 1);
     const items = [
       ["关闭标签页", "close", () => this.close(context.owner, [tab])],
-      ["关闭其他标签页", "close", others.length && (() => this.close(context.owner, others))],
+      ["关闭其他标签页", "close", (others.length || context.tool) && (() => this.close(context.owner, others, context.tool ? { page: context.tool, keep: tab } : undefined))],
       ["关闭右侧标签页", "close", right.length && (() => this.close(context.owner, right))],
       tab.kind === "file" ? ["复制文件路径", "copy", () => this.copy(tab.file)] : ["复制网页地址", "copy", url && (() => this.copy(url))],
       tab.kind === "file" ? ["在文件夹中显示", "folder", () => this.reveal(context.workspace, tab.file)] : ["在系统浏览器打开", "external", url && (() => this.external(url))],
