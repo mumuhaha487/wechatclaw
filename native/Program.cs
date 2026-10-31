@@ -73,6 +73,12 @@ internal static class Program {
             if (String.IsNullOrEmpty(DataDirectory)) DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QQClaw");
             DataDirectory = Path.GetFullPath(DataDirectory);
             Directory.CreateDirectory(DataDirectory);
+            // WinForms' default exception dialog does not reach the backend log.
+            // Keep WebView COM failures and their stacks before that dialog runs;
+            // observing the exception does not suppress or change error handling.
+            AppDomain.CurrentDomain.FirstChanceException += delegate(object sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs args) {
+                if (args.Exception is COMException) LogNativeFailure(args.Exception);
+            };
             bool created;
             string identity;
             using (var sha = SHA256.Create()) identity = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(DataDirectory.ToLowerInvariant()))).Replace("-", "").Substring(0, 20);
@@ -110,6 +116,19 @@ internal static class Program {
         if (RestartRequested) Process.Start(new ProcessStartInfo(Application.ExecutablePath) { UseShellExecute = false, CreateNoWindow = true });
     }
     [MethodImpl(MethodImplOptions.NoInlining)] static void Run() { Application.Run(new DesktopWindow()); }
+    private static readonly object nativeLogGate = new object();
+    private static void LogNativeFailure(Exception error) {
+        try {
+            lock (nativeLogGate) {
+                var directory = Path.Combine(DataDirectory, "logs"); Directory.CreateDirectory(directory);
+                var file = Path.Combine(directory, "native.log");
+                if (File.Exists(file) && new FileInfo(file).Length > 1024 * 1024) {
+                    var previous = file + ".1"; if (File.Exists(previous)) File.Delete(previous); File.Move(file, previous);
+                }
+                File.AppendAllText(file, DateTime.UtcNow.ToString("o") + " " + Application.ProductVersion + " " + error + Environment.NewLine, Encoding.UTF8);
+            }
+        } catch { }
+    }
     internal static void CleanupOldRuntimes(string hash) {
         try {
             foreach (var directory in Directory.GetDirectories(Path.Combine(DataDirectory, "app"))) {

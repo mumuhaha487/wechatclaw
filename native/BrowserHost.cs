@@ -300,17 +300,18 @@ internal sealed class BrowserTab {
             if (!e.IsUserInitiated || e.Uri != "about:blank" && !BrowserHost.Allowed(e.Uri)) {
                 Error = "已阻止自动弹窗或不支持的链接。"; changed(); return;
             }
-            using (var deferral = e.GetDeferral()) {
-                BrowserTab target = null;
-                try { target = await openWindow(this); e.NewWindow = target.Web.CoreWebView2; }
-                catch (Exception error) {
-                    if (target != null) closeWindow(target);
-                    if (!closed) { Error = "无法打开新标签页：" + error.Message; changed(); }
-                }
-                finally {
-                    try { deferral.Complete(); }
-                    catch (Exception error) { if (!closed) { Error = "新标签页请求已取消：" + error.Message; changed(); } }
-                }
+            var deferral = e.GetDeferral();
+            BrowserTab target = null;
+            try { target = await openWindow(this); e.NewWindow = target.Web.CoreWebView2; }
+            catch (Exception error) {
+                if (target != null) closeWindow(target);
+                if (!closed) { Error = "无法打开新标签页：" + error.Message; changed(); }
+            }
+            finally {
+                // Dispose completes the request. Calling Complete as well would
+                // complete it twice and throw E_ILLEGAL_METHOD_CALL (0x8000000E).
+                try { deferral.Dispose(); }
+                catch (Exception error) { if (!closed) { Error = "新标签页请求已取消：" + error.Message; changed(); } }
             }
         };
         Web.CoreWebView2.WindowCloseRequested += delegate { closeWindow(this); };
