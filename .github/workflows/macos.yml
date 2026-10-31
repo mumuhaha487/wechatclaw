@@ -288,8 +288,13 @@ jobs:
                       _ = try await popupControl("open", ["url": fixture + "popup-origin"])
                       let popupSource = popups.sessions[popupOwner]!.active!
                       guard !popupSource.web.configuration.preferences.javaScriptCanOpenWindowsAutomatically else { throw failure("Automatic popup policy is not disabled") }
-                      _ = try await popupSource.web.evaluateJavaScript("window.open('/popup-child?kind=blocked','_blank'); true")
-                      try await Task.sleep(nanoseconds: 300_000_000)
+                      // evaluateJavaScript carries a host user gesture in WebKit;
+                      // test unsolicited popups from a page timer instead.
+                      for _ in 0..<50 {
+                          if try await popupSource.web.evaluateJavaScript("window.autoPopupAttempted === true") as? Bool == true { break }
+                          try await Task.sleep(nanoseconds: 100_000_000)
+                      }
+                      guard try await popupSource.web.evaluateJavaScript("window.autoPopupAttempted === true") as? Bool == true else { throw failure("Unsolicited popup fixture did not execute") }
                       guard popups.sessions[popupOwner]!.tabs.count == 1 else { throw failure("Unsolicited popup bypassed WebKit policy") }
                       // This CI component check enables scripted popup creation
                       // only in its isolated view. It is not trusted pointer UI.
@@ -470,7 +475,7 @@ jobs:
             const server=http.createServer(async(req,res)=>{
               if(req.url==='/popup-origin') {
                 res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Set-Cookie':'popup_profile=mac; SameSite=Lax; Path=/'});
-                return res.end('<title>Popup origin</title><form method="POST" action="/popup-post" target="_blank"><input name="message" value="body must survive"></form>');
+                return res.end('<title>Popup origin</title><form method="POST" action="/popup-post" target="_blank"><input name="message" value="body must survive"></form><script>setTimeout(()=>{window.open("/popup-child?kind=blocked","_blank");window.autoPopupAttempted=true},150)</script>');
               }
               if(req.url.startsWith('/popup-child')||req.url==='/popup-post') {
                 let body='';for await(const bytes of req)body+=bytes;
