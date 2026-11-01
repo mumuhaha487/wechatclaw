@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { BrowserAccessHost } from "../backend/browser-access.mjs";
+import { elicitationForm, simpleConsent, validateForm } from "../backend/codex-approvals.mjs";
 
 if (process.platform !== "darwin") throw Error("This check requires native macOS.");
 const option = name => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
@@ -45,7 +46,7 @@ await write("browser-options.json", { profile, extensionPath: path.join(runtime,
 const browser = spawn(build.executable, [], { detached: true, env: { ...process.env, RUST_LOG: "debug", CODEX_HOME: path.join(output, "codex"),
   QQCLAW_CHECK_OPTIONS: path.join(output, "browser-options.json"), QQCLAW_CHECK_STOP: path.join(output, "stop") }, stdio: ["ignore", "pipe", "pipe"] });
 let browserLog = "", repl, replLog = "", result = { passed: false }, active = true;
-const notifications = [], socketSnapshots = [];
+const notifications = [], socketSnapshots = [], hostRequests = [], fixtureDecisions = [];
 const processEvents = [];
 browser.stdout.on("data", b => browserLog += b); browser.stderr.on("data", b => browserLog += b);
 const browserExit = new Promise(resolve => browser.once("exit", (code, signal) => resolve({ code, signal })));
@@ -152,7 +153,24 @@ try {
       const value = JSON.parse(line), request = pending.get(value.id);
       if (request) { clearTimeout(request.timer); pending.delete(value.id); value.error ? request.reject(Error(JSON.stringify(value.error))) : request.resolve(value.result); }
       else if (value.id !== undefined && value.method) {
-        unexpectedRequests.push(value); repl.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: value.id, error: { code: -32601, message: "This check has no interactive approval UI" } }) + "\n");
+        hostRequests.push(value);
+        const params = value.params || {}, meta = params._meta || params.meta || {};
+        const form = elicitationForm({ ...params, mode: params.mode || "form" });
+        const content = form ? simpleConsent(form) : null;
+        // This automated fixture owns only its newly created loopback page.
+        // It is not a human approval and grants no external site, account,
+        // history, upload, download, raw-CDP or persistent permission.
+        const allowed = value.method === "elicitation/create" && active && meta.connector_id === "browser-use" &&
+          meta.tool_name === "access_browser_origin" && meta.origin === new URL(url).origin &&
+          meta.tool_params?.origin === meta.origin && content !== null;
+        if (allowed) {
+          validateForm(form, content); fixtureDecisions.push({ id: value.id, origin: meta.origin, decisionSource: "isolated-fixture-owner", action: "accept" });
+          repl.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: value.id, result: { action: "accept", content, _meta: null } }) + "\n");
+        } else {
+          unexpectedRequests.push(value);
+          repl.stdin.write(JSON.stringify(value.method === "elicitation/create" ? { jsonrpc: "2.0", id: value.id, result: { action: "decline", content: null, _meta: null } } :
+            { jsonrpc: "2.0", id: value.id, error: { code: -32601, message: "Outside the isolated fixture's authority" } }) + "\n");
+        }
       } else notifications.push(value);
     }
   });
@@ -161,7 +179,7 @@ try {
     const id = ++next, timer = setTimeout(() => { pending.delete(id); reject(Error("Timed out: " + method)); }, 45000);
     pending.set(id, { resolve, reject, timer }); repl.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
   });
-  await request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "qqclaw_mac_official_component_check", version: "1" } });
+  await request("initialize", { protocolVersion: "2025-06-18", capabilities: { elicitation: { form: {} } }, clientInfo: { name: "qqclaw_mac_official_component_check", version: "1" } });
   repl.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
   const tools = await request("tools/list", {}); await write("tools.json", tools);
   const call = async (name, code) => {
@@ -244,6 +262,7 @@ finally {
   const logs = await exec("/usr/bin/sqlite3", [sqlite, ".dump"], { maxBuffer: 2 * 1024 * 1024 }).catch(error => ({ stdout: error.message }));
   await fs.writeFile(path.join(output, "runtime-sqlite.log"), logs.stdout);
   await write("notifications.json", notifications); await write("socket-snapshots.json", socketSnapshots);
+  await write("host-requests.json", hostRequests); await write("fixture-decisions.json", fixtureDecisions);
   await write("original-cli-process-events.json", processEvents);
   await fs.writeFile(path.join(output, "browser.log"), browserLog); await fs.writeFile(path.join(output, "repl.log"), replLog);
   await write("result.json", { ...result, exit, observations }); console.log(JSON.stringify({ ...result, exit }));
