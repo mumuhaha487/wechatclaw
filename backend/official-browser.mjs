@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { bundledBrowser, bundledNativeHost } from "./bundled-browser.mjs";
+import { macOfficialTransport } from "./macos-browser-transport.mjs";
 
 const exec = promisify(execFile);
 export const officialExtensionId = "hehggadaopoacecdllhhajmbjkdcmajg";
@@ -13,13 +14,13 @@ const present = file => fs.stat(file).then(value => value.isFile(), () => false)
 const extensionId = key => createHash("sha256").update(Buffer.from(key, "base64")).digest("hex").slice(0, 32)
   .replace(/[0-9a-f]/g, value => String.fromCharCode(97 + parseInt(value, 16)));
 
-// Read installation paths, never Desktop credentials, live workers or their
-// authorization settings. The official binaries and modules stay installed at
-// their original location; they are not copied into QQClaw's distribution.
+// Prefer the packaged original components. The legacy Windows discovery reads
+// installation paths only; never Desktop credentials or live worker identity.
 export async function discoverOfficialBrowser({ platform = process.platform, env = process.env, home = os.homedir(), runtimeDirectory = env.QQCLAW_RUNTIME_DIR } = {}) {
-  if (platform !== "win32") return { available: false, reason: "当前 macOS 网页内核尚未接通官方 ChatGPT 扩展。" };
-  try { const bundled = await bundledBrowser(runtimeDirectory); if (bundled) return { ...bundled, home }; }
+  if (!["win32", "darwin"].includes(platform) || platform === "darwin" && env.QQCLAW_MAC_BROWSER_READY !== "1") return { available: false, reason: "当前 macOS 网页内核尚未接通官方 ChatGPT 扩展。" };
+  try { const bundled = await bundledBrowser(runtimeDirectory, { platform }); if (bundled) return { ...bundled, home }; }
   catch (error) { return { available: false, reason: error.message }; }
+  if (platform === "darwin") return { available: false, reason: "此 Mac 架构的官方浏览运行库尚未内置。" };
   const local = env.LOCALAPPDATA;
   if (!local) return { available: false, reason: "未找到官方浏览器运行组件的安装目录。" };
   let registry;
@@ -76,8 +77,14 @@ export async function prepareOfficialBrowser({ session, executable, directory, n
     throw new Error("应用内官方扩展未返回有效的所属进程，已拒绝连接其他浏览器。");
   // This helper reads kernel handle names only after checking both publishers
   // and the exact QQClaw -> owned browser -> official native-host process chain.
-  if (typeof page.applicationPath !== "string" || !path.isAbsolute(page.applicationPath) || !/\.exe$/i.test(page.applicationPath)) throw new Error("浏览器所属的原生程序路径无效。");
+  const mac = installation.platform === "darwin";
+  if (typeof page.applicationPath !== "string" || !path.isAbsolute(page.applicationPath) || !mac && !/\.exe$/i.test(page.applicationPath)) throw new Error("浏览器所属的原生程序路径无效。");
   let stdout;
+  let transport;
+  if (mac) {
+    const manifest = JSON.parse(await fs.readFile(nativeHostManifest, "utf8"));
+    transport = await macOfficialTransport({ browserPid: page.browserProcessId, applicationPid: page.applicationProcessId, nativeHost: manifest.path });
+  } else {
   try {
     ({ stdout } = await execImpl(page.applicationPath, ["--official-browser-pipes", String(page.browserProcessId), String(page.applicationProcessId), paths.nodeReplPath, ...(nativeHostManifest ? [nativeHostManifest] : [])],
       { windowsHide: true, timeout: 15000, maxBuffer: 65536, encoding: "utf8" }));
@@ -85,13 +92,14 @@ export async function prepareOfficialBrowser({ session, executable, directory, n
     let report; try { report = JSON.parse(error.stdout); } catch {}
     throw new Error(report?.reason || "无法验证本会话的官方扩展进程和数字签名。");
   }
-  const transport = JSON.parse(stdout);
+  transport = JSON.parse(stdout);
   if (!transport.verified || transport.engine !== page.engine || transport.browserPid !== page.browserProcessId || transport.applicationPid !== page.applicationProcessId ||
     transport.paths?.length !== 1 || !/^\\\\\.\\pipe\\codex-browser-use\\[a-f0-9-]{36}$/i.test(transport.paths[0]))
     throw new Error("无法唯一确认本会话的官方扩展通道，已拒绝连接其他浏览器。");
+  }
   const env = {
     ...isolated,
-    CODEX_CLI_PATH: executable,
+    CODEX_CLI_PATH: mac ? paths.codexCliPath : executable,
     NODE_REPL_NODE_PATH: paths.nodePath,
     NODE_REPL_NODE_MODULE_DIRS: paths.nodeModuleDirs.join(path.delimiter),
     NODE_REPL_TRUSTED_SERVICES: JSON.stringify({ browser: paths.browserServicePath }),
@@ -100,7 +108,9 @@ export async function prepareOfficialBrowser({ session, executable, directory, n
     BROWSER_USE_BACKEND_PATHS: transport.paths[0],
   };
   return { available: true, identity: JSON.stringify([page.engine, paths, extension.version, transport.paths[0]]),
-    command: paths.nodeReplPath, env, clientUrl: pathToFileURL(paths.browserClientPath).href, profile,
+    command: mac ? paths.nodePath : paths.nodeReplPath,
+    args: mac ? [path.join(installation.root, "../../macos-official-mcp.cjs"), installation.root] : [],
+    env, clientUrl: pathToFileURL(paths.browserClientPath).href, profile,
     engine: page.engine, browserFamily, tabCreation: page.tabCreation };
 }
 
@@ -108,7 +118,7 @@ export function officialBrowserArguments(configuration, accessEnvironment) {
   if (!configuration?.available) return [];
   const env = { ...configuration.env, ...accessEnvironment };
   const tomlEnv = `{${Object.entries(env).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(",")}}`;
-  return ["-c", 'web_search="disabled"', "-c", `mcp_servers.node_repl={enabled=true,required=true,command=${JSON.stringify(configuration.command)},args=[],env=${tomlEnv},startup_timeout_sec=30,tool_timeout_sec=300}`];
+  return ["-c", 'web_search="disabled"', "-c", `mcp_servers.node_repl={enabled=true,required=true,command=${JSON.stringify(configuration.command)},args=${JSON.stringify(configuration.args || [])},env=${tomlEnv},startup_timeout_sec=30,tool_timeout_sec=300}`];
 }
 
 export function officialBrowserInstructions(configuration) {

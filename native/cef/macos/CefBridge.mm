@@ -39,7 +39,7 @@ std::string layoutSignature;
 void layoutBrowser();
 void selectBrowser(CefRefPtr<CefBrowser> value);
 NSString* ownerFor(CefRefPtr<CefBrowser> value) {
-  for (const auto& entry : profiles) if (entry.second->IsSame(value->GetRequestContext()))
+  for (const auto& entry : profiles) if (entry.second->IsSame(value->GetHost()->GetRequestContext()))
     return @(entry.first.c_str());
   return @"";
 }

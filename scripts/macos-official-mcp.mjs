@@ -2,7 +2,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { openMacOfficialRuntime } from "../backend/macos-official-runtime.mjs";
 
+async function main() {
 try {
+  if (!path.isAbsolute(process.argv[2] || "")) throw new Error("缺少内置 Mac 官方运行库目录。");
   const root = path.resolve(process.argv[2] || "");
   const manifest = JSON.parse(await fs.readFile(path.join(root, "runtime.json"), "utf8"));
   if (manifest.platform !== "darwin" || manifest.arch !== process.arch || !manifest.includesBrowserCli)
@@ -25,7 +27,11 @@ try {
   runtime.stdout.pipe(process.stdout); runtime.stderr.pipe(process.stderr);
   process.stdout.once("error", stop); process.stderr.once("error", stop);
   process.stdin.pipe(runtime.stdin);
+  process.stdin.once("error", () => { process.exitCode = 1; void stop(); });
   process.stdin.once("end", stop);
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.once(signal, () => { void stop(); });
   void runtime.done.then(({ code, signal }) => { process.exitCode = code ?? (signal ? 1 : 0); return stop(); });
 } catch (error) { process.stderr.write(error.message + "\n"); process.exitCode = 1; }
+
+}
+void main();

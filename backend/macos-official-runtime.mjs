@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { randomUUID } from "node:crypto";
+import { StringDecoder } from "node:string_decoder";
 
 // Own the vendor process and forward its original MCP byte stream. macOS's
 // native host checks node_repl's real parent, so its parent is the unchanged,
@@ -18,6 +19,7 @@ export async function openMacOfficialRuntime({ cli, nodeRepl, cwd, env, onEvent 
   runtime.stdout = new PassThrough(); runtime.stderr = new PassThrough();
   runtime.serverPid = child.pid;
   const processHandle = "qqclaw-browser-" + randomUUID();
+  const decoder = new StringDecoder("utf8");
   let sequence = 0, buffer = "", serverExited = false, ended = false, closing, writes = Promise.resolve();
   const observe = value => { try { onEvent(value); } catch {} };
   let resolveDone, resolveServer;
@@ -44,7 +46,7 @@ export async function openMacOfficialRuntime({ cli, nodeRepl, cwd, env, onEvent 
   child.stdin.on("error", error => { if (!serverExited) fail(error); });
   child.stderr.on("data", bytes => { if (!runtime.stderr.writableEnded) runtime.stderr.write(bytes); });
   child.stdout.on("data", bytes => {
-    buffer += bytes;
+    buffer += decoder.write(bytes);
     if (buffer.length > 32 * 1024 * 1024) { fail(new Error("官方浏览进程的控制消息过大。")); return; }
     while (buffer.includes("\n")) {
       const end = buffer.indexOf("\n"), line = buffer.slice(0, end); buffer = buffer.slice(end + 1);

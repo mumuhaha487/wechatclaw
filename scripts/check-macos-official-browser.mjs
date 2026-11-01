@@ -6,7 +6,6 @@ import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { macOfficialTransport } from "../backend/macos-browser-transport.mjs";
-import { openMacOfficialRuntime } from "../backend/macos-official-runtime.mjs";
 import { BrowserAccessHost } from "../backend/browser-access.mjs";
 import { elicitationForm, simpleConsent, validateForm } from "../backend/codex-approvals.mjs";
 
@@ -64,14 +63,18 @@ try {
     NODE_REPL_TRUSTED_SERVICES: JSON.stringify({ browser: path.join(runtime, manifest.paths.browserServicePath) }),
     NODE_REPL_TRUSTED_CODE_PATHS: [path.join(runtime, "plugin"), ...modules].join(":"),
     CUA_REPL_ENABLED_SURFACES: "browser", BROWSER_USE_BACKEND_PATHS: transport.paths[0] };
-  repl = await openMacOfficialRuntime({ cli, nodeRepl: path.join(runtime, manifest.paths.nodeReplPath), cwd: output, env,
-    onEvent: value => processEvents.push({ at: Date.now(), ...value }) });
-  const ownedProcesses = (await exec("/bin/ps", ["-axo", "pid=,ppid=,comm="])).stdout.split("\n").flatMap(line => {
-    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/); return match ? [{ pid: Number(match[1]), parent: Number(match[2]), executable: match[3] }] : [];
-  }).filter(p => p.parent === repl.serverPid && p.executable === path.join(runtime, manifest.paths.nodeReplPath));
-  if (ownedProcesses.length !== 1) throw Error("The original CLI did not own exactly one Node REPL process");
-  repl.pid = ownedProcesses[0].pid;
-  await write("original-cli-process-spawn.json", { serverPid: repl.serverPid, runtimePid: repl.pid, processEvents });
+  // Launch the actual product stdio entry, not a check-only implementation.
+  repl = spawn(path.join(runtime, manifest.paths.nodePath), [path.resolve(option("--mcp-entry") || path.join(import.meta.dirname, "macos-official-mcp.mjs")), runtime],
+    { cwd: output, env, stdio: ["pipe", "pipe", "pipe"] });
+  const entryExit = new Promise(resolve => repl.once("exit", (code, signal) => resolve({ code, signal })));
+  repl.close = async () => {
+    repl.stdin.end();
+    let timer;
+    const ended = await Promise.race([entryExit, new Promise(resolve => timer = setTimeout(() => resolve(null), 8000))]);
+    clearTimeout(timer);
+    if (!ended) { repl.kill("SIGTERM"); throw Error("The product MCP entry did not exit after stdin EOF"); }
+    if (ended.code !== 0) throw Error("The product MCP entry exited unsuccessfully: " + JSON.stringify(ended));
+  };
   let next = 0, buffered = ""; const pending = new Map(), unexpectedRequests = [];
   repl.stderr.on("data", b => replLog += b);
   repl.stdout.on("data", bytes => {
@@ -135,6 +138,9 @@ try {
     value.signature = (signed.stdout + signed.stderr).split(/\r?\n/).filter(line => /^(?:Identifier|Authority|TeamIdentifier|CDHash)=/.test(line));
   }
   await write("actual-runtime-processes.json", peerProcesses);
+  const rust = peerProcesses.filter(p => p.executable === path.join(runtime, manifest.paths.nodeReplPath));
+  if (rust.length !== 1 || !peerProcesses.some(p => p.pid === rust[0].parent && p.executable === cli))
+    throw Error("The product MCP entry did not preserve the original CLI as Node REPL's actual parent");
   let available = [];
   for (let attempt = 0; attempt < 12; attempt++) {
     const value = await call("browser-list-" + attempt, 'nodeRepl.write("QQCLAW_BROWSER_LIST="+JSON.stringify(await agent.browsers.list()))');
@@ -178,7 +184,7 @@ try {
 } catch (error) { result = { ...result, error: error.stack, accessEvents }; process.exitCode = 1; }
 finally {
   active = false;
-  if (repl) await repl.close();
+  if (repl) { try { await repl.close(); } catch (error) { result.passed = false; result.error = error.message; process.exitCode = 1; } }
   await access.close(); await fs.writeFile(path.join(output, "stop"), "stop");
   let timer; const exit = await Promise.race([browserExit, new Promise(resolve => timer = setTimeout(() => resolve(null), 8000))]); clearTimeout(timer);
   if (!exit) { try { process.kill(-browser.pid, "SIGTERM"); } catch {} }

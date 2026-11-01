@@ -49,3 +49,12 @@ export async function unpackMacBrowserRuntime({ cache, destination, arch = proce
 export function bundleMacBrowserRuntime(root, resources, arch = process.arch) {
   return unpackMacBrowserRuntime({ cache: path.join(root, "runtime/macos/official-browser"), destination: path.join(resources, "official-browser", arch), arch });
 }
+
+export async function bundleMacOfficialMcp(root, resources) {
+  const { build } = await import("esbuild");
+  const file = path.join(resources, "macos-official-mcp.cjs");
+  await fs.mkdir(resources, { recursive: true });
+  await build({ entryPoints: [path.join(root, "scripts/macos-official-mcp.mjs")], outfile: file,
+    bundle: true, platform: "node", target: "node22", format: "cjs", minify: true, legalComments: "none" });
+  return file;
+}

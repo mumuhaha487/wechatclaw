@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { iconPNG } from "./macos-icon.mjs";
 import { bundleMacNode } from "./macos-node-runtime.mjs";
+import { bundleMacOfficialMcp } from "./macos-browser-runtime.mjs";
 
 const exec = promisify(execFile);
 const project = path.resolve(import.meta.dirname, "..");
@@ -15,6 +16,7 @@ export const macTargets = ["arm64-apple-macosx13.5", "x86_64-apple-macosx13.5"];
 export async function macPayload(root, resources) {
   await fs.mkdir(path.join(resources, "ui"), { recursive: true });
   await build({ entryPoints: [path.join(root, "backend/main.mjs")], outfile: path.join(resources, "backend.cjs"), bundle: true, platform: "node", target: "node22", format: "cjs", minify: true, legalComments: "none" });
+  await bundleMacOfficialMcp(root, resources);
   await build({ entryPoints: [path.join(root, "ui/app.mjs")], outfile: path.join(resources, "ui/app.js"), bundle: true, platform: "browser", target: "safari16.4", format: "iife", minify: true, legalComments: "none" });
   for (const file of ["index.html", "app.css", "desktop.css"]) await fs.copyFile(path.join(root, "ui", file), path.join(resources, "ui", file));
   await fs.copyFile(path.join(root, "shared/browser-page.js"), path.join(resources, "browser-page.js"));
