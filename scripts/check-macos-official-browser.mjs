@@ -46,6 +46,7 @@ const browser = spawn(build.executable, [], { detached: true, env: { ...process.
   QQCLAW_CHECK_OPTIONS: path.join(output, "browser-options.json"), QQCLAW_CHECK_STOP: path.join(output, "stop") }, stdio: ["ignore", "pipe", "pipe"] });
 let browserLog = "", repl, replLog = "", result = { passed: false }, active = true;
 const notifications = [], socketSnapshots = [];
+const processEvents = [];
 browser.stdout.on("data", b => browserLog += b); browser.stderr.on("data", b => browserLog += b);
 const browserExit = new Promise(resolve => browser.once("exit", (code, signal) => resolve({ code, signal })));
 const task = { sessionId: randomUUID(), turnId: randomUUID() }, accessEvents = [];
@@ -75,13 +76,17 @@ async function launchOriginalRuntime(env) {
       const value = JSON.parse(line), request = requests.get(value.id);
       if (request) { clearTimeout(request.timer); requests.delete(value.id); value.error ? request.reject(Error(JSON.stringify(value.error))) : request.resolve(value.result); }
       else if (value.method === "process/outputDelta" && value.params?.processHandle === processHandle) {
+        processEvents.push({ at: Date.now(), method: value.method, stream: value.params.stream, bytes: Buffer.from(value.params.deltaBase64, "base64").length });
         const stream = value.params.stream === "stderr" ? runtimeProcess.stderr : runtimeProcess.stdout;
         stream.write(Buffer.from(value.params.deltaBase64, "base64"));
-      } else if (value.method === "process/exited" && value.params?.processHandle === processHandle) runtimeProcess.emit("exit", value.params.exitCode);
+      } else if (value.method === "process/exited" && value.params?.processHandle === processHandle) {
+        processEvents.push({ at: Date.now(), method: value.method, params: value.params }); runtimeProcess.emit("exit", value.params.exitCode);
+      }
       else if (value.id !== undefined && value.method) server.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: value.id, error: { code: -32601, message: "No interactive requests are expected in this process integration check" } }) + "\n");
     }
   });
   server.once("exit", (code, signal) => {
+    processEvents.push({ at: Date.now(), method: "app-server-exited", code, signal });
     serverExited = true;
     for (const p of requests.values()) { clearTimeout(p.timer); p.reject(Error("Original app-server exited")); } requests.clear();
     runtimeProcess.emit("exit", code, signal);
@@ -100,7 +105,7 @@ async function launchOriginalRuntime(env) {
     await rpc("initialize", { clientInfo: { name: "qqclaw_mac_process_integration", version: "1" }, capabilities: { experimentalApi: true } });
     server.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }) + "\n");
     const spawned = await rpc("process/spawn", { command: [path.join(runtime, manifest.paths.nodeReplPath)], processHandle, cwd: output,
-      tty: false, streamStdin: true, streamStdoutStderr: true, outputBytesCap: 16 * 1024 * 1024 });
+      tty: false, streamStdin: true, streamStdoutStderr: true, timeoutMs: 180000, outputBytesCap: 16 * 1024 * 1024 });
     await write("original-cli-process-spawn.json", { serverPid: server.pid, processHandle, result: spawned, documentation: "https://developers.openai.com/codex/app-server#process-execution" });
     const processes = (await exec("/bin/ps", ["-axo", "pid=,ppid=,comm="])).stdout.split("\n").flatMap(line => {
       const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/); return match ? [{ pid: Number(match[1]), parent: Number(match[2]), executable: match[3] }] : [];
@@ -226,6 +231,7 @@ finally {
   const logs = await exec("/usr/bin/sqlite3", [sqlite, ".dump"], { maxBuffer: 2 * 1024 * 1024 }).catch(error => ({ stdout: error.message }));
   await fs.writeFile(path.join(output, "runtime-sqlite.log"), logs.stdout);
   await write("notifications.json", notifications); await write("socket-snapshots.json", socketSnapshots);
+  await write("original-cli-process-events.json", processEvents);
   await fs.writeFile(path.join(output, "browser.log"), browserLog); await fs.writeFile(path.join(output, "repl.log"), replLog);
   await write("result.json", { ...result, exit, observations }); console.log(JSON.stringify({ ...result, exit }));
 }
