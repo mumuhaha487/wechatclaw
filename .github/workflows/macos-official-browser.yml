@@ -123,7 +123,12 @@ jobs:
                         let snapshot=try await host.call(backend,"snapshot") as! [String:Any]
                         guard let accounts=snapshot["accounts"] as? [Any],accounts.isEmpty else { throw failure("The isolated Host did not have an empty account store") }
                         _=try await host.call(backend,"settings.save",params:["fontSize":15])
-                        let image=try await host.web.takeSnapshot(with:nil)
+                        let image: NSImage = try await withCheckedThrowingContinuation { continuation in
+                          host.web.takeSnapshot(with:nil) { image,error in
+                            if let image { continuation.resume(returning:image) }
+                            else { continuation.resume(throwing:error ?? failure("The product frontend snapshot failed")) }
+                          }
+                        }
                         guard let tiff=image.tiffRepresentation,let bitmap=NSBitmapImageRep(data:tiff),let png=bitmap.representation(using:.png,properties:[:]) else { throw failure("The product frontend screenshot failed") }
                         try png.write(to:URL(fileURLWithPath:ProcessInfo.processInfo.environment["QQCLAW_HOST_IMAGE"]!))
                         host.requestCefQuit()
@@ -156,11 +161,21 @@ jobs:
           try {const result=await run(binary,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(base,'data'),CODEX_HOME:path.join(base,'codex'),QQCLAW_HOST_IMAGE:path.join(proof,'host-preview.png'),QQCLAW_HOST_RESULT:path.join(proof,'host-preview.json')},timeout:60000,maxBuffer:2*1024*1024});await fs.writeFile(path.join(proof,'host-preview.log'),result.stdout+result.stderr);}
           catch(error){await fs.writeFile(path.join(proof,'host-preview.log'),(error.stdout||'')+(error.stderr||'')+'\n'+error.message);throw error;}
           NODE
+      - name: Preserve crash diagnostics from the owned native components
+        if: ${{ !cancelled() }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';import path from 'node:path';import os from 'node:os';
+          const reports=path.join(os.homedir(),'Library/Logs/DiagnosticReports');
+          const output=path.join(process.env.RUNNER_TEMP,'official-browser-proof');await fs.mkdir(output,{recursive:true});
+          for(const name of await fs.readdir(reports).catch(()=>[]))if(/^QQClaw(?:Browser)?[-_].*\.ips$/.test(name))await fs.copyFile(path.join(reports,name),path.join(output,name));
+          NODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: mac-official-browser-evidence
           path: |
+            ${{ runner.temp }}/official-browser-proof/*.ips
             ${{ runner.temp }}/official-browser-proof/*.json
             ${{ runner.temp }}/official-browser-proof/*.log
             ${{ runner.temp }}/official-browser-proof/*.png
