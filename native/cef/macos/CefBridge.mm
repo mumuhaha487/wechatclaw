@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #include <memory>
 #include <string>
+#include <algorithm>
 #include "include/cef_app.h"
 #include "include/cef_application_mac.h"
 #include "include/cef_client.h"
@@ -10,6 +11,7 @@
 #include "include/cef_frame.h"
 #include "include/views/cef_browser_view.h"
 #include "include/views/cef_browser_view_delegate.h"
+#include "include/views/cef_box_layout.h"
 #include "include/views/cef_window.h"
 #include "include/views/cef_window_delegate.h"
 #include "include/wrapper/cef_helpers.h"
@@ -24,6 +26,10 @@ CefRefPtr<CefBrowserView> browserView;
 CefRefPtr<CefBrowser> browser;
 std::unique_ptr<CefScopedLibraryLoader> loader;
 bool closing = false;
+CefRect requestedBounds;
+bool requestedVisible = false, hasBounds = false;
+std::string layoutSignature;
+void layoutBrowser();
 void emit(NSDictionary* value) {
   NSData* data = [NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
   if (notify && data) {
@@ -115,6 +121,7 @@ class BrowserViewDelegate final : public CefBrowserViewDelegate {
  public:
   cef_runtime_style_t GetBrowserRuntimeStyle() override { return CEF_RUNTIME_STYLE_CHROME; }
   ChromeToolbarType GetChromeToolbarType(CefRefPtr<CefBrowserView> value) override { return CEF_CTT_NONE; }
+  CefSize GetMinimumSize(CefRefPtr<CefView> view) override { return CefSize(1, 1); }
  private:
   IMPLEMENT_REFCOUNTING(BrowserViewDelegate);
 };
@@ -130,6 +137,9 @@ class RootDelegate final : public CefWindowDelegate {
     root = nullptr; browserView = nullptr;
     emit(@{@"event": @"root-closed"});
     CefQuitMessageLoop();
+  }
+  void OnLayoutChanged(CefRefPtr<CefView> view, const CefRect& bounds) override {
+    layoutBrowser();
   }
   bool CanClose(CefRefPtr<CefWindow> window) override {
     if (!closing) { emit(@{@"event": @"close-requested"}); return false; }
@@ -198,15 +208,40 @@ void* QQClawCefCreateShell(void* configuration) {
   return (void*)CFBridgingRetain(view);
 }
 void QQClawCefBrowserBounds(int x, int y, int width, int height, int visible) {
-  if (!root || !browserView || !shell) return;
-  const bool show = visible && width > 0 && height > 0;
-  browserView->SetBounds(CefRect(x, y, width, height));
-  browserView->SetVisible(show);
-  shell.browserVisible = show;
+  requestedBounds = CefRect(x, y, width, height);
+  requestedVisible = visible && width > 0 && height > 0;
+  hasBounds = true;
+  layoutBrowser();
+}
+namespace {
+void layoutBrowser() {
+  if (!root || !browserView || !shell || !hasBounds) return;
   NSView* parent = nativeWindow().contentView;
-  NSRect hole = NSMakeRect(x, NSHeight(parent.bounds) - y - height, width, height);
+  const auto& b = requestedBounds;
+  const int contentWidth = NSWidth(parent.bounds), contentHeight = NSHeight(parent.bounds);
+  const std::string signature = std::to_string(contentWidth) + ":" + std::to_string(contentHeight) + ":" +
+      std::to_string(b.x) + ":" + std::to_string(b.y) + ":" + std::to_string(b.width) + ":" +
+      std::to_string(b.height) + ":" + std::to_string(requestedVisible);
+  if (layoutSignature == signature) return;
+  layoutSignature = signature;
+  // A CefWindow has a default FillLayout which overwrites child SetBounds on
+  // the next layout pass. Use the public BoxLayout insets to reserve precisely
+  // the application's pane instead of repeatedly fighting the parent layout.
+  browserView->SetVisible(requestedVisible);
+  CefBoxLayoutSettings settings;
+  settings.horizontal = true;
+  settings.inside_border_insets.left = b.x;
+  settings.inside_border_insets.top = b.y;
+  settings.inside_border_insets.right = std::max(0, contentWidth - b.x - b.width);
+  settings.inside_border_insets.bottom = std::max(0, contentHeight - b.y - b.height);
+  auto layout = root->SetToBoxLayout(settings);
+  layout->SetFlexForView(browserView, 1);
+  root->Layout();
+  shell.browserVisible = requestedVisible;
+  NSRect hole = NSMakeRect(b.x, NSHeight(parent.bounds) - b.y - b.height, b.width, b.height);
   shell.browserHole = [shell convertRect:hole fromView:parent];
   [shell updateMask];
+}
 }
 const char* QQClawCefState() {
   NSWindow* window = nativeWindow();
