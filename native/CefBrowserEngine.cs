@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using System.Collections.Concurrent;
+using System.Threading;
 
 // Pipe writes run off the UI and receive threads. A blocked browser must not
 // make the UI writer and stdout receiver wait on one another's locks.
@@ -41,7 +42,13 @@ internal sealed class CefInputWriter {
 // The packager must provide these hashes from its verified build inputs. A
 // manifest beside a downloaded executable is not itself a trust anchor.
 internal sealed class CefEngineFiles {
-    internal string Directory, BootstrapSha256, ClientSha256, ElfSha256, LibrarySha256;
+    internal string Directory, LeaseFile, BootstrapSha256, ClientSha256, ElfSha256, LibrarySha256;
+    internal FileStream AcquireLease(bool exclusive) {
+        if (String.IsNullOrEmpty(LeaseFile)) return null;
+        System.IO.Directory.CreateDirectory(Path.GetDirectoryName(LeaseFile));
+        try { return new FileStream(LeaseFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, exclusive ? FileShare.None : FileShare.ReadWrite); }
+        catch (IOException) { throw new Exception("浏览器组件正在使用或安装中。请结束相关浏览器任务并重启 QQClaw 后重试。"); }
+    }
     internal void Verify() {
         Check(Path.Combine(Directory, "QQClawBrowser.exe"), BootstrapSha256);
         Check(Path.Combine(Directory, "QQClawBrowser.dll"), ClientSha256);
@@ -74,6 +81,7 @@ internal sealed class CefBrowserEngine {
     readonly object gate = new object();
     CefInputWriter input;
     Task startup;
+    FileStream lease;
     int next;
     bool started, closing;
     volatile bool outputEnded;
@@ -97,10 +105,10 @@ internal sealed class CefBrowserEngine {
     }
     private async Task StartGuarded(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins) {
         try { await StartCore(profilePath, extensionPath, configurationPath, logPath, allowedOrigins); }
-        catch (Exception error) { CloseInput(); Fail(error); throw; }
+        catch (Exception error) { CloseInput(); if (!started) ReleaseLease(); Fail(error); throw; }
     }
     private async Task StartCore(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins) {
-        await Task.Run(() => files.Verify());
+        await Task.Run(delegate { lease = files.AcquireLease(false); files.Verify(); });
         Directory.CreateDirectory(profilePath);
         Directory.CreateDirectory(Path.GetDirectoryName(configurationPath));
         Directory.CreateDirectory(Path.GetDirectoryName(logPath));
@@ -131,7 +139,7 @@ internal sealed class CefBrowserEngine {
         process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs line) { if (line.Data != null) Log(line.Data); };
         process.EnableRaisingEvents = true;
         process.Exited += delegate {
-            exited.TrySetResult(process.ExitCode); CompleteExit();
+            ReleaseLease(); exited.TrySetResult(process.ExitCode); CompleteExit();
         };
         process.Start(); started = true;
         input = new CefInputWriter(process.StandardInput.BaseStream, () => Fail(new Exception("浏览器输入通道已关闭。")));
@@ -232,6 +240,7 @@ internal sealed class CefBrowserEngine {
         else FailPending(new Exception("浏览器会话已关闭。"));
     }
     void CloseInput() { lock (gate) { if (input != null) input.Complete(); } }
+    void ReleaseLease() { var value = Interlocked.Exchange(ref lease, null); if (value != null) value.Dispose(); }
     internal async Task Close() {
         if (!started) return;
         Exception shutdownFailure = null;

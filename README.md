@@ -147,7 +147,7 @@ Windows 构建始终只输出 `release/QQClaw.exe`。构建前请关闭程序；
 
 未发布的 CEF Windows 组件可单独编译：`npm run build:browser -- --cef-sdk "C:\cef-sdk" --output "C:\outside-project\browser-build"`。SDK 必须是官方 `154.0.34+g14c5a08+chromium-154.0.8037.98` Windows x64 minimal 包，目录包含 include、Release/bootstrap.exe、Release/chrome_elf.dll 和 LICENSE.txt；编译端还需 g++、dlltool、objdump。脚本校验版本、API hash、配套官方二进制与 JSON 头文件摘要，生成客户端、bootstrap、chrome_elf、清单及许可证。默认输出系统临时目录，不改 release。应用开发候选可用 `node scripts/build-windows.mjs --browser-engine "C:\outside-project\browser-build" --output "C:\outside-project\candidate\QQClaw.exe"` 构建：校验当前源码与产物，嵌入可信清单及小客户端，不打包大型运行库。未指定组件的普通构建仍不需要 C++，也不会自动获得官方扩展能力。
 
-**该组件仍未发布，缺少产品运行库安装器与新电脑官方组件准备入口。** 当前实验安装的 libcef 使用固定官方 signed 档；bootstrap/chrome_elf 使用同版本 minimal 原版配套文件，遵守其签名身份匹配要求，没有剥签；本应用整体仍未签名。实际 BrowserHost/正式 helper 与真实模型的新建、读取、关闭已做组件验证，完整 GUI、新 CEF 查找/下载/历史、控件外观、真实微信/Google及Mac扩展仍缺。构建成功不能作为整体验收，详细范围见 result.md 首节。
+**该组件仍未发布。** 带上述组件资源的开发构建已在设置中提供按需安装、取消、校验和修复入口：下载约132MiB的固定官方CEF运行库，使用中的组件由lease保护，不覆盖活跃worker。libcef保留官方signed档签名，bootstrap/chrome_elf采用同版本minimal原版配套文件，没有剥签；本应用整体仍未签名。运行库安装不等于官方扩展连接，新电脑仅CLI的官方Node REPL/原生宿主/商店扩展准备仍缺。完整GUI、自动冷启动、CEF查找/下载/历史和控件外观、真实微信/Google及Mac仍需验收；详细范围见result.md首节。
 
 `npm run dev` 编译并打开桌面应用。源码和成品目录不包含测试文件、测试截图或旧版程序。
 

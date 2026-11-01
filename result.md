@@ -2,7 +2,33 @@
 
 更新时间：2026-11-01。正式 Windows EXE 与 Mac 唯一安装包为 **0.3.32**，Windows 已替换并启动。**未发布源码已将 CEF 接到实际 BrowserHost、正式 helper 和可选打包流程，真实配置模型已通过原版官方扩展新建、读取、关闭检查页。** 这仍是隐藏原生 Form 的组件检查，不能当作正式 EXE GUI、微信、Google、全新电脑或 Mac 验收。原始目标保持 active；下方旧检查点中的“尚未接线”等描述只表示各阶段当时状态。
 
-## 最新源码检查点：BrowserHost 接线与真实模型验证（未发布）
+## 最新源码检查点：浏览器组件按需安装、取消与修复（未发布）
+
+源码已提供真实 Windows 安装器与设置入口，正式两端仍为0.3.32、未替换。安装器只下载固定版本官方 CEF 档，校验大小与SHA-256后在独立目录解压，验证运行资源和四个二进制，再替换目标目录。安装失败/取消保留原目录；最终提交阶段不接受取消，应用退出会等待安装收尾。组件下载不设前端100秒RPC超时，不影响Codex长任务；网络读写本身有60秒无响应限制。
+
+| 新增/修改索引 | 当前责任 |
+| --- | --- |
+| native/CefBrowserInstaller.cs | 官方固定HTTPS地址、137799728字节及摘要；下载缓存、取消、暂存/校验/提交、失败恢复；只为公开运行库添加AppContainer RX；不改浏览器注册表、官方扩展或用户私有profile/会话 |
+| native/CefBrowserRuntime.cs / CefBrowserEngine.cs | 内嵌清单严格核对官方URL/档案/配套bootstrap；每组件独立文件lease。worker启动前取得共享lease并持有至真实退出，安装器要求独占，避免使用中覆盖；启动失败释放lease并拒绝排队请求 |
+| native/Program.cs / scripts/build-windows.mjs | 接入system.browserComponentStatus/installBrowserComponent/cancelBrowserComponent；进度由原生发送；解压子进程加入应用job；关闭时取消或等待安装完成；构建包含安装器源码 |
+| ui/browser-component.mjs / ui/app.mjs | 亮色设置卡显示未安装、需修复、已校验；支持安装/修复、重新检测、真实进度、取消。页面切换保留安装任务；安装完成仍显示官方扩展的实际独立连接状态 |
+
+实际证据均在项目外 qqclaw-cef-contract-20261101：
+
+- `installer-probe-b0c1403a9628436195146363b043eb16/result.json`：19项原生检查通过。该新bundle初始不存在；真实从官方CDN下载并校验/安装，使用已安装文件启动实际CEF worker；worker持lease时拒绝覆盖，实际退出后可再次检查。另覆盖错误档案、原目录保留、重复安装共享任务、取消、暂存清理、公开目录RX，以及缺失resources.pak的检测/修复。没有把本机原有手动安装目录当作这次新安装成功。
+- `installer-ui-d1ab6935f85e42c7b864d86e467344c5/audit.json`及installed-settings.png：CUA操作真实产品前端/App/Store和真实C#安装/取消/状态接口。实际点击修复、解压中取消、再次修复、安装期间切换到模型设置再回来；最终显示组件已安装且扩展仍未连接。2次安装、1次取消、3次状态检测；0chat.send、0pending、0waitingSaves、0前端/服务器未处理错误，1项预期models.list夹具错误。其他环境/浏览器/模型接口明确为夹具，**不是正式EXE GUI、真实微信或新电脑官方扩展安装验收**。
+- 两个组件及UI检查服务正常退出0，按确切路径/父子关系复查无遗留；修复后的resources.pak存在，测试qa-backup已被验证后的目录替换清理。没有停止正式PID95560。CEF日志无FATAL或旧Sandbox cannot access executable匹配，但未验证可选on-device-model完整功能。
+- 当前140项JS回归/许可/预算/引擎边界检查通过，59脚本语法检查通过；C#缺失组件并发失败检查再次编译运行，确认启动/排队请求失败且lease释放，无子进程创建。原生19项不是这140项中的模拟测试。
+
+最终独立候选 `installer-package-ffd835d2dc4642b982ba2c8cd1a202b1/QQClaw.exe`：6028800 bytes，SHA-256 `51AF0F153533FE2A8CD495473EB1E82936F0E24EE8835EE4F91EB2662C4C7D6C`。程序集资源、payload21个条目/六个组件文件、安装目录四个二进制校验通过；大型运行库没有进入EXE。成品目录仍只有一个正式EXE和一个DMG。
+
+证据保留问题如实记录：本轮首次编译复用了前轮host-package目录，覆盖了旧候选5476B370…；其当时的验证不再表示该路径仍保留原二进制。说明已保存host-package/artifact-superseded-note.md。之后改用带唯一ID的独立候选目录，当前源码、构建及验证记录均保留。正式成品未受影响。
+
+**仍缺的关键环节：** 已实际读取[官方浏览器扩展说明](https://learn.chatgpt.com/docs/chrome-extension)，文档仍从桌面设置安装所需插件及商店扩展，未建立QQClaw仅CLI的新电脑自动安装契约。已核实当前CLI有plugin add命令；完全空的独立CODEX_HOME、无复制认证的plugin list返回installed=0/available=0，不能据此宣称市场已接通或CLI安装一定不可能。自己的CEF运行库安装成功不等于官方Node REPL/原生宿主/扩展已经准备好。
+
+下一步先检查当前组件的**自动冷启动**：上轮真实模型检查前曾在QA页手动准备CEF，尚不能覆盖新会话不预先点击准备、直接由模型/微信任务启动的完整流程。需核对扩展原生宿主的启动时序；若出现等待，只能等待本应用所属的元数据就绪，不能借其他进程/管道或重发模型操作。随后使用本轮安装所得组件重跑官方扩展真实模型/Google。CEF普通Chrome控件、查找/下载/历史/快捷键、完整GUI及DPI/输入法、真实微信、Mac和完整参考主页仍缺。WebView整页重载/恢复期间的安装进度接续尚未检查，不能将页面切换检查扩大为重载恢复通过。整体目标仍active，当前候选未发布。
+
+## 前一源码检查点：BrowserHost 接线与真实模型验证（未发布）
 
 正式程序 PID 95560 与两端 .32 成品未停止、未替换。项目外的开发候选约 5.73 MiB，未安装到 release。项目内没有增加运行库、测试、依赖、旧版 EXE 或第二个成品。
 

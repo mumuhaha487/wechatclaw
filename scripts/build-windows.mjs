@@ -277,6 +277,7 @@ const args = [
   path.join(root, "native", "OfficialBrowser.cs"),
   path.join(root, "native", "CefBrowserEngine.cs"),
   path.join(root, "native", "CefBrowserRuntime.cs"),
+  path.join(root, "native", "CefBrowserInstaller.cs"),
   buildInfo,
 ];
 try {

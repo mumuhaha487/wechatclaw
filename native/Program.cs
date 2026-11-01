@@ -295,7 +295,11 @@ internal sealed class DesktopWindow : Form {
                 var nodePath = Get(p, "path"); if (!File.Exists(nodePath)) throw new Exception("Node.js 路径不存在。");
                 await ReadNodeVersion(nodePath);
                 File.WriteAllText(Path.Combine(Program.DataDirectory, "node-path.txt"), Path.GetFullPath(nodePath)); result = true;
-            } else if (method == "system.installCodex") { result = await InstallCodex(); }
+            } else if (method == "system.browserComponentStatus") { result = await CefBrowserInstaller.Status(); }
+            else if (method == "system.installBrowserComponent") {
+                result = await CefBrowserInstaller.Install(Path.Combine(Program.RuntimeDirectory, "browser-engine"), value => Post(new { kind = "event", @event = "browser-component-install", data = value }), AttachBrowserProcess);
+            } else if (method == "system.cancelBrowserComponent") { result = new { cancelling = CefBrowserInstaller.Cancel() }; }
+            else if (method == "system.installCodex") { result = await InstallCodex(); }
             else if (method == "system.loginCodex") {
                 await StartBackend(); var response = await BackendRequest("environment", new { });
                 var environment = response["result"] as Dictionary<string, object>; var executable = Get(environment, "codexPath");
@@ -529,7 +533,9 @@ internal sealed class DesktopWindow : Form {
     private async void OnClosing(object sender, FormClosingEventArgs e) {
         if (exiting) return;
         e.Cancel = true; exiting = true;
+        CefBrowserInstaller.Cancel();
         await ShutdownBackend();
+        await CefBrowserInstaller.Shutdown();
         if (browserHost != null) {
             try { await browserHost.CloseAll(); }
             catch (Exception failure) { Program.LogNativeFailure(failure); }

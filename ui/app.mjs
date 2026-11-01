@@ -29,6 +29,7 @@ import { BrowserFind } from "./browser-find.mjs";
 import { ComposerModelMenu } from "./composer-model.mjs";
 import { websiteCards, websiteTarget } from "./website-cards.mjs";
 import { approvalFields, approvalContent } from "./approval-forms.mjs";
+import { browserComponentSettings, componentProgress } from "./browser-component.mjs";
 import { version as appVersion } from "../package.json";
 
 const $ = (id) => document.getElementById(id);
@@ -104,7 +105,7 @@ function rpc(method, params = {}) {
       return;
     }
     const id = `ui-${++sequence}`;
-    const timer = method.startsWith("dialog.") ? null : setTimeout(
+    const timer = method.startsWith("dialog.") || method === "system.installBrowserComponent" ? null : setTimeout(
       () => {
         pending.delete(id);
         reject(new Error("操作超时，请检查运行环境或网络。"));
@@ -160,6 +161,9 @@ const ui = {
   environment: null,
   runtime: null,
   officialBrowser: null,
+  browserComponent: null,
+  installingBrowser: false,
+  browserInstallProgress: null,
   browserConnections: new Map(),
   startupError: "",
   environmentChecked: false,
@@ -1326,7 +1330,7 @@ function officialBrowserSettings() {
   const status = ui.officialBrowser;
   const title = status?.connected ? "官方扩展已连接" : status?.available ? "官方扩展已准备" : "官方扩展尚未就绪";
   return `<h2>内置浏览器</h2><div class="settings-card"><div class="setting-row"><div class="grow"><p class="setting-title">本机浏览记录与下载</p><p class="setting-description">浏览记录只包含本软件访问的网页；清除记录不会删除登录状态、下载文件或聊天。</p></div></div><div class="row">${button("browser-history", "浏览记录", "clock", "outline")}${button("browser-downloads", "下载", "download", "outline")}</div></div>
-    <h2>官方浏览器扩展</h2><div class="settings-card"><p class="setting-title">${title}</p><p class="setting-description">${esc(status?.reason || "尚未检测当前会话的连接状态。")}</p>
+    <h2>官方浏览器扩展</h2>${browserComponentSettings({ status: ui.browserComponent, installing: ui.installingBrowser, progress: ui.browserInstallProgress, isMac }, button)}<div class="settings-card"><p class="setting-title">${title}</p><p class="setting-description">${esc(status?.reason || "尚未检测当前会话的连接状态。")}</p>
     ${(status?.browsers || []).map(b => `<div class="setting-row"><span class="grow">${esc(b.name)}</span><span class="muted">${b.installed ? "检测到官方扩展文件" : b.detection === "unknown" ? "安装情况未知" : "未检测到官方扩展文件"}</span></div>`).join("")}
     <p class="setting-description">浏览任务会为当前会话独立检测官方组件与扩展。网站确认会显示在任务来源的微信或 QQClaw 中；安装检测不代表连接成功。</p>
     <div class="row">${button("official-browser-store", "官方扩展安装入口", "external", "outline")}${button("official-browser-docs", "查看官方说明", "external", "outline")}</div></div>`;
@@ -1636,6 +1640,7 @@ async function checkEnvironment(restart) {
   ui.checkingEnvironment = true;
   try {
     ui.runtime = await rpc("system.status");
+    if (!isMac && ui.browserComponent === null) ui.browserComponent = await rpc("system.browserComponentStatus").catch(() => ({ packaged: false, installed: false, reason: "当前版本尚未提供浏览器组件检测，请更新应用。" }));
     if (ui.runtime.nodeReady) {
       if (restart) await rpc("system.reload");
       const initial = await rpc("snapshot");
@@ -1783,7 +1788,8 @@ async function action(name, element) {
   if (!environmentReady() && !name.startsWith("window.") && ![
     "runtime", "refresh-environment", "choose-node", "choose-codex", "save-codex-source", "open-desktop", "install-desktop",
     "install-node", "install-webview", "install-codex", "codex-docs", "login-codex", "open-data", "open-conversations", "restore-conversations",
-    "app-menu", "app-command", "source-project", "official-browser-docs",
+    "app-menu", "app-command", "source-project", "official-browser-docs", "official-browser-store",
+    "install-browser-component", "cancel-browser-component", "check-browser-component",
   ].includes(name)) return;
   if (external[name]) return rpc("shell.open", { url: external[name] });
   if (name.startsWith("window.")) return rpc(name);
@@ -2385,6 +2391,7 @@ async function action(name, element) {
         path: state.projects.find((p) => p.id === id).workspace,
       });
     case "refresh-environment":
+      if (!isMac && !ui.installingBrowser) ui.browserComponent = await rpc("system.browserComponentStatus");
       await refreshEnvironment(true);
       return toast(environmentReady() ? "环境配置成功。" : ui.runtime?.nodeReady ? "NodeJS 环境配置成功，Codex 未检测到配置" : "请先完成 NodeJS 安装。");
     case "continue-desktop": {
@@ -2431,6 +2438,21 @@ async function action(name, element) {
         toast("Codex 来源已保存，后续任务使用新来源。");
       } finally { ui.savingCodexSource = false; render(); }
       return;
+    }
+    case "check-browser-component":
+      if (ui.installingBrowser) return;
+      ui.browserComponent = await rpc("system.browserComponentStatus"); render(); return toast(ui.browserComponent.reason);
+    case "install-browser-component":
+      if (ui.installingBrowser || !ui.browserComponent?.packaged || ui.browserComponent.installed) return;
+      ui.installingBrowser = true; ui.browserInstallProgress = null; render();
+      try {
+        const result = await rpc("system.installBrowserComponent");
+        ui.browserComponent = await rpc("system.browserComponentStatus"); toast(result.message);
+      } finally { ui.installingBrowser = false; ui.browserInstallProgress = null; render(); }
+      return;
+    case "cancel-browser-component": {
+      const result = await rpc("system.cancelBrowserComponent");
+      return toast(result.cancelling ? "正在取消安装…" : "安装已结束或正在完成最后一步，请稍候。");
     }
     case "install-codex":
       if (ui.installingCodex || !ui.runtime?.nodeReady) return;
@@ -2889,6 +2911,13 @@ function onEvent(event, data) {
       if (ui.page === "runtime") render();
       else if (ui.panelPage === "browser") refreshBrowserPanel();
     }
+  } else if (event === "browser-component-install") {
+    if (!ui.installingBrowser) return;
+    ui.browserInstallProgress = data;
+    const text = document.querySelector("[data-browser-component-progress]");
+    if (text) text.textContent = componentProgress(data);
+    const cancel = document.querySelector('[data-action="cancel-browser-component"]');
+    if (cancel) cancel.disabled = data.canCancel === false;
   } else if (event === "browser-downloads") {
     browserDownloads.update(data);
   } else if (event === "browser-history") {

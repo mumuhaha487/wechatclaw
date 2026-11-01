@@ -1,6 +1,16 @@
 # 官方 ChatGPT 扩展接入调查
 
-## 最新源码检查点：实际 BrowserHost、正式 helper 和真实模型（未发布）
+## 最新源码检查点：按需安装与使用中保护（未发布）
+
+Windows源码已增加CefBrowserInstaller及设置入口，下载固定官方CEF档，校验后暂存、验证、提交；支持取消与修复，不覆盖持共享lease的运行worker。CefBrowserEngine仅在真实退出或未创建进程的启动失败后释放lease；Program接原生状态/安装/取消、进度、job及退出收尾。组件与官方扩展连接分别显示，已安装不会变成已连接。
+
+项目外证据：qqclaw-cef-contract-20261101/installer-probe-b0c1403a9628436195146363b043eb16中19项原生检查通过，包括真实CDN下载、新bundle安装、实际worker启动、lease互斥、取消/目录保留及缺失资源修复。installer-ui-d1ab6935f85e42c7b864d86e467344c5为CUA真实前端+原生安装器检查：解压中取消、重试、页面切换和最终独立状态均通过。其他环境/模型/浏览器路由为夹具，不能称正式GUI、真实微信、Google、Mac或全新电脑官方组件通过。
+
+独立候选installer-package-ffd835d2dc4642b982ba2c8cd1a202b1，6028800 bytes、SHA256 51AF0F153533FE2A8CD495473EB1E82936F0E24EE8835EE4F91EB2662C4C7D6C；资源/payload/四个安装二进制已核对。140项JS、59脚本语法和当前C#启动失败lease释放检查通过。正式包仍.32，未替换。前轮host-package被首次编译复用覆盖的证据问题已如实说明，后续候选使用唯一目录，见result.md首节。
+
+官方[扩展安装文档](https://learn.chatgpt.com/docs/chrome-extension)仍从桌面设置完成插件/商店扩展安装，未证明本项目仅CLI的新电脑流程。CLI支持plugin add，但空CODEX_HOME且未复制认证的plugin list为0安装/0可用，不等于已实现官方组件引导。下一步优先验证不预先手动准备的自动冷启动及所属native host时序，再以当前安装所得组件跑实际模型/Google；随后补CEF控件样式、查找/下载/历史/按键、全GUI/微信/Mac。整页重载时接续安装尚未检查。整体目标保持active。
+
+## 前一源码检查点：实际 BrowserHost、正式 helper 和真实模型（未发布）
 
 正式 EXE/DMG 仍0.3.32。本次已经将 CEF 接入 native/BrowserHost.cs、Program.cs 和 OfficialBrowser.cs，并由 backend/official-browser.mjs 核对原生/helper 的 engine 和能力；CEF 真实支持新建标签时返回 chrome/tabCreation=true。新 CefBrowserRuntime.cs 只信任程序集 QQClaw.browser-engine 清单，固定安装路径与 bootstrap、客户端、chrome_elf、libcef 摘要。scripts/browser-engine-artifact.mjs 验证当前源码及固定官方输入，build-windows.mjs 可通过 --browser-engine 导入小客户端/可信资源，通过 --output 输出项目外候选。没有提供运行库安装器，未发布或替换正式软件。
 
