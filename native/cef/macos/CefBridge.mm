@@ -188,7 +188,20 @@ class RootDelegate final : public CefWindowDelegate {
     layoutBrowser();
   }
   bool CanClose(CefRefPtr<CefWindow> window) override {
-    if (!closing) { emit(@{@"event": @"close-requested"}); return false; }
+    if (!closing) {
+      auto page = browserView ? browserView->GetBrowser() : nullptr;
+      if (page && page->GetHost()->IsReadyToBeClosed()) {
+        // Closing a page is different from closing the application. Detach
+        // its public Views parent before completing the mandatory close so
+        // Chrome does not destroy the window that also owns the composer.
+        auto retiring = browserView;
+        window->RemoveChildView(retiring); browserView = nullptr; browser = nullptr;
+        shell.browserVisible = NO; [shell updateMask];
+        page->GetHost()->CloseBrowser(true);
+        emit(@{@"event": @"tab-close-detached", @"tabId": @(page->GetIdentifier())});
+      } else emit(@{@"event": @"close-requested"});
+      return false;
+    }
     return pages.empty();
   }
   CefSize GetPreferredSize(CefRefPtr<CefView> view) override { return CefSize(1100, 760); }
@@ -212,6 +225,7 @@ class BrowserApp final : public CefApp, public CefBrowserProcessHandler {
     // when this native-messaging feature is enabled. No origin/review gate
     // is disabled; the official signed host receives the normal arguments.
     command->AppendSwitchWithValue("enable-features", "OnConnectNative");
+    emit(@{@"event": @"native-browser-config", @"enableFeatures": @(command->GetSwitchValue("enable-features").ToString().c_str())});
     if ([options[@"diagnostics"] boolValue]) {
       command->AppendSwitchWithValue("enable-logging", "stderr");
       command->AppendSwitchWithValue("vmodule", "native_message*=2,native_process_launcher*=2,extension_service_worker*=2");

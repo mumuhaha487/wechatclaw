@@ -12,7 +12,13 @@
 
 新增产品入口`scripts/macos-official-mcp.mjs`与打包函数`bundleMacOfficialMcp`：只转发原版MCP字节流，不实现浏览器替代工具。官方`process/spawn`显式`timeoutMs:null, outputBytesCap:null`，依原版CLI生成的类型禁用进程超时和输出截断，不设置任务寿命。EOF/信号先结束原版REPL，再清理所拥有的app-server。`backend/macos-browser-transport.mjs`只选择精确宿主路径、实际所属进程树与该宿主唯一Unix socket。
 
-源码0a93688正在验证**编译后的产品MCP入口**及“官方新标签必须嵌入当前浏览面板”的新断言。前一轮41358444450因把`GetRequestContext()`调用在CefBrowser而非CefBrowserHost上编译失败，已修正；未进入网页操作，不能当通过。CEF新增UI专用profile/tab控制与popup接入尝试；这些尚不构成多账号隔离或生产Swift Host完成。
+已核对后续失败：41358444450（76eb91e）因把`GetRequestContext()`调用在CefBrowser而非CefBrowserHost上编译失败，已修正。41358700416（0a93688）中，编译后的产品MCP入口实际完成原版工具输入和关闭，但原生清理SIGSEGV；另外新增嵌入检查错误地用相同URL匹配了初始页1，原始记录中真正官方新页3的`attached:false`，因此该次`embedded:true`字段不能当作嵌入通过。已改为新页专属随机URL，并移除关闭回调内不合适的视图移除；41359154564之后的原生退出为0。
+
+41359154564（8f37a28）与41359558907（e1e3170）未进入工具操作：新增配置目录匹配超时。后者实际宿主参数只有扩展origin，没有`--reconnect-command`；读取Chromium源码发现，清单的`supports_native_initiated_connections`只有启用正式`OnConnectNative`功能时才生效，不能只写清单便假定已有该参数。新源码3a50b2d已启用该正式功能，继续验证真实参数。没有填造profile信息或放松进程归属检查。
+
+CEF源码另明确：Views创建的Chrome浏览器被设为TYPE_POPUP，官方扩展新标签只在normal窗口里选择宿主；默认扩展新窗口因此可能是非Views窗口。`use_views_default_popup`为CEF146+的公开配置，当前尝试用它及公开Views重新挂接接口处理官方弹窗，不能在新检查通过前宣称修复。`native/macos/CefRuntime.swift`动态原生适配层已在Mac通过Swift类型检查，但尚未接入正式Host。新UI专用profile/tab接口仍需实际多账号及生命周期验证。
+
+3a50b2d的真实云运行结果待核对。现有检查保留create/claim两个明确模式，claim只证明官方接管既有页面，不代表`tabs.new()`嵌入能力；没有改官方功能代码或引入替代驱动。
 
 项目内唯一Apple Silicon原版资源为`runtime/macos/official-browser/runtime-darwin-arm64.tar.gz`，226931853字节，SHA256 `8f1df2ce75043880693128467d16f5224344cf1d043638bf5281d735fab6fc52`。含原Node v24.22.1、Node REPL、官方扩展/宿主和完整CodexCLI.app，复制项目会带走资源。来源是官方`https://persistent.oaistatic.com/codex-app-prod/Codex.dmg`，实际外层ChatGPT.app，bundle `com.openai.codex`，26.1027.51404。原生签名Team `2DC432GLL2`保持不变；官方扩展ID `hehggadaopoacecdllhhajmbjkdcmajg`、版本1.26.1020.11845，CRX3签名与ID已核对，未修改功能代码。插件附带独立签名文件未另行验签，不能写为通过。
 
