@@ -69,14 +69,14 @@ jobs:
             ${{ runner.temp }}/browser-build/build/qqclaw-macos/Release/QQClawBrowser.app
             ${{ runner.temp }}/browser-build/mac-browser-build.json
           key: ${{ steps.cef.outputs.cache-primary-key }}
-      - name: Control an existing embedded tab through the original extension
+      - name: Create and control a tab through the original extension
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs/promises';import path from 'node:path';import {spawn} from 'node:child_process';
           const root=path.join(process.env.RUNNER_TEMP,'official-runtime');
           const manifest=JSON.parse(await fs.readFile(path.join(root,'runtime/runtime.json'),'utf8'));
           const cli=path.join(root,'runtime',manifest.paths.codexCliPath);
-          const child=spawn(process.execPath,['scripts/check-macos-official-browser.mjs','--output',path.join(process.env.RUNNER_TEMP,'official-browser-proof'),'--runtime',path.join(root,'runtime'),'--cli',cli,'--build',path.join(process.env.RUNNER_TEMP,'browser-build'),'--mcp-entry',path.join(process.env.RUNNER_TEMP,'mcp-product/macos-official-mcp.cjs'),'--tab-mode','claim'],{stdio:'inherit'});
+          const child=spawn(process.execPath,['scripts/check-macos-official-browser.mjs','--output',path.join(process.env.RUNNER_TEMP,'official-browser-proof'),'--runtime',path.join(root,'runtime'),'--cli',cli,'--build',path.join(process.env.RUNNER_TEMP,'browser-build'),'--mcp-entry',path.join(process.env.RUNNER_TEMP,'mcp-product/macos-official-mcp.cjs'),'--tab-mode','create'],{stdio:'inherit'});
           const code=await new Promise(resolve=>child.on('exit',resolve));if(code!==0)throw Error('Official browser component check failed');
           NODE
       - uses: actions/upload-artifact@v4

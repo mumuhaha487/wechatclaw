@@ -117,6 +117,7 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
     owners[value->GetIdentifier()] = owner.UTF8String;
     auto view = CefBrowserView::GetForBrowser(value);
     if (view) views[value->GetIdentifier()] = view;
+    if (root && view) selectBrowser(value);
     emit(@{@"event": @"browser-created", @"tabId": @(value->GetIdentifier()), @"owner": owner});
     if (closing) value->GetHost()->CloseBrowser(true);
   }
@@ -207,6 +208,10 @@ class BrowserApp final : public CefApp, public CefBrowserProcessHandler {
     NSString* extension = options[@"extensionPath"];
     if (extension.length) command->AppendSwitchWithValue("load-extension", extension.UTF8String);
     command->AppendSwitch("no-first-run");
+    // Chromium only exposes its genuine source-profile reconnect argument
+    // when this native-messaging feature is enabled. No origin/review gate
+    // is disabled; the official signed host receives the normal arguments.
+    command->AppendSwitchWithValue("enable-features", "OnConnectNative");
     if ([options[@"diagnostics"] boolValue]) {
       command->AppendSwitchWithValue("enable-logging", "stderr");
       command->AppendSwitchWithValue("vmodule", "native_message*=2,native_process_launcher*=2,extension_service_worker*=2");
@@ -241,6 +246,7 @@ int QQClawCefStart(int argc, char** argv, const char* json, QQClawCefEvent event
   CefMainArgs args(argc, argv);
   CefSettings settings;
   settings.no_sandbox = false;
+  settings.use_views_default_popup = true;
   CefString(&settings.root_cache_path) = profile.UTF8String;
   CefString(&settings.cache_path) = [profile stringByAppendingPathComponent:@"Default"].UTF8String;
   CefString(&settings.log_file) = [profile stringByAppendingPathComponent:@"cef.log"].UTF8String;
@@ -273,12 +279,16 @@ void selectBrowser(CefRefPtr<CefBrowser> value) {
   if (found == views.end()) return;
   auto next = found->second;
   auto parent = next->GetParentView();
+  CefRefPtr<CefWindow> previousWindow;
   if (parent && !parent->IsSame(root)) {
-    emit(@{@"event": @"adoption-rejected", @"tabId": @(value->GetIdentifier())}); return;
+    auto panel = parent->AsPanel();
+    if (!panel) { emit(@{@"event": @"adoption-rejected", @"tabId": @(value->GetIdentifier())}); return; }
+    previousWindow = next->GetWindow(); panel->RemoveChildView(next);
   }
   if (browserView && !browserView->IsSame(next)) root->RemoveChildView(browserView);
   browserView = next; browser = value;
   if (!browserView->GetParentView()) root->AddChildView(browserView);
+  if (previousWindow && !previousWindow->IsSame(root) && previousWindow->GetChildViewCount() == 0) previousWindow->Close();
   layoutSignature.clear(); layoutBrowser();
 }
 void layoutBrowser() {
