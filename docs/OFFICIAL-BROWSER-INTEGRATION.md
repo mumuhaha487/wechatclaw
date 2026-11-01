@@ -1,5 +1,13 @@
 # 官方 ChatGPT 扩展接入调查
 
+## 最新检查点：官方焦点模拟与新UI恢复（未发布）
+
+不能用document.visibilityState单独判断原版官方工具连接后哪个标签在物理前台。实际隐藏/可见Form两轮都观察到A/B报告visible。只读原版browser-service.mjs（SHA256 1AF22149F394099EBF6C3D8AED8814A9362DDA4C0BB2369EF0C37AAF239A7696）确认attachTab→enableFocusEmulation→Emulation.setFocusEmulationEnabled(true)；固定Chromium154.0.8037.98的content/browser/devtools/protocol/emulation_handler.cc使用IncrementCapturerCount(stay_hidden=false)，content/public/browser/web_contents.h:923明确这种模式始终告知renderer可见。未修改/禁用该原版行为，未独立发送CDP；证据及固定公开源码在项目外official-visibility-source-evidence.json。保留原误报，不将更正当成物理GUI成功。
+
+新bundle16db43df8376654c0bec29a907bde739直接读取原生窗口ID、WS_VISIBLE和surface样式；6项不同窗口选择/后台恢复/隐藏/关闭检查通过。同HWND的标签windowShown均true只说明共享窗口显示。真实模型两轮15/16官方调用取得A/B读回、官方下载45字节及path、B实际关闭后移除和A保留，最终区域吻合；official-tabs-verification.json明确physicalTabVisibilityVerified=false和allGoalPassed=false。
+
+当前UI另修复刷新后恢复现有原生标签且不覆盖新关闭意图，以及新聊天继承当前服务/模型/思考等级/权限。侧栏入口/拖宽/关闭/上下文为CUA实际前端+App/Store检查，原生层为明确夹具，不能冒充真实EXE、微信、Google、Mac或新电脑。最新代码、候选、失败和局限见[result.md](../result.md)首节。正式.32不变，goal active。
+
 ## 最新源码检查点：网页区域嵌入与标签同步（未发布）
 
 Windows保持普通Chrome窗口及未修改的官方扩展/签名/沙箱，通过renderer实际边界把网页对齐应用裁切面板。真实故障中两个renderer均保留可见父链，旧最大面积选择选到越界后台矩形；现先以根客户区过滤，再测量并更新布局。CEF固定源码14c5a089e8452874cb1a556dc3fde26ed2d87723的ChromeBrowserHostImpl::OnSetFocus会SelectNumberedTab，现以公共SetFocus在创建栈退出后同步，核对选择/关闭/面板可见性。此非官方toolbar-hide API；权限气泡、焦点、IME、完整GUI与其他DPI仍未验收。

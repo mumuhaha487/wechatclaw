@@ -1,4 +1,5 @@
 const paths = {
+  compose: '<path d="M12 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-7"/><path d="m16 3 5 5M10 14l1-5 7-7 5 5-7 7-6 1Z"/>',
   globe: '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>',
   target: '<path d="M20 10a8 8 0 1 1-6-6M16 3v5h5M16 8l-4 4"/><path d="M15.5 12a3.5 3.5 0 1 1-3.5-3.5"/>',
   download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',

@@ -2,7 +2,40 @@
 
 更新时间：2026-11-01。正式 Windows EXE 与 Mac 唯一安装包为 **0.3.32**，Windows 已替换并启动。**未发布源码已将 CEF 接到实际 BrowserHost、正式 helper 和可选打包流程，真实配置模型已通过原版官方扩展新建、读取、关闭检查页。** 这仍是隐藏原生 Form 的组件检查，不能当作正式 EXE GUI、微信、Google、全新电脑或 Mac 验收。原始目标保持 active；下方旧检查点中的“尚未接线”等描述只表示各阶段当时状态。
 
-## 最新源码检查点：Chrome网页区域、标签同步与真实输入下载（未发布）
+## 最新源码检查点：主页入口、刷新恢复与窗口可见性核对（未发布）
+
+正式Windows/Mac成品仍0.3.32，未再次替换或停止正式程序。当前源码相较前一节新增4个产品文件改动；没有修改官方扩展、官方runtime、浏览器权限或原账号配置，也没有引入另一浏览器驱动。
+
+| 文件 | 当前行为 |
+| --- | --- |
+| ui/app.mjs | 侧栏提供明确的“新聊天”行，搜索/任务通知放到品牌行；侧栏收起时保留相应入口，并移除同屏重复的主工具栏新建/搜索入口。刷新前端后读取已有原生网页状态，恢复当前标签；空组回到面板起点，恢复期间的关闭/切换意图优先。新会话沿用输入框当前服务、模型、思考等级和权限，避免已选第三方模型却因全局默认模型为空而创建失败 |
+| ui/desktop.css、ui/icons.mjs | 白底黑字、浅灰侧栏，补充本地线条编辑图标、品牌行工具区和新聊天行；窄侧栏中的标题可省略，不挤掉功能按钮 |
+| native/cef/BrowserEngine.cpp | 仅新增windowId、windowShown和surfaceShown诊断字段，直接读取实际原生窗口WS_VISIBLE。区分多个CEF标签共用一个Chrome窗口与多个独立嵌入窗口；没有改写页面visibilityState或禁用官方焦点模拟 |
+
+### 页面可见性误判的确切原因
+
+上一节的probe-335e页面visibility断言未通过被保留。本轮新增原生窗口ID及实际样式读取后，6项独立窗口检查通过；但真实官方扩展的同窗口A/B仍都报告visible。随后又启动**可见的隔离Form**复测，结果相同，排除了“仅因为父Form隐藏”的解释。没有以输入成功或内部show标记把这一步当成物理显示验收。
+
+只读核对原版browser-service.mjs（SHA256 `1AF22149F394099EBF6C3D8AED8814A9362DDA4C0BB2369EF0C37AAF239A7696`）：attachTab会调用enableFocusEmulation，发出Emulation.setFocusEmulationEnabled(enabled=true)。固定Chromium154.0.8037.98的`content/browser/devtools/protocol/emulation_handler.cc`会调用IncrementCapturerCount，参数stay_hidden=false；`content/public/browser/web_contents.h:923`明确这种模式始终向renderer报告user-visible。因此，“后台标签的document.visibilityState必须hidden”不适用于当前原版官方运行时，不能通过篡改它来让断言变绿。完整链路、原文件摘要和固定公开源码保存在项目外official-visibility-source-evidence.json；未发出独立CDP指令。
+
+初始viewport-verification.json中passed=false及两轮原始visibility报告都保留；更正后的official-tabs-verification.json只核验真实A/B输入、官方下载/路径、B关闭后实际移除以及最终A的原生区域。**物理标签显示/焦点验证仍为false**，没有把这次纠正扩大为完整GUI通过。共用同一HWND的多个标签windowShown均true只表示该窗口显示，不能据此宣称所有标签都在前台。
+
+### 本轮实际证据
+
+证据根仍为项目外`C:/Users/admin/AppData/Local/Temp/qqclaw-cef-contract-20261101/`。原生阶段`visibility-stage-5e2f5c0961fd49f4ba5b85f9500b6a8d`，C++源码SHA256 `0FE3B90DAF83E41FA6ADE1A2AB7099825CFF519EFBAB5DBB48AFFB0B1C42A6C2`，客户端DLL `1BD675A7750183BC9A474E1F75761D6C98100112AF70AAAC1C9B222F9C1C3D06`，bundle `16db43df8376654c0bec29a907bde739`，经产品安装器安装。
+
+- `probe-ca1e595fcb0c446bb1f137a3e34bdf89`：6项实际BrowserHost/CEF检查通过，核对原生WS_VISIBLE及网页区域，覆盖明确选择、新建前台页、后台恢复、切回、面板隐藏/显示、关闭选中页后的继任者；根和后台正常退出0。这里的“显示”限定为原生窗口状态，非整屏截图或可信输入验收。
+- `official-download-1e0e3c457b95486e85cac45d93a035ab`（隐藏Form）、`official-download-399062099b344a57aa1ac11a4ce9ac50`（可见Form）：真实gpt-6.1-sol/xhigh分别15/16次未修改的官方Node REPL调用。各一次自动prepare、站点/下载分别确认；在A写入并读回“QQClaw 输入验证”，按官方wait→click→path下载45字节；在B写入并读回“标签B验证”，实际关闭B、列出确认移除，再读A确认原输入保留。最终A区域501×600覆盖500×600，左上0/0，页面报告吻合。0 Responses夹具、0独立搜索/shell/替代驱动，当前C++/后端源码快照与4个实际运行二进制核对通过。并未证明独立软件完整GUI或物理焦点。
+- `layout-ui-e1daa90965e3415b9fe2389357ca59c8`：CUA使用实际前端/App/Store，浏览器原生层/模型发现为明确夹具。实际拖动工作面板，466px时聊天区约484px、拖到550px上限时仍约400px、最小280px时约670px，无横向溢出；双击还原到约367px。实际关闭最后标签为空组、关闭面板后聊天区约950px，关闭/展开过程保留草稿。侧栏缩到220px后，品牌行按钮仍在边界内；设置页保留一个可用通知入口。新侧栏展开/收起各只有一个可用的新聊天、搜索、通知入口；搜索和通知均实际打开。截图为layout-sidebar-final.png，不是正式EXE或原生网页截图。
+- 同一界面中发现并保留了新建会话的实际失败：当前自定义会话模型有效、全局defaultModel为空时，旧创建请求只传workspace，App返回“请填写要使用的模型 ID”。修复后从UI选择动态第三方模型vendor-next-1/ultra，新建会话实际保存providerId=second、model=vendor-next-1、effort=ultra、permission=read-only；全局默认模型仍为空，原两条会话及消息保留。界面检查期间chat.send=0；模型名来自隔离发现夹具，不是产品中的固定列表。verification.json保留初始session.create错误和检测/模型发现夹具的预期RPC错误，不能宣称所有RPC都成功。
+- `layout-ui-62abd9beb3914be2a4484a34e93b5f5f`：真实前端/App控制原生状态返回延迟；读取期间关闭面板，再释放响应，面板保持关闭、聊天区约950px；重新展开恢复原标签，未创建新原生标签。该检查针对restoreBrowserPanel逻辑；之后仅另改新建会话参数传递，未改恢复函数。
+- 上下文：CUA回放此前实际模型报告，显示12,604/258,400（4.9%）→25,410/258,400（9.8%），清空报告显示未知；这是实际渲染的统计文本与辅助说明，不是固定图片。新可见组件真实模型另取得34条tokenUsage通知，生产contextSnapshot计算从12,465（4.82%）变为32,388（12.53%），见visibility-real-context-evidence.json。回放与新真实模型证据分开，没有将回放宣称为新GUI发送任务。
+
+当前项目外Windows候选`package-c4d566f0d0c44b8594a1904c39fe0bdd/QQClaw.exe`为6367744bytes，SHA256 `618F072FDFE557D35C052BCE01B58F183CF265A118C7BD3E8731314D1008F62C`。59脚本语法、79源码逐字节一致、21payload及可信资源核对通过。19查找/16下载历史/119后台等仍是前一节所列构建的既有结果；本轮新增原生代码只有诊断字段，未伪称这些检查又在新内核全部重跑。Mac云检查与最终进程收尾随后追加。
+
+**整体目标仍active，候选未发布。** 当前完整参考主页的逐项操作一致性、真实独立EXE中浏览器画面裁切/权限气泡、物理焦点/键盘/IME/其他DPI仍缺直接验收；原生矩形和官方页面截图不能替代整屏GUI。真实微信完整闭环、Google结果（此前被安全拦截）、Mac原版扩展内核、仅CLI全新电脑组件引导、特殊下载及安装中整页重载接续等既有缺口保留。正式95560不停止，不向原微信账号测试，不借开发聊天身份或替换官方驱动。
+
+## 前一源码检查点：Chrome网页区域、标签同步与真实输入下载（未发布）
 
 正式成品仍为0.3.32，本轮没有再次替换、停止或测试原微信账号。源码对原生Chrome工具栏作了窗口嵌入适配：保留普通Chrome窗口、原版官方扩展及沙箱，以实际renderer边界对齐应用面板；这不是CEF提供的隐藏工具栏API，不能代替完整GUI、原生权限气泡、键盘焦点、IME及其他DPI验收。
 

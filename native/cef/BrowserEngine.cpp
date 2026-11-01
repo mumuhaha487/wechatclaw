@@ -264,6 +264,11 @@ Json viewportMetrics(cef_browser_t* browser) {
   RECT bounds{},outer{};GetClientRect(window,&bounds);GetWindowRect(window,&outer);const auto content=contentRegion(window);
   POINT offset{outer.left,outer.top};MapWindowPoints(nullptr,surface,&offset,1);
   return {{"available",content.matches>0},{"renderWidgets",content.matches},{"clientWidth",bounds.right-bounds.left},{"clientHeight",bounds.bottom-bounds.top},
+    // Chrome tabs can share one native window; UI-created pages can instead
+    // own separate windows. Report the actual native style so consumers do
+    // not confuse a background document's visibility API with window hiding.
+    {"windowId",std::to_string(reinterpret_cast<uintptr_t>(window))},{"windowShown",(GetWindowLongPtrW(window,GWL_STYLE)&WS_VISIBLE)!=0},
+    {"surfaceShown",surface&&(GetWindowLongPtrW(surface,GWL_STYLE)&WS_VISIBLE)!=0},
     {"windowWidth",outer.right-outer.left},{"windowHeight",outer.bottom-outer.top},{"surfaceLeft",offset.x+content.bounds.left},{"surfaceTop",offset.y+content.bounds.top},
     {"left",content.bounds.left},{"top",content.bounds.top},{"width",content.bounds.right-content.bounds.left},{"height",content.bounds.bottom-content.bounds.top}};
 }

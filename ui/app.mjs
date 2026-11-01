@@ -500,7 +500,7 @@ const resizeEdges = () =>
 function applicationRail() {
   const item = (name, title, ico, active = false, attrs = "") => ib(name, title, ico, `${attrs} ${active ? 'aria-current="page"' : ""}`, active ? "active" : "");
   return `<nav class="application-rail" aria-label="应用导航栏">
-    ${item("return", "工作台", "home", !ui.page)}${item("history", "最近会话", "clock")}${item("notifications", "任务通知", "bell", false, ui.notifications.length ? `data-count="${ui.notifications.length}"` : "")}${item("browser-downloads", "下载", "download")}
+    ${item("return", "工作台", "home", !ui.page)}${item("history", "最近会话", "clock")}${ui.sidebar && !ui.page ? "" : item("notifications", "任务通知", "bell", false, ui.notifications.length ? `data-count="${ui.notifications.length}"` : "")}${item("browser-downloads", "下载", "download")}
     <span class="grow"></span>${item("wechat", "连接到微信", "wechat", false, state.accounts.some(a => a.connected) ? 'data-connected="true"' : "")}${item("settings", "设置", "settings", Boolean(ui.page))}</nav>`;
 }
 function applicationFrame(content) {
@@ -548,12 +548,13 @@ function sidebar() {
     (ui.sidebar ? "" : " collapsed") +
     '"' + (ui.sidebar ? "" : " inert") + '><div class="brand" data-drag><button class="brand-home" data-action="home"><span class="brand-mark">' +
     icon("logo") +
-    "</span><strong>QQClaw</strong></button>" +
-    (isMac ? ib("toggle-sidebar", "收起侧栏", "sidebar") : "") +
-    '</div><div class="side-body"><div class="section-heading">会话<div class="section-tools">' +
-    ib("new-session", "新建会话", "new") +
+    "</span><strong>QQClaw</strong></button><div class=\"brand-tools\">" +
+    ib("notifications", "任务通知", "bell", ui.notifications.length ? `data-count="${ui.notifications.length}"` : "") +
     ib("search", "搜索会话", "search") +
-    "</div></div>" +
+    (isMac ? ib("toggle-sidebar", "收起侧栏", "sidebar") : "") +
+    '</div></div><div class="side-body"><button class="sidebar-new-chat" data-action="new-session" aria-label="新建会话">' +
+    icon("compose") + '<span>新聊天</span></button>' +
+    (general.length ? '<div class="section-heading">会话</div>' : "") +
     general
       .slice(0, 6)
       .map((s) => sessionRow(s))
@@ -773,10 +774,10 @@ function workspace() {
     (s?.messages.length ? '</h1>' : '</span>') +
     '</div><div class="top-actions">' +
     button("open-browser-window", "内置浏览器", "browser", "outline desktop-continue", `title="打开内置浏览器" aria-label="打开内置浏览器"`) +
-    '<div class="top-capsule">' +
+    (ui.sidebar ? "" : '<div class="top-capsule">' +
     ib("new-session", "新建会话", "new") +
     ib("search", "搜索会话", "search") +
-    "</div>" +
+    "</div>") +
     ib("session-menu", "会话菜单", "more", `data-id="${esc(s?.id || "")}" ${s ? "" : "disabled"}`) +
     ib("conversation-outline", "会话目录", "outline", `aria-haspopup="dialog" aria-expanded="false" ${s?.messages.some(m => m.role === "user") ? "" : "disabled"}`) +
     ib("panel-new", "新建面板", "plus") +
@@ -1184,6 +1185,28 @@ async function runBrowserCommand(command, params = {}) {
     panelTabs.openBrowser(owner, browserStates.get(target.id)); applyPanelTab(); rememberPanel(); render();
   }
   return data;
+}
+async function restoreBrowserPanel() {
+  const target = session();
+  if (!target || !environmentReady() || !ui.panel || ui.panelPage !== "browser") return;
+  const owner = panelOwner(), intent = ui.panelIntent;
+  const group = panelTabs.group(owner);
+  try {
+    // A frontend reload keeps the native pages alive. Read their current IDs
+    // instead of leaving an empty strip above an orphaned browser viewport.
+    const data = await rpc("browser.command", { sessionId: target.id, action: "state" });
+    updateBrowserState(data);
+    if (owner !== panelOwner() || intent !== ui.panelIntent || !ui.panel || ui.panelPage !== "browser" ||
+        panelTabs.groups.get(owner) !== group || group.selected) return;
+    const current = browserStates.get(target.id);
+    const tab = group.tabs.find(tab => tab.id === current?.activeTab) || group.tabs.find(tab => tab.kind === "browser");
+    panelTabs.select(owner, tab?.key || "");
+    applyPanelTab(); rememberPanel(); render();
+  } catch (error) {
+    if (owner === panelOwner() && intent === ui.panelIntent && ui.panel && ui.panelPage === "browser") {
+      applyPanelTab(); rememberPanel(); render(); toast(`无法恢复网页标签：${error.message}`);
+    }
+  }
 }
 function refreshBrowserPanel() {
   browserFind.sync();
@@ -1625,7 +1648,7 @@ async function newSession(directory) {
   directory ||= session()?.workspace || ui.project || project()?.workspace;
   if (!directory) directory = await addProject();
   if (!directory) return;
-  const s = await rpc("session.create", { workspace: directory });
+  const s = await rpc("session.create", { ...composerConfig(), workspace: directory });
   const result = await rpc("snapshot");
   state = result;
   selectSession(s.id);
@@ -1694,7 +1717,8 @@ async function checkEnvironment(restart) {
   }
   if (!environmentReady()) { ui.overlay = ""; renderOverlay(); }
   render();
-  if (environmentReady() && ui.panel && ui.reviewTarget && !ui.panelData && !ui.panelLoading) await loadPanel();
+  if (environmentReady() && ui.panel && ui.panelPage === "browser" && !panelTabs.selected(panelOwner())) await restoreBrowserPanel();
+  else if (environmentReady() && ui.panel && ui.reviewTarget && !ui.panelData && !ui.panelLoading) await loadPanel();
   else if (environmentReady() && ui.panel && ui.panelPage === "files" && !ui.panelData && !ui.panelLoading) await loadPanel();
 }
 async function updateComposer(change, origin = session()?.id || null) {
@@ -2265,6 +2289,7 @@ async function action(name, element) {
       else ui.browserHidden.add(session()?.id);
       rememberPanel();
       render();
+      if (ui.panel && ui.panelPage === "browser" && !panelTabs.selected(panelOwner())) return restoreBrowserPanel();
       if (ui.panel && (ui.reviewTarget || ui.panelPage === "files") && !ui.panelData && !ui.panelLoading) return loadPanel();
       return;
     case "project-show-more":
