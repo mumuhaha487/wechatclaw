@@ -6,13 +6,15 @@
 
 真实模型已通过隔离的实际产品 BrowserHost/CEF/helper 和内置官方组件，完成 A/B 中文输入、官方下载 wait→click→download.path、45 字节内容核验、关闭 B 后实际移除、返回 A 读回。宿主签名/进程归属与唯一管道核验通过，检查进程正常退出 0。没有启动原微信账户、使用替代驱动或复制登录身份。证据位于项目外 C:/Users/admin/AppData/Local/Temp/qqclaw-bundled-034-2yx9Jh/official-verification.json 及 official-probe/。
 
-Mac 新增内置官方 Node.js 24.22.1/npm 的 arm64 与 x64 发行包，按固定官方 SHA256 校验，按应用运行架构选用，安装 Codex 写入用户目录。Mac 官方扩展自动浏览尚未接通，不把普通 WKWebView 或 Windows 的结果算成 Mac 自动浏览通过。
+Mac 最低系统为 13.5，与两个官方 Node 二进制的 LC_BUILD_VERSION 一致。此前 13.3 的声明已修正。Mac 新增内置官方 Node.js 24.22.1/npm 的 arm64 与 x64 发行包，按固定官方 SHA256 校验，按应用运行架构选用，安装 Codex 写入用户目录。Mac 官方扩展自动浏览尚未接通，不把普通 WKWebView 或 Windows 的结果算成 Mac 自动浏览通过。
 
 独立 Windows EXE 已实际通过：全新空数据目录、仅含 Windows 系统目录的 PATH，后台确实由包内 Node.js v24.22.1 启动，已取得“后端已启动”日志；测试进程随后关闭。起初两次检查未通过：首次受旧长路径限制，第二次仅切换 .NET 选项仍不够，现以扩展路径修复；原始失败日志保留。首次解压进度窗口尚未做原生视觉截图验收。
 
-Mac 云构建 [41332129049](https://github.com/mumuhaha487/wechatclaw/actions/runs/41332129049) 成功，45 条实际 PASS，包含包内 Node/npm 在仅含系统目录的 PATH 下运行、两种 Node 架构签名检查，以及既有安装/原生/持久化检查。已下载并核对 GitHub 档案摘要和 DMG 格式。Mac 编译代码为 c372953a4bf545813e45b862b76ea4a1b0c63405；其后代码仅更改 Windows 启动器，不影响该 Mac 构建。
+Mac 云构建 [41333393550](https://github.com/mumuhaha487/wechatclaw/actions/runs/41333393550) 成功，45 条实际 PASS，包含包内 Node/npm 在仅含系统目录的 PATH 下运行、两种 Node 架构签名检查，以及既有安装/原生/持久化检查。已下载并核对 GitHub 档案摘要和 DMG 格式。Mac 编译代码为 f895ca054f98ed795b712d2277f7318e9c48f6c2；该构建包含最低系统 13.5 的修正；Windows 成品对应源码 4905d4b646c9f214330468128cbde964c8e56228。
 
-本轮成品：Windows 307437568 字节，SHA256 25359812fb756e73e583c2acbf4f7d18b0f8883288c28efb33a47d6bc7f512d3；Mac 129551676 字节，SHA256 a28ec24bc56deae63c4a2240982f27c46e7e86831a9a82c85a809c505c47f008。成品暂存项目外 C:\Users\admin\AppData\Local\Temp\qqclaw-bundled-034-2yx9Jh，Mac 子目录 mac-verified。正式程序未停止，项目内未增加第二个 EXE。
+本轮成品：Windows 307437568 字节，SHA256 25359812fb756e73e583c2acbf4f7d18b0f8883288c28efb33a47d6bc7f512d3；Mac 129551912 字节，SHA256 8af3d6c90e405f7ab4fe92cc964c92f3fc13bec790ec5b65d8e0c65871787041。成品暂存项目外 C:\Users\admin\AppData\Local\Temp\qqclaw-bundled-034-2yx9Jh，Mac 子目录 mac-compat/mac-verified，本地同名 release/macos/QQClaw.dmg 已更新。正式程序未停止，项目内未增加第二个 EXE。
+
+[本轮 GitHub 草稿](https://github.com/mumuhaha487/wechatclaw/releases/tag/untagged-9ccec836087975db1b20)已更新为 0.3.34，仅一个 EXE 和一个 DMG，远端文件摘要与本地产物一致。本轮临时应用/浏览器检查进程已全部退出。
 
 完整目标仍有待验证项：独立软件完整 GUI/焦点/中文输入法/DPI、微信线上浏览闭环、Google 搜索结果、Mac 官方扩展自动浏览及 Blob 官方下载。正式 0.3.32 程序未停止、账户与数据未清理。后面的记录属于历史阶段。
 
