@@ -1,5 +1,11 @@
 # 官方 ChatGPT 扩展接入调查
 
+## 最新源码检查点：网页区域嵌入与标签同步（未发布）
+
+Windows保持普通Chrome窗口及未修改的官方扩展/签名/沙箱，通过renderer实际边界把网页对齐应用裁切面板。真实故障中两个renderer均保留可见父链，旧最大面积选择选到越界后台矩形；现先以根客户区过滤，再测量并更新布局。CEF固定源码14c5a089e8452874cb1a556dc3fde26ed2d87723的ChromeBrowserHostImpl::OnSetFocus会SelectNumberedTab，现以公共SetFocus在创建栈退出后同步，核对选择/关闭/面板可见性。此非官方toolbar-hide API；权限气泡、焦点、IME、完整GUI与其他DPI仍未验收。
+
+当前bundle b5acb7d549ffde5096fbc2621d29e707由真实产品安装器安装。official-download-a7992457a9104ffcbe01c17a7bdccdf4以真实gpt-6.1-sol/xhigh、12次原版官方Node REPL、一次自动prepare和两次正常确认完成输入并读回、官方下载45字节及path核对；最终501×601网页区域覆盖500×600面板、左上0/0，页面resize报告匹配，无独立搜索/shell/替代驱动。普通页面四组尺寸各12原生采样稳定、19查找/16下载历史及下载中退出加密保存复查通过。组件均不扩大为正式GUI/微信/Google/Mac或干净新电脑通过。补充跨原生窗口document.visibilityState检查超时，仅一项完成；内部布局show标记不代替真实桌面证据。两轮旧几何失败、新增任务重复release崩溃和安装锁失败保留，详见[result.md](../result.md)最新节与项目外chrome-ui-failure-notes.md。正式.32不变，当前候选未发布，goal继续active。
+
 ## 最新源码检查点：刷新查找隔离与当前内核复查（未发布）
 
 源码10e3124在CEF/WebView2/WK状态中提供navigationRevision，前端同地址刷新保留查询词并自动重查，手动查找请求携带版本；后端验证/转发，原生拒绝过期search/next/clear，避免旧clear清除新结果。基线确实刷新后仍1/3，修复后实际CEF自动1/5，WebView2与Mac云端WK均核对真实同地址reload及请求隔离。本轮没有新增模型浏览器工具或修改官方扩展。组件检查、受控状态检查与完整GUI必须分开，详细证据见[result.md](../result.md)最新节。

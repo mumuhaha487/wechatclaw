@@ -101,6 +101,7 @@ bool creatingForUi=false;
 bool readySent=false;
 uint64_t revision=0;
 uint64_t viewUpdates=0;
+std::string layoutSignature;
 HANDLE input=INVALID_HANDLE_VALUE, output=INVALID_HANDLE_VALUE, readerHandle=nullptr;
 std::mutex writeGate;
 std::atomic<bool> stopping{false};
@@ -204,24 +205,96 @@ int browserId(const Json& request) {
   if(id(found)!=value) throw std::runtime_error("Invalid tab ID");
   return found;
 }
+struct ContentRegion {
+  HWND root=nullptr;
+  RECT outer{},client{};
+  RECT bounds{};
+  int matches=0;
+  Json candidates=Json::array();
+};
+BOOL CALLBACK findContentRegion(HWND window,LPARAM parameter) {
+  auto& region=*reinterpret_cast<ContentRegion*>(parameter);
+  wchar_t name[128]{};GetClassNameW(window,name,128);
+  if(std::wcscmp(name,L"Chrome_RenderWidgetHostHWND"))return TRUE;
+  bool visibleInRoot=true;Json ancestors=Json::array();
+  HWND current=window;
+  for(int depth=0;current&&current!=region.root&&depth<20;depth++,current=GetParent(current)) {
+    wchar_t type[128]{};GetClassNameW(current,type,128);
+    const bool shown=(GetWindowLongPtrW(current,GWL_STYLE)&WS_VISIBLE)!=0;
+    if(!shown)visibleInRoot=false;
+    const std::wstring className(type);const auto classText=text(className);
+    ancestors.push_back({{"handle",reinterpret_cast<uintptr_t>(current)},{"class",utf8(&classText)},{"visible",shown}});
+  }
+  if(current!=region.root)visibleInRoot=false;
+  RECT bounds{};if(!GetWindowRect(window,&bounds))return TRUE;
+  bounds.left-=region.outer.left;bounds.right-=region.outer.left;bounds.top-=region.outer.top;bounds.bottom-=region.outer.top;
+  const auto area=int64_t(bounds.right-bounds.left)*(bounds.bottom-bounds.top);
+  // Inactive Chrome tabs may retain WS_VISIBLE and their old viewport size.
+  // Reject those stale rectangles before comparing areas. Physical pixels
+  // can differ by one when Chromium rounds integral DIPs at fractional DPI.
+  const bool contained=bounds.left>=region.client.left-1&&bounds.top>=region.client.top-1&&
+    bounds.right<=region.client.right+1&&bounds.bottom<=region.client.bottom+1;
+  region.candidates.push_back({{"handle",reinterpret_cast<uintptr_t>(window)},{"left",bounds.left},{"top",bounds.top},{"width",bounds.right-bounds.left},{"height",bounds.bottom-bounds.top},{"visibleInRoot",visibleInRoot},{"contained",contained},{"ancestors",ancestors}});
+  if(!visibleInRoot||!contained||area<=0)return TRUE;
+  region.matches++;
+  const auto previous=int64_t(region.bounds.right-region.bounds.left)*(region.bounds.bottom-region.bounds.top);
+  if(area>previous)region.bounds=bounds;
+  return TRUE;
+}
+ContentRegion contentRegion(HWND root) {
+  ContentRegion region;region.root=root;
+  if(!root||!GetWindowRect(root,&region.outer)||!GetClientRect(root,&region.client))return region;
+  MapWindowPoints(root,nullptr,reinterpret_cast<POINT*>(&region.client),2);
+  region.client.left-=region.outer.left;region.client.right-=region.outer.left;
+  region.client.top-=region.outer.top;region.client.bottom-=region.outer.top;
+  EnumChildWindows(root,findContentRegion,reinterpret_cast<LPARAM>(&region));
+  static bool ambiguityLogged=false;
+  size_t visibleCandidates=0;for(auto& candidate:region.candidates)if(candidate["visibleInRoot"]==true&&candidate["width"].get<int>()>0&&candidate["height"].get<int>()>0)visibleCandidates++;
+  if(!ambiguityLogged&&visibleCandidates>1){
+    ambiguityLogged=true;wchar_t type[128]{};GetClassNameW(root,type,128);const std::wstring className(type);const auto typeText=text(className);
+    const auto message="QQCLAW_VIEWPORT "+Json({{"root",reinterpret_cast<uintptr_t>(root)},{"rootClass",utf8(&typeText)},{"client",{region.client.left,region.client.top,region.client.right,region.client.bottom}},{"candidates",region.candidates}}).dump()+"\n";
+    DWORD written;WriteFile(GetStdHandle(STD_ERROR_HANDLE),message.data(),DWORD(message.size()),&written,nullptr);
+  }
+  return region;
+}
+Json viewportMetrics(cef_browser_t* browser) {
+  auto* host=browser->get_host(browser);HWND window=host->get_window_handle(host);release(host);
+  DWORD pid=0;GetWindowThreadProcessId(window,&pid);
+  if(!window||pid!=GetCurrentProcessId())return {{"available",false}};
+  RECT bounds{},outer{};GetClientRect(window,&bounds);GetWindowRect(window,&outer);const auto content=contentRegion(window);
+  POINT offset{outer.left,outer.top};MapWindowPoints(nullptr,surface,&offset,1);
+  return {{"available",content.matches>0},{"renderWidgets",content.matches},{"clientWidth",bounds.right-bounds.left},{"clientHeight",bounds.bottom-bounds.top},
+    {"windowWidth",outer.right-outer.left},{"windowHeight",outer.bottom-outer.top},{"surfaceLeft",offset.x+content.bounds.left},{"surfaceTop",offset.y+content.bounds.top},
+    {"left",content.bounds.left},{"top",content.bounds.top},{"width",content.bounds.right-content.bounds.left},{"height",content.bounds.bottom-content.bounds.top}};
+}
+int fitExtent(int outer,int content,int desired) {
+  // Chromium rounds physical pixels through integral DIPs. Accept one pixel
+  // of content overscan, but never expose a native frame at the trailing edge.
+  if(content>=desired&&content<=desired+1)return outer;
+  return outer+desired-content;
+}
 Json state(bool reveal=false) {
   Json tabs=Json::array();
-  for(auto& [key,page]:pages) tabs.push_back({{"id",id(key)},{"title",page.title},{"url",page.url},{"loading",page.loading},{"navigationRevision",std::to_string(page.navigationRevision)}});
+  for(auto& [key,page]:pages) tabs.push_back({{"id",id(key)},{"title",page.title},{"url",page.url},{"loading",page.loading},{"navigationRevision",std::to_string(page.navigationRevision)},{"viewport",viewportMetrics(page.browser)}});
   Page* page=pages.count(active)?&pages.at(active):nullptr;
   RECT bounds{}; if(surface) GetClientRect(surface,&bounds);
   std::set<HWND> windows;size_t attached=0;
   for(auto& [key,item]:pages) {auto* host=item.browser->get_host(item.browser);HWND window=host->get_window_handle(host);release(host);if(window)windows.insert(window);}
   for(HWND window:windows) {DWORD pid=0;GetWindowThreadProcessId(window,&pid);if(pid==GetCurrentProcessId()&&GetParent(window)==surface)attached++;}
+  const auto selectedViewport=page?viewportMetrics(page->browser):Json::object();
+  const bool controlsVisible=visible&&page&&(!selectedViewport.value("available",false)||selectedViewport.value("surfaceTop",1)>0||selectedViewport.value("surfaceLeft",1)>0||selectedViewport.value("width",0)<width||selectedViewport.value("height",0)<height);
   return {{"owner",owner},{"revision",++revision},{"engine","cef"},{"reveal",reveal},{"activeTab",id(page?active:0)},
     {"tabs",tabs},{"url",page?page->url:""},{"title",page?page->title:""},{"error",page?page->error:""},
     {"loading",page&&page->loading},{"canGoBack",page&&page->back},{"canGoForward",page&&page->forward},
-    {"chromeControlsVisible",true},{"surface",{{"width",bounds.right-bounds.left},{"height",bounds.bottom-bounds.top},{"visible",visible},{"viewUpdates",viewUpdates},{"nativeWindowCount",windows.size()},{"attachedOwnedWindowCount",attached}}}};
+    {"chromeControlsVisible",controlsVisible},{"surface",{{"width",bounds.right-bounds.left},{"height",bounds.bottom-bounds.top},{"visible",visible},{"viewUpdates",viewUpdates},{"nativeWindowCount",windows.size()},{"attachedOwnedWindowCount",attached}}}};
 }
 void publish(bool reveal=false) { write({{"event","state"},{"data",state(reveal)}}); }
 void layout() {
   if(!surface) return;
   std::set<HWND> windows;
   HWND selected=nullptr;
+  bool selectedReady=false;
+  Json geometry=Json::array();
   for(auto& [key,page]:pages) {
     auto* host=page.browser->get_host(page.browser); HWND window=host->get_window_handle(host); release(host);
     DWORD pid=0; GetWindowThreadProcessId(window,&pid);
@@ -235,14 +308,36 @@ void layout() {
       auto style=GetWindowLongPtrW(window,GWL_STYLE);
       SetWindowLongPtrW(window,GWL_STYLE,(style&~(WS_POPUP|WS_CAPTION|WS_THICKFRAME|WS_SYSMENU|WS_MINIMIZEBOX|WS_MAXIMIZEBOX))|WS_CHILD|WS_CLIPCHILDREN|WS_CLIPSIBLINGS);
     }
-    RECT current{};GetClientRect(window,&current);
-    if(current.right-current.left!=width || current.bottom-current.top!=height)
-      SetWindowPos(window,nullptr,0,0,width,height,SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED);
-    const bool show=visible&&window==selected;
+    // Keep Chrome's normal-window semantics for the original extension. Its
+    // renderer HWND gives the actual webpage bounds, including DPI-dependent
+    // Chrome frame/toolbars. Place those bounds in our clipped surface while
+    // the app's own address/tab bars remain the only visible browser controls.
+    RECT current{};GetWindowRect(window,&current);const auto content=contentRegion(window);
+    const int outerWidth=current.right-current.left,outerHeight=current.bottom-current.top;
+    const int left=content.bounds.left,top=content.bounds.top;
+    const int right=outerWidth-content.bounds.right,bottom=outerHeight-content.bounds.bottom;
+    const bool measured=content.matches>0&&left>=0&&top>=0&&right>=-2&&bottom>=-2&&left<1024&&top<2048&&right<1024&&bottom<1024;
+    const bool adjust=visible&&window==selected;
+    const int targetWidth=adjust?(measured?fitExtent(outerWidth,content.bounds.right-content.bounds.left,width):width):outerWidth;
+    const int targetHeight=adjust?(measured?fitExtent(outerHeight,content.bounds.bottom-content.bounds.top,height):height):outerHeight;
+    POINT position{current.left,current.top};MapWindowPoints(nullptr,surface,&position,1);
+    const int x=measured?-left:0,y=measured?-top:0;
+    if(outerWidth!=targetWidth||outerHeight!=targetHeight||position.x!=x||position.y!=y)
+      SetWindowPos(window,nullptr,x,y,targetWidth,targetHeight,SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED);
+    const bool show=visible&&window==selected&&measured;
+    if(window==selected)selectedReady=measured;
     if(((GetWindowLongPtrW(window,GWL_STYLE)&WS_VISIBLE)!=0)!=show) ShowWindow(window,show?SW_SHOWNOACTIVATE:SW_HIDE);
+    RECT finalBounds{};GetWindowRect(window,&finalBounds);const auto finalContent=contentRegion(window);
+    geometry.push_back({reinterpret_cast<uintptr_t>(window),finalBounds.left,finalBounds.top,finalBounds.right,finalBounds.bottom,
+      finalContent.bounds.left,finalContent.bounds.top,finalContent.bounds.right,finalContent.bounds.bottom,show});
   }
-  const bool show=visible&&selected;
+  const bool show=visible&&selected&&selectedReady;
   if(((GetWindowLongPtrW(surface,GWL_STYLE)&WS_VISIBLE)!=0)!=show) ShowWindow(surface,show?SW_SHOWNOACTIVATE:SW_HIDE);
+  // Chrome's renderer can finish resizing after SetWindowPos has returned.
+  // Publish that actual geometry change too, so parent state does not retain
+  // the earlier frame size until an unrelated navigation/focus event occurs.
+  const auto signature=geometry.dump();
+  if(signature!=layoutSignature){layoutSignature=signature;publish();}
 }
 bool allowed(const std::string& value) {
   if(value=="about:blank") return true;
@@ -355,13 +450,31 @@ void closeAll() {
   cancelDownloads();
   flushClosingPages();
 }
+void CEF_CALLBACK focusSelection(cef_task_t* task) {
+  const int key=Object<cef_task_t>::object(&task->base)->data.at("key");
+  auto page=pages.find(key);
+  // OnAfterCreated is called before Chrome has finished inserting its tab.
+  // Recheck ownership/selection after that stack unwinds: a close, another
+  // selection or a background restore must never activate a stale page.
+  if(closing||!visible||active!=key||page==pages.end()||closeRequested.count(key))return;
+  auto* host=page->second.browser->get_host(page->second.browser);
+  // In the Chrome runtime this public API also selects the corresponding
+  // Chrome tab; changing only our active ID leaves its old renderer visible.
+  host->set_focus(host,1);release(host);layout();
+}
+void queueSelection() {
+  if(!active||closing)return;
+  auto* work=new Object<cef_task_t>();work->data={{"key",active}};work->value.execute=focusSelection;
+  // The C API consumes the transferred reference (CToCpp::Wrap releases it).
+  API(cef_post_task)(TID_UI,&work->value);
+}
 void CEF_CALLBACK created(cef_life_span_handler_t*, cef_browser_t* browser) {
   const int key=browser->get_identifier(browser);
   // C API callback arguments transfer one reference. Store that reference until
   // OnBeforeClose; callbacks may use different wrappers for the same browser.
   pages.emplace(key,Page{browser}); active=key;
   if(closing || pages.size()>12) {auto* host=browser->get_host(browser);host->close_browser(host,1);release(host);}
-  layout(); if(!creatingForUi) publish();
+  layout(); if(!creatingForUi) {queueSelection();publish();}
   // OnContextInitialized precedes asynchronous browser creation. Reporting
   // ready there allowed the next UI request to see an empty activeTab and
   // accidentally select the manual browser route instead of this engine.
@@ -384,7 +497,7 @@ void CEF_CALLBACK closed(cef_life_span_handler_t*, cef_browser_t* browser) {
   }
   closeRequested.erase(key);closeSent.erase(key);
   if(entry!=pages.end()) {stopFind(entry->second,"",false);release(entry->second.browser); pages.erase(entry);}
-  if(active==key) active=pages.empty()?0:pages.rbegin()->first;
+  if(active==key) {active=pages.empty()?0:pages.rbegin()->first;queueSelection();}
   release(browser); layout(); publish();
   auto requests=closingRequests.find(key);
   if(requests!=closingRequests.end()) {for(auto& r:requests->second) answer(r,state()); closingRequests.erase(requests);}
@@ -485,7 +598,7 @@ int createUiPage(const std::string& value, bool select) {
   if(!browser)throw std::runtime_error("Could not create a browser tab");
   int key=browser->get_identifier(browser);release(browser);
   if(!select)active=pages.count(previous)?previous:0;
-  layout();publish();return key;
+  layout();queueSelection();publish();return key;
 }
 void CEF_CALLBACK contextReady(cef_browser_process_handler_t*) {
   auto* context=API(cef_request_context_get_global_context)();context->set_chrome_color_scheme(context,CEF_COLOR_VARIANT_LIGHT,0);release(context);
@@ -506,8 +619,9 @@ void execute(const Json& request) {
     if(action=="view") {
       ++viewUpdates;
       width=std::clamp(request.value("width",1000),1,30000);height=std::clamp(request.value("height",760),1,30000);
+      const bool wasVisible=visible;
       visible=request.value("visible",false);const int x=std::clamp(request.value("x",0),-10000,30000),y=std::clamp(request.value("y",0),-10000,30000);
-      SetWindowPos(surface,nullptr,x,y,width,height,SWP_NOZORDER|SWP_NOACTIVATE);layout();answer(request,state());return;
+      SetWindowPos(surface,nullptr,x,y,width,height,SWP_NOZORDER|SWP_NOACTIVATE);layout();if(visible&&!wasVisible)queueSelection();answer(request,state());return;
     }
     if(action=="newTab") {createUiPage("about:blank",true);answer(request,state());return;}
     if(action=="restoreTab") {

@@ -57,7 +57,7 @@ await dependency("json.hpp", "aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1
 const jsonLicense = await dependency("LICENSE.MIT", "46a65cffd1ea955132d95a8dd921640714a8d6b537d2e4e482d31145ae95b603");
 await fs.mkdir(output, { recursive: true });
 const delayed = {
-  USER32: ["CreateWindowExW", "DefWindowProcW", "DestroyWindow", "GetClientRect", "GetFocus", "GetParent", "GetWindowLongPtrW", "GetWindowThreadProcessId", "IsChild", "KillTimer", "RegisterClassW", "SetParent", "SetTimer", "SetWindowLongPtrW", "SetWindowPos", "ShowWindow"],
+  USER32: ["CreateWindowExW", "DefWindowProcW", "DestroyWindow", "EnumChildWindows", "GetClassNameW", "GetClientRect", "GetFocus", "GetParent", "GetWindowLongPtrW", "GetWindowRect", "GetWindowThreadProcessId", "IsChild", "KillTimer", "MapWindowPoints", "RegisterClassW", "SetParent", "SetTimer", "SetWindowLongPtrW", "SetWindowPos", "ShowWindow"],
   SHELL32: ["CommandLineToArgvW"],
 };
 const importLibraries = [];
