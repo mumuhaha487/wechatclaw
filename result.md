@@ -1098,3 +1098,23 @@ CUA 访问项目外隔离前端与真实 App/Store。浏览器原生层 browser.
 Windows 最新候选与 Mac 云构建/数据核对状态随后追加到本节。此前 0.3.31 候选保存在项目外，尚未正式安装；不把用户回复或编译成功当作已经替换。发布目录继续只保留一个 EXE 和一个 DMG。
 
 官方扩展自动浏览仍未完成。docs/OFFICIAL-BROWSER-INTEGRATION.md 已补充公开源码和独立初始化的 attestation 检查：该能力传递宿主提供的 opaque token，不是生成官方浏览器授权的接口；元数据初始化成功不证明浏览器连接。未读取/借用开发聊天的身份、令牌、Cookie、现有管道或站点许可。完整主页 1:1、网站批注/权限/Cookie、用户 Mac GUI/输入法、可信按键及公证等已有缺口继续保留，**整体目标保持 active**。
+
+### 0.3.32 最终成品和替换核对
+
+代码 head：`eb5cbfc2aaff7779041888632680d47161dc17f4`。Mac [云运行 41260465009](https://github.com/mumuhaha487/wechatclaw/actions/runs/41260465009) 已成功，artifact `13065191477`。统计带时间戳的实际执行输出 **42 条 PASS**，不含源码回显和重复步骤。ZIP SHA-256 `02DFB4A7730140EFD4320D99C3557EB5717467855D2AA117D1ED2674BAF31D0C` 与 artifact digest 一致；CRC、唯一 DMG 和 UDIF 尾部通过。云检查为既有原生目标/标签/WebKit/下载/查找/管道/钥匙串/持久化与安装组件，不等于本轮卡片在用户 Mac 的 GUI 或可信按键实测；未 Apple 公证。
+
+| 文件 | 当前状态 | 大小 bytes | SHA-256 |
+| --- | --- | --- | --- |
+| release/QQClaw.exe | Windows 正式仍运行 0.3.30（PID 150564），0.3.32 候选未替换 | 693760 | `77CB4E4288C5B61C92BE94392B2388F61E54E2A21BFBEC413824FCA205E0F203` |
+| 项目外 build-root/release/QQClaw.exe | 0.3.32 最新已验证候选 | 696832 | `AEBFAC2BCBEF57EF5225B6E36D16BE88C3CCE9A723AFB3209B84459D1ACEE875` |
+| release/macos/QQClaw.dmg | 0.3.32 唯一同名安装包已更新 | 865729 | `F693941A3CC0A57AD271075F0565D010EB28BF6534C7D89331FBA7B6EC4CBB75` |
+
+candidate-source-match.json / cloud-source-match.json 核对 **62 文件**，主目录/Windows 构建副本逐字节一致，Mac head 按 LF 规范化一致。内嵌 BuildInfo 为 0.3.32，预期 runtime 为 6C87004412749884；既有 Win32 ProductVersion 仍为 0.0.0.0，不能仅靠资源管理器版本判断。内嵌 backend.cjs 指纹仍为 3F0CDA0B5F2E7ADFF974E05F96E4929CB36A571AA3612CD01B5609326D0BFA45。
+
+Mac 更新前已在项目外 replacement-v0332 备份加密数据与两端旧包。更新后 1 个账户、1 条保留身份、3 个会话/134 条消息；原绑定、保留身份、threadId、逐条正文/时间、Provider URL/Key 比较全 true，保存的 busy/queued/pending 均为 0。旧程序继续定时保存，加密状态摘要变化，不声称字节不变；这仍是 Mac 包更新后的数据比较，不是 Windows 新版替换或启动证据。
+
+本轮最终执行版本专用 replace-when-exited.ps1 -Install 的结果为 `awaiting-normal-exit`，见 windows-install-status.json。PID 150564 仍占用正式文件，未覆盖、终止或重启。之前用户“已退出”回复已经收到，但不能代替实际进程检查；已发起窗口状态澄清，尚无新答案。
+
+复查发现旧交付脚本以 WindowStyle Hidden 启动交互式主程序，本轮改为 Normal，避免继续使用隐藏窗口参数；不据此推导当前窗口是否可见。新脚本会核对五个实际解压资源、新后台进程路径及保存数据；PowerShell 语法已检查，尚未走到复制/启动分支，不能声称该分支已实机验收。所有本轮检查标签、服务器和独立子进程已关闭，用户 taste-skill 标签保留；Git 副本无关许可证指纹保持不变且未提交。
+
+最新综合摘要见项目外 delivery.json。官方 ChatGPT 扩展自动调用和完整主页复刻仍未完成，原始 goal 保持 active。
