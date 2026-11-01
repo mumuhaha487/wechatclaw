@@ -1,6 +1,18 @@
 # 官方 ChatGPT 扩展接入调查
 
-## 最新：CEF 沙箱组件的新标签/读取/关闭已由真实模型验证，尚未接入产品
+## 最新源码检查点：原生 worker、C# 桥接与独立构建入口
+
+项目现新增 native/cef/BrowserEngine.cpp、native/CefBrowserEngine.cs、scripts/build-browser-engine.mjs（package.json 的 build:browser）。这三个模块已编译和进行原生组件操作检查，但**BrowserHost/打包器尚未选择它们**，正式版本仍 .32；官方运行组件发现、主 helper 与 tabCreation=false 未改。前轮真实模型证据属于旧原型，不代表新 worker 已做真实模型/微信验收。
+
+worker 使用官方 bootstrap 的真实 sandbox_info，按 API15400 和 sandbox compatibility hash 校验；一会话一进程/profile。匿名父子管道负责应用 UI 的标签/导航/尺寸/关闭，不向模型提供远控/MCP/CDP。C# 只接受调用方固定的三个二进制摘要，等待实际 ready；请求绑定 owner/编号，状态按 revision 合并，连续调宽收敛；退出同时验证剩余标签=0及真实进程退出，排空 stdout 后处理 Exited。15秒原生操作等待只报告未确认，不会自动重发/杀进程或暂停 Codex 长任务。
+
+CUA 在隐藏原生 Form 的 QA 检查页操作最终两个独立 worker（148380/143000）：原生尺寸480×400及780×600；新建、选中、定向关闭、最后标签关闭后保持空组、重新打开；A/B状态隔离；隐藏保留标签。200次调宽仅2次进入原生层，最终499×599。令牌复核 A4/B5个 renderer 均受限、低于中完整性、在 job 内；Close收到关闭确认，根进程正常退出0，无已记录的实验进程遗留。这是协议/原生生命周期证据，**不是完整产品界面、拖条手感、DPI/输入法或可信按键验收**。
+
+证据：项目外 qqclaw-cef-contract-20261101/surface-component-f3ed1f62791d433c8827e14c9def2228，含 verification.json、actions.json、events.jsonl、sources、两个截图、两个令牌审计及 exit/final。旧首轮为 surface-component-48a770c6f9174dcaa03d981c2408ae50；其源码随后改过。固定公开 SDK构建不再需要从源码生成C API，nlohmann/json头文件仅在项目外构建缓存；输出带CEF/JSON许可证。
+
+当前 state.chromeControlsVisible=true，普通Chrome控件外观仍需处理；BrowserHost路由、共享窗口/标签定位、完整下载/查找/恢复、可信安装及Mac仍缺。第一轮扩展自动打开公开ChatGPT安装/登录页，未输入凭据；最终QA用allowedOrigins=[]阻止。初始拒绝状态与本机无效Chrome外部注册项日志都保留，不能写零错误。第一轮可选on-device-model服务触发AppContainer程序文件权限检查失败：只给项目外公开运行库目录加读/执行ACE，未改profile等私有目录或关闭沙箱；SDDL在surface-sandbox-acl.json。最终未重现，但没有再次触发该服务，不能判其功能通过。详细编译准备错误、源码/产物摘要及下一步见result.md最新节。
+
+## 前一检查点：CEF 沙箱原型的新标签/读取/关闭已由真实模型验证
 
 正式两端包继续为 0.3.32，主项目原生内核仍为 WebView2/WKWebView。本轮只更新报告，以下 CEF 实现和依赖都保存在项目外；不能将组件结果用于宣布产品已修复自动新建标签或已具备 Mac 官方扩展自动化。
 

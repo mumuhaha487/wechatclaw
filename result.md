@@ -2,7 +2,31 @@
 
 更新时间：2026-11-01。正式 Windows EXE 与 Mac 唯一安装包为 **0.3.32**；Windows 已替换并启动，原有账户/会话/配置核对保留。工作区另有**未发布的官方扩展接入开发**，不能再将源码与 .32 成品视为完全一致。真实模型及隔离微信接口的官方浏览器流程已走通；最新 CEF 沙箱组件还通过原版官方扩展的新建/读取/关闭标签检查，但**尚未接入产品内核**。Google 成功结果、全新电脑安装、macOS 及主页全部 1:1 仍未完成，整体目标保持 active。以下旧版本章节属于当时现场。
 
-## 最新组件进展：CEF 普通窗口与 Windows 沙箱（未发布、未替换产品内核）
+## 最新源码检查点：原生 CEF worker 与 C# 桥接已入库，产品路由未接
+
+本轮开始把前一原型整理为项目内的开发模块，仍未安装或发布。没有改 `native/BrowserHost.cs` 的路由、`native/OfficialBrowser.cs` 的签名/归属要求、`backend/official-browser.mjs` 的 tabCreation=false，也未改正式 Windows/Mac 成品。以下验证属于新 worker 的真实原生组件；前轮真实模型成功属于旧原型，**没有把两者拼成这份新 worker 已完成模型或微信验收**。
+
+| 新增索引 | 责任与边界 |
+| --- | --- |
+| native/cef/BrowserEngine.cpp | Windows CEF 客户端 DLL，官方 bootstrap 转交真实 sandbox_info；API/sandbox hash 严格匹配；私有匿名管道只接应用 UI 控制，按 owner/标签定位；管理创建、选择、导航、停止、尺寸、隐藏、关闭及退出。新窗口只能在其 PID 与本进程一致时归入自身 surface；没有模型 MCP/HTTP/CDP 驱动 |
+| native/CefBrowserEngine.cs | 每会话独立进程/profile；由调用方提供可信 EXE/DLL/libcef 摘要，不能信任下载目录自带 manifest；独立请求编号与 owner；合并拖宽请求；状态按 revision 拒绝迟到覆盖。退出等待原生剩余标签=0 的确认和真实 process exit；先排空 stdout 再处理 Exited，避免最终响应尚未送达便误报失败。15 秒是原生操作的软等待提示，不会因此杀进程、重试操作或给 Codex 长任务添加暂停/超时 |
+| scripts/build-browser-engine.mjs / package.json | 新增 build:browser，使用固定官方 minimal SDK 与 bootstrap、固定摘要的 JSON 头文件；延迟导入 USER32/SHELL32并检查 PE；构建输出必须位于项目外。生成 DLL/EXE/组件 manifest 与 CEF、JSON 许可证；没有把大型 CEF/Codex 运行库塞入发布包。构建脚本尚未接到正式打包流程 |
+
+CUA 在项目外检查页调用上述实际 C++/C# 模块，父窗口是隐藏的组件 Form，**不是产品主界面**。最终两个 worker PID 148380/143000，owner/profile 各自独立；检查根程序 PID142320。原生 GetClientRect 得到 480×400、780×600；选第一个标签后只关闭该标签，剩余标签保留；关闭最后一页时 activeTab=""、tabs=[]、nativeWindowCount=0，没有自动补页；重新打开只创建一页。A 的操作期间 B 的状态逐字相同，随后关闭 B 不改变 A。显示/隐藏请求保留原标签。200 次连续 SetView 合并为 **2 次原生 view**，最终499×599，队列清空。这里核对的是原生尺寸、请求状态和生命周期，不证明真实拖条手感、DPI/中文输入法、可信按键或渲染图与参考图一致。
+
+最终通过范围见项目外 `C:/Users/admin/AppData/Local/Temp/qqclaw-cef-contract-20261101/surface-component-f3ed1f62791d433c8827e14c9def2228/verification.json`；含原始 actions/events、sources 快照、session-isolation.png、resize-coalesced.png 和退出记录。OS 令牌检查分别覆盖当时 A 的4个、B的5个 renderer，均受限、低于中完整性、在 job 内。C# Close 收到原生关闭确认且根程序退出0，按根/worker及已记录的 cmd/native-host 父子关系检查未发现遗留。最初一轮组件为 surface-component-48a770c6f9174dcaa03d981c2408ae50，C++/C# 有后续修订，不能拿其初轮结果覆盖最终源码。
+
+当前真实模块仍保留普通 Chrome 控件（state 明示 chromeControlsVisible=true），**没有验收外观完成**。新建/关闭的 native ID 是内部标签定位，不声称与官方扩展 tabId 相同。尚未完成 BrowserHost 选择/混合标签路由、完整下载/查找/恢复和正式打包/安装；当前代码不能替代现有成品直接使用。
+
+实际问题全部保留：第一轮 C# 编译因旧 csc 对正斜杠源路径解析异常失败；改 Windows 路径后通过。首个 C++ 编译有 ifstream 最烦人解析及嵌套 base 释放错误，均在运行前修复；另一次 PowerShell 参数逗号解析失败未进入编译。第一轮官方扩展自行打开公开的 ChatGPT 安装/登录页，未输入账号/凭据，故该轮不能描述为 localhost-only；最终 QA 通过 allowedOrigins=[] 阻止该页面导航，状态中的初始拒绝是预期结果，不写成零错误。Chrome 对本机两条无效外部扩展注册项仍记 Missing value path，未改注册表或隐去日志。
+
+第一轮还记录 on-device-model 服务的 Sandbox cannot access executable：已读取固定 Chromium154.0.8037.98 sandbox_win.cc，确认该分支是 AppContainer 对程序文件的 READ/EXECUTE 检查。只对项目外 surface-build 的公开二进制/资源增加两个 AppContainer 组的读/执行权限，**没有给 profile、配置、日志、项目或整个用户目录增加权限，也未关闭沙箱**；before/after SDDL 保存为 surface-sandbox-acl.json。最终未再出现该错误，但没有再次实际触发并验证那个可选模型服务，所以只算已定位和准备运行库权限，不算该服务功能验收。正式依赖安装器还需纳入这一步。
+
+最终构建 surface-notices-build 使用同一 C++ source SHA-256 `019FFD97C98456021094B296B2AFC5D01683E90191991E618F7CC3F4201D2177`，DLL SHA-256 `7744012DB8438046E4D9A4DDF6186EA2142C27EA82393E74A5D6C13440D036F1`，bootstrap仍0B6C80…4FEC，包含两份许可证；CUA实际执行的是前一 surface-build 中同源码的 DLL `BB8A300FDE975E71CB1B1609E507E06EC3EA01CBDD4991462B699807B2552A0F`。两者构建时间/输出位置不同，不声称二进制逐字一致。C# 源码 SHA-256 `E63FF91B6B465B287E94E30F801E3BB2E8EFBF1BE74E43B7723156B5768181A3`，随最终组件实际编译。旧119/10项应用回归没有在本轮重跑，因为这三个新模块尚未接入应用执行路径。
+
+下一步优先完成现有 BrowserHost 的真实接线、共享原生窗口/标签映射、Chrome控件外观和可信运行库安装，再以这个新 worker 重跑官方扩展真实模型/微信链路。还缺 Google 成功结果、真实微信、Mac、完整主页复刻与正式 GUI 证据。整体目标保持 active；正式两端仍0.3.32，未停止或替换生产 PID95560。
+
+## 前一组件进展：CEF 普通窗口与 Windows 沙箱（未发布、未替换产品内核）
 
 原 WebView2 的自动新建标签负例仍然成立。为解决原版扩展只寻找普通窗口的问题，本轮在项目外实现 CEF C API 原型：提供 `GetDefaultClient()`，管理扩展创建的普通窗口，按稳定 browser ID 维护生命周期。只将本实验进程自身创建的 HWND 归入自己的父窗口；并非接管系统 Chrome 或开发聊天浏览器。
 
