@@ -106,7 +106,7 @@ async function launchOriginalRuntime(env) {
     await rpc("initialize", { clientInfo: { name: "qqclaw_mac_process_integration", version: "1" }, capabilities: { experimentalApi: true } });
     server.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }) + "\n");
     const spawned = await rpc("process/spawn", { command: [path.join(runtime, manifest.paths.nodeReplPath)], processHandle, cwd: output,
-      tty: false, streamStdin: true, streamStdoutStderr: true, timeoutMs: 180000, outputBytesCap: 16 * 1024 * 1024 });
+      tty: false, streamStdin: true, streamStdoutStderr: true, timeoutMs: null, outputBytesCap: null });
     await write("original-cli-process-spawn.json", { serverPid: server.pid, processHandle, result: spawned, documentation: "https://developers.openai.com/codex/app-server#process-execution" });
     const processes = (await exec("/bin/ps", ["-axo", "pid=,ppid=,comm="])).stdout.split("\n").flatMap(line => {
       const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/); return match ? [{ pid: Number(match[1]), parent: Number(match[2]), executable: match[3] }] : [];
@@ -224,6 +224,11 @@ try {
   if (connected.length !== 1) throw Error("Official discovery did not return exactly one owned extension browser: " + JSON.stringify(available));
   await call("browser-documentation", `var browser=await agent.browsers.get(${JSON.stringify(connected[0].id)}); nodeRepl.write(await browser.documentation())`);
   await call("tab-open", 'await browser.nameSession("🔎 Mac 浏览验证"); var tab=await browser.tabs.new(); await tab.goto(' + JSON.stringify(url) + '); nodeRepl.write("QQCLAW_AX_AVAILABLE="+!!tab.ax); if(tab.ax) await tab.ax.write(); else nodeRepl.write(await tab.playwright.domSnapshot()); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
+  const entered = "QQClaw Mac 输入验证";
+  await call("tab-input", 'var axState=await tab.ax.get("state",{disableDiffing:true}); nodeRepl.write(axState); var inputMatch=axState.match(/^\\s*(\\d+)\\s+text field \\(settable\\) Verification input\\b/m); if(!inputMatch) throw Error("The actual AX state did not expose the fixture input"); await tab.ax.typeText(Number(inputMatch[1]),' + JSON.stringify(entered) + '); await tab.ax.write(); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
+  for (let retry = 0; retry < 20 && !observations.includes(entered); retry++) await delay(100);
+  if (!observations.includes(entered)) throw Error("The real local page did not receive the expected input event");
+  await call("tab-close", 'var closedTabId=tab.id; await tab.close(); var remainingTabs=await browser.tabs.list(); if(remainingTabs.some(item=>item.id===closedTabId)) throw Error("The original extension still lists the closed tab"); nodeRepl.write("QQCLAW_CLOSED="+JSON.stringify({closedTabId,remainingTabs}))');
   const schemaFolder = path.join(output, "api-types");
   try {
     await exec(cli, ["app-server", "generate-ts", "--experimental", "--out", schemaFolder], { env, timeout: 20000, maxBuffer: 1024 * 1024 });
@@ -232,9 +237,8 @@ try {
       schema.push({ file, text: await fs.readFile(path.join(schemaFolder, file), "utf8") });
     await write("original-process-api.json", schema);
   } catch (error) { await write("original-process-api.json", { error: error.message }); }
-  result = { passed: false, connected: true, tabOpened: true, transport, task, accessEvents, unexpectedRequests,
-    next: "Read the actual tab state before adding its input and close checks.",
-    scope: "Original official extension/runtime on actual Mac CEF. Owned local integration task, no model or WeChat account." };
+  result = { passed: true, connected: true, tabOpened: true, inputObserved: entered, tabClosed: true, transport, task, accessEvents, unexpectedRequests,
+    scope: "Actual original official extension on Mac CEF: create tab, navigate, read AX, type Chinese, observe real input event, screenshot and close. Owned local fixture only; no model, WeChat or full product GUI." };
 } catch (error) { result = { ...result, error: error.stack, accessEvents }; process.exitCode = 1; }
 finally {
   active = false;
@@ -265,5 +269,6 @@ finally {
   await write("host-requests.json", hostRequests); await write("fixture-decisions.json", fixtureDecisions);
   await write("original-cli-process-events.json", processEvents);
   await fs.writeFile(path.join(output, "browser.log"), browserLog); await fs.writeFile(path.join(output, "repl.log"), replLog);
+  if (result.passed && exit?.code !== 0) { result.passed = false; result.error = "The native browser did not exit normally"; process.exitCode = 1; }
   await write("result.json", { ...result, exit, observations }); console.log(JSON.stringify({ ...result, exit }));
 }
