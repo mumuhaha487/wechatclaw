@@ -5,6 +5,8 @@ import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { PassThrough, Writable } from "node:stream";
 import { BrowserAccessHost } from "../backend/browser-access.mjs";
 
 if (process.platform !== "darwin") throw Error("This check requires native macOS.");
@@ -48,6 +50,61 @@ const browserExit = new Promise(resolve => browser.once("exit", (code, signal) =
 const task = { sessionId: randomUUID(), turnId: randomUUID() }, accessEvents = [];
 const access = await new BrowserAccessHost({ authorize: request => active && request.sessionId === task.sessionId && request.turnId === task.turnId,
   observe: value => accessEvents.push(value) }).start();
+async function launchOriginalRuntime(env) {
+  // The vendor's nativePipe capability connects from node_repl itself. On
+  // macOS its real parent must be an allowed signed process. Use the official
+  // app-server process API, as a real Codex-owned MCP startup would do; do not
+  // forge metadata, executable identity, signatures or socket responses.
+  const server = spawn(cli, ["app-server"], { detached: true, env, stdio: ["pipe", "pipe", "pipe"] });
+  const runtimeProcess = new EventEmitter();
+  runtimeProcess.stdout = new PassThrough(); runtimeProcess.stderr = new PassThrough();
+  runtimeProcess.serverPid = server.pid;
+  const processHandle = "qqclaw-original-runtime-" + randomUUID();
+  let sequence = 0, buffer = "", writes = Promise.resolve(); const requests = new Map();
+  const rpc = (method, params) => new Promise((resolve, reject) => {
+    const id = ++sequence, timer = setTimeout(() => { requests.delete(id); reject(Error("App-server timed out: " + method)); }, 20000);
+    requests.set(id, { resolve, reject, timer }); server.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+  });
+  server.stderr.on("data", bytes => replLog += bytes);
+  server.stdout.on("data", bytes => {
+    buffer += bytes;
+    while (buffer.includes("\n")) {
+      const end = buffer.indexOf("\n"), line = buffer.slice(0, end); buffer = buffer.slice(end + 1); if (!line.trim()) continue;
+      const value = JSON.parse(line), request = requests.get(value.id);
+      if (request) { clearTimeout(request.timer); requests.delete(value.id); value.error ? request.reject(Error(JSON.stringify(value.error))) : request.resolve(value.result); }
+      else if (value.method === "process/outputDelta" && value.params?.processHandle === processHandle) {
+        const stream = value.params.stream === "stderr" ? runtimeProcess.stderr : runtimeProcess.stdout;
+        stream.write(Buffer.from(value.params.deltaBase64, "base64"));
+      } else if (value.method === "process/exited" && value.params?.processHandle === processHandle) runtimeProcess.emit("exit", value.params.exitCode);
+      else if (value.id !== undefined && value.method) server.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: value.id, error: { code: -32601, message: "No interactive requests are expected in this process integration check" } }) + "\n");
+    }
+  });
+  server.once("exit", (code, signal) => {
+    for (const p of requests.values()) { clearTimeout(p.timer); p.reject(Error("Original app-server exited")); } requests.clear();
+    runtimeProcess.emit("exit", code, signal);
+  });
+  runtimeProcess.stdin = new Writable({
+    write(chunk, encoding, callback) { writes = writes.then(() => rpc("process/writeStdin", { processHandle, deltaBase64: chunk.toString("base64") })); writes.then(() => callback(), callback); },
+    final(callback) { writes = writes.then(() => rpc("process/writeStdin", { processHandle, closeStdin: true })); writes.then(() => callback(), callback); },
+  });
+  runtimeProcess.stdin.on("error", error => { replLog += "Runtime stdin: " + error.message + "\n"; });
+  runtimeProcess.close = async () => {
+    try { await rpc("process/kill", { processHandle }); } catch {}
+    server.stdin.end(); try { process.kill(-server.pid, "SIGTERM"); } catch {}
+  };
+  try {
+    await rpc("initialize", { clientInfo: { name: "qqclaw_mac_process_integration", version: "1" }, capabilities: { experimentalApi: true } });
+    server.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }) + "\n");
+    const spawned = await rpc("process/spawn", { command: [path.join(runtime, manifest.paths.nodeReplPath)], processHandle, cwd: output, tty: false });
+    await write("original-cli-process-spawn.json", { serverPid: server.pid, processHandle, result: spawned, documentation: "https://developers.openai.com/codex/app-server#process-execution" });
+    const processes = (await exec("/bin/ps", ["-axo", "pid=,ppid=,comm="])).stdout.split("\n").flatMap(line => {
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/); return match ? [{ pid: Number(match[1]), parent: Number(match[2]), executable: match[3] }] : [];
+    });
+    const matches = processes.filter(p => p.parent === server.pid && p.executable === path.join(runtime, manifest.paths.nodeReplPath));
+    if (matches.length !== 1) throw Error("The original CLI did not own exactly one Node REPL process");
+    runtimeProcess.pid = matches[0].pid; return runtimeProcess;
+  } catch (error) { await runtimeProcess.close(); throw error; }
+}
 try {
   let transport;
   for (let retry = 0; retry < 45; retry++) {
@@ -75,7 +132,7 @@ try {
     NODE_REPL_TRUSTED_SERVICES: JSON.stringify({ browser: path.join(runtime, manifest.paths.browserServicePath) }),
     NODE_REPL_TRUSTED_CODE_PATHS: [path.join(runtime, "plugin"), ...modules].join(":"),
     CUA_REPL_ENABLED_SURFACES: "browser", BROWSER_USE_BACKEND_PATHS: transport.paths[0] };
-  repl = spawn(path.join(runtime, manifest.paths.nodeReplPath), [], { detached: true, env, stdio: ["pipe", "pipe", "pipe"] });
+  repl = await launchOriginalRuntime(env);
   let next = 0, buffered = ""; const pending = new Map(), unexpectedRequests = [];
   repl.stderr.on("data", b => replLog += b);
   repl.stdout.on("data", bytes => {
@@ -140,7 +197,7 @@ try {
 } catch (error) { result = { ...result, error: error.stack, accessEvents }; process.exitCode = 1; }
 finally {
   active = false;
-  if (repl) { repl.stdin.end(); try { process.kill(-repl.pid, "SIGTERM"); } catch {} }
+  if (repl) await repl.close();
   await access.close(); await fs.writeFile(path.join(output, "stop"), "stop");
   let timer; const exit = await Promise.race([browserExit, new Promise(resolve => timer = setTimeout(() => resolve(null), 8000))]); clearTimeout(timer);
   if (!exit) { try { process.kill(-browser.pid, "SIGTERM"); } catch {} }
