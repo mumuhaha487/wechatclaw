@@ -1,8 +1,14 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-11-01。**0.3.33 Windows/Mac 阶段候选已编译并上传指定仓库的草稿发布，完整目标尚未验收通过。** 本地正式 Windows EXE 与 Mac 唯一安装包仍为 **0.3.32**，正式程序保持运行。源码已将 CEF 接到实际 BrowserHost、正式 helper 和可选打包流程，真实配置模型已通过原版官方扩展新建、读取、关闭检查页；组件检查不能当作正式 EXE 完整 GUI、微信、Google、全新电脑或 Mac 验收。原始目标保持 active；下方旧检查点中的“尚未接线”等描述只表示各阶段当时状态。
+更新时间：2026-11-02。**0.3.33 Windows/Mac 阶段候选已编译并上传指定仓库的草稿发布，完整目标尚未验收通过。** 本地正式 Windows EXE 与 Mac 唯一安装包仍为 **0.3.32**，正式程序保持运行。源码已将 CEF 接到实际 BrowserHost、正式 helper 和可选打包流程，真实配置模型已通过原版官方扩展新建、读取、关闭检查页；组件检查不能当作正式 EXE 完整 GUI、微信、Google、全新电脑或 Mac 验收。原始目标保持 active；下方旧检查点中的“尚未接线”等描述只表示各阶段当时状态。
 
-## 交付准备：0.3.33候选（原始目标未全部完成）
+## 交付补查修订：关闭面板后被迟到访问事件重新打开
+
+2026-11-02补查复现：原0.3.33候选中，用户点击关闭后，迟到的browser-automation事件仍会展开面板；此前普通状态更新检查没有覆盖此路径。ui/app.mjs现使用已有browserHidden标记尊重本次界面运行中的显式关闭/收起，手动重新打开会解除隐藏。仅调整面板显示，不修改官方扩展、原生浏览器内核或后台任务。隔离前端实际完成原失败复现、修复后关闭/收起保持隐藏、手动恢复和草稿保留；事件和原生层为夹具，0条Codex/微信任务，不当作真实许可流程或完整EXE GUI通过。两次检查进程正常退出0，临时页已关闭。证据：项目外late-browser-access-8644248663954504a13aa1d2a081bf85/。
+
+修订已编入同一0.3.33草稿：Windows 6370816字节，SHA-256 `a9e29f65dcbd684e0d83c36ac88756ca3fb1279fa3cf79d7de99d2eb493601c8`；59份脚本语法、79份源码及21个payload条目/可信资源检查通过，包内前端与复测字节一致。代码`f2c36984f33ad5f4075e323ff8a00158f6466645`的[Mac云构建41323956056](https://github.com/mumuhaha487/wechatclaw/actions/runs/41323956056)成功，44条实际PASS，80份构建输入匹配；DMG 885234字节，SHA-256 `7688094b66fe48a8309b3aa0e6b42eeaae242666061ba2918b18579d5c92b9a2`，档案摘要/CRC/UDIF通过。[草稿安装包](https://github.com/mumuhaha487/wechatclaw/releases/tag/untagged-0f6bbe94c404540f7bfb)仍仅一个EXE和一个DMG，未公开发布，正式0.3.32和PID95560未动。草稿修订时GitHub重生成临时URL，已读回最终地址并更新链接；下面旧检查点的摘要仅为历史记录。完整目标及既有缺口保持。
+
+## 前一候选记录：0.3.33交付准备（原始目标未全部完成）
 
 用户要求收住范围、准备交付。源码版本现为0.3.33；正式0.3.32程序及唯一EXE/DMG保持。面向用户的一页说明为[交付说明.md](交付说明.md)，列明可用功能、未完成要求及数据位置。候选采用此前验证的16db43df8376654c0bec29a907bde739内核；本轮未完成的Blob实验已撤回，源码逐字节恢复至原验证内核，没有用物理落盘冒充官方下载成功。
 
@@ -12,7 +18,7 @@
 
 0.3.33候选准备完成：Windows 6370816bytes，SHA256 `18388F4D4ACECA97D1213042D11783CA7A110EAA90C05A0906A883CD3D0C27D5`；反射版本0.3.33，59语法/79源码/21payload及可信资源核对通过。Mac代码提交`c3b608c4598cdb44c40826b98887d2570b86d9fb`的[云运行41320446527](https://github.com/mumuhaha487/wechatclaw/actions/runs/41320446527)成功，44条实际PASS；artifact13089630866 ZIP摘要`e3b0922e7177e78a2b63838b491942d77f5688d21c31942eb4049f77539f628d`与GitHub一致，CRC/UDIF通过。DMG 885211bytes，SHA256`f53af38e3f3d52d101532af0f7c44f6ddbed9d9fcaff0e84552ecbdf05f41dd8`。80项产品源码/workflow与该云提交按LF规范化一致。
 
-已在指定仓库创建[0.3.33草稿候选](https://github.com/mumuhaha487/wechatclaw/releases/tag/untagged-68c734caeb924c966bdd)，draft=true、prerelease=true，只有QQClaw.exe和QQClaw.dmg两份资产；上传后的大小与摘要逐一核对。草稿未公开发布。正式95560继续运行，项目release仍只有原正式0.3.32 EXE/DMG且摘要不变。Blob两轮模型组件及其确切CEF/helper PID复查无遗留，3个临时浏览器页已关闭。当前候选可交给用户检查；完整要求仍未全部通过，不能标记goal完成。原始目标继续active，正式程序不停止或替换；完整GUI/真实微信/Google结果、Mac官方扩展、仅CLI新电脑引导、特殊下载等缺口不缩减。
+已在指定仓库创建[0.3.33草稿候选](https://github.com/mumuhaha487/wechatclaw/releases/tag/untagged-0f6bbe94c404540f7bfb)，draft=true、prerelease=true，只有QQClaw.exe和QQClaw.dmg两份资产；上传后的大小与摘要逐一核对。草稿未公开发布。正式95560继续运行，项目release仍只有原正式0.3.32 EXE/DMG且摘要不变。Blob两轮模型组件及其确切CEF/helper PID复查无遗留，3个临时浏览器页已关闭。当前候选可交给用户检查；完整要求仍未全部通过，不能标记goal完成。原始目标继续active，正式程序不停止或替换；完整GUI/真实微信/Google结果、Mac官方扩展、仅CLI新电脑引导、特殊下载等缺口不缩减。
 
 最后补做了最终候选EXE内嵌前端检查：直接提取payload中的JS/CSS/HTML及资源，JS/CSS未重建，HTML仅插入隔离桥；真实App/Store运行于项目外，原生浏览器、环境检测与模型发现使用明确夹具，没有向Codex或微信发送任务。CUA实际将面板从366.7px拖到510.3px，聊天区相应从583.0px变为439.3px；关闭最后标签为空组、关闭整个面板后聊天区扩展至950.3px，草稿保留，无横向溢出。侧栏收起后新聊天、搜索、通知各只有一个入口；恢复面板并双击分隔线回到366.7px。界面为light，根背景白色。
 
