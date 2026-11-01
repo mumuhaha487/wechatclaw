@@ -86,6 +86,7 @@ jobs:
           node --input-type=module <<'NODE'
           import fs from 'node:fs/promises';import path from 'node:path';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
           import {macPayload} from './scripts/build-macos.mjs';
+          import {bundleMacNode} from './scripts/macos-node-runtime.mjs';
           const run=promisify(execFile),root=process.cwd(),base=path.join(process.env.RUNNER_TEMP,'host-preview');
           const proof=path.join(process.env.RUNNER_TEMP,'official-browser-proof');await fs.mkdir(base,{recursive:true});
           const built=JSON.parse(await fs.readFile(path.join(process.env.RUNNER_TEMP,'browser-build/mac-browser-build.json'),'utf8'));
@@ -93,10 +94,7 @@ jobs:
           await fs.unlink(path.join(app,'Contents/MacOS/QQClawBrowser'));
           const resources=path.join(app,'Contents/Resources'),binary=path.join(app,'Contents/MacOS/QQClaw');
           await macPayload(root,resources);
-          const original=path.join(process.env.RUNNER_TEMP,'official-runtime/runtime');
-          const manifest=JSON.parse(await fs.readFile(path.join(original,'runtime.json'),'utf8'));
-          const node=path.join(resources,'node/arm64/bin/node');await fs.mkdir(path.dirname(node),{recursive:true});
-          await fs.copyFile(path.join(original,manifest.paths.nodePath),node);await fs.chmod(node,0o755);
+          await bundleMacNode(root,resources);
           const plist=(await fs.readFile('native/macos/Info.plist','utf8')).replaceAll('__VERSION__',JSON.parse(await fs.readFile('package.json','utf8')).version);
           await fs.writeFile(path.join(app,'Contents/Info.plist'),plist);
           const source=await fs.readFile('native/macos/QQClaw.swift','utf8'),offset=source.indexOf('@main struct QQClawMain');if(offset<0)throw Error('Host entry missing');
@@ -156,10 +154,16 @@ jobs:
             }
           }
           `;
-          const verifier=path.join(base,'HostPreview.swift');await fs.writeFile(verifier,source.slice(0,offset)+main);
+          const instrumented=source.slice(0,offset)
+            .replace('guard backend === child else { return }','print("HOST_RECV " + String(describing:message["kind"]) + " " + String(describing:message["method"]) + " " + String(describing:message["id"]));guard backend === child else { return }')
+            .replace('try child.process.run(); backend = child','try child.process.run();print("HOST_BACKEND_PID "+String(child.process.processIdentifier)); backend = child')
+            .replace('while let chunk = try? readPipe(child.errors.fileHandleForReading), !chunk.isEmpty {}','while let chunk = try? readPipe(child.errors.fileHandleForReading), !chunk.isEmpty { print("HOST_BACKEND_STDERR "+String(decoding:chunk.prefix(2048),as:UTF8.self)) }');
+          const verifier=path.join(base,'HostPreview.swift');await fs.writeFile(verifier,instrumented+main);
           await run('/usr/bin/xcrun',['swiftc','-swift-version','5','-parse-as-library','-O','-framework','AppKit','-framework','WebKit','-framework','Security','-framework','CryptoKit',verifier,path.join(root,'native/macos/BrowserHost.swift'),path.join(root,'native/macos/CefRuntime.swift'),'-o',binary],{maxBuffer:4*1024*1024});
+          for(const arch of ['arm64','x64'])await run('/usr/bin/codesign',['--force','--sign','-',path.join(resources,'node',arch,'bin/node')]);
           await run('/usr/bin/codesign',['--force','--sign','-',app]);
           await run('/usr/bin/codesign',['--verify','--deep','--strict',app]);
+          console.log((await run('/usr/bin/security',['error','-67030'])).stdout);
           try {const result=await run(binary,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(base,'data'),CODEX_HOME:path.join(base,'codex'),QQCLAW_HOST_IMAGE:path.join(proof,'host-preview.png'),QQCLAW_HOST_RESULT:path.join(proof,'host-preview.json')},timeout:60000,maxBuffer:2*1024*1024});await fs.writeFile(path.join(proof,'host-preview.log'),result.stdout+result.stderr);}
           catch(error){await fs.writeFile(path.join(proof,'host-preview.log'),(error.stdout||'')+(error.stderr||'')+'\n'+error.message);throw error;}
           NODE
