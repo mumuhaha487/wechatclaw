@@ -142,26 +142,38 @@ try {
     const runtime = path.join(output, "runtime"), resources = path.join(app, "Contents/Resources");
     const nodeSource = path.join(resources, "cua_node"), pluginSource = path.join(resources, "plugins/openai-bundled/plugins/chrome");
     const hostRelative = `plugin/extension-host/macos/${process.arch}/ChatGPT for Chrome`;
+    const cliRelative = "cli/CodexCLI.app/Contents/MacOS/codex";
+    const cliSource = path.join(resources, "codex-cli/CodexCLI.app");
     const nodeInfo = natives.find(item => item.path === "Resources/cua_node/bin/node_repl");
     const expectedArch = process.arch === "x64" ? "x86_64" : process.arch;
     if (!nodeInfo?.architecture.split(" ").includes(expectedArch)) throw new Error("Original Node REPL does not support this build architecture");
     await fs.mkdir(runtime, { recursive: true });
     await fs.cp(nodeSource, path.join(runtime, "node"), { recursive: true, dereference: true });
     await fs.cp(pluginSource, path.join(runtime, "plugin"), { recursive: true, dereference: true });
+    await fs.mkdir(path.join(runtime, "cli"), { recursive: true });
+    // The signed CLI has restricted entitlements authorized by its original
+    // app bundle. Copy the complete unmodified nested app, including its
+    // provisioning/signature resources; a loose binary cannot replace it.
+    await execute("/usr/bin/ditto", [cliSource, path.join(runtime, "cli/CodexCLI.app")]);
+    await execute("/usr/bin/codesign", ["--verify", "--deep", "--strict", path.join(runtime, "cli/CodexCLI.app")]);
+    const cliVersion = (await execute(path.join(runtime, cliRelative), ["--version"])).stdout.trim();
+    await json("cli-bundle.json", { path: "cli/CodexCLI.app", version: cliVersion, copiedComplete: true, signatureVerified: true,
+      identifier: (await execute("/usr/bin/plutil", ["-extract", "CFBundleIdentifier", "raw", path.join(runtime, "cli/CodexCLI.app/Contents/Info.plist")])).stdout.trim() });
     const extension = await collectOfficialExtension(output, (file, directory) => execute("/usr/bin/ditto", ["-xk", file, directory]));
     await fs.cp(extension.directory, path.join(runtime, "extension"), { recursive: true });
     const provenance = path.join(runtime, "provenance"); await fs.mkdir(provenance, { recursive: true });
     for (const name of ["plugin.signature.json", "public-key.der"])
       await fs.copyFile(path.join(resources, "plugin-signatures/openai-bundled/chrome", name), path.join(provenance, name));
     await fs.copyFile(path.join(output, "extension-proof.json"), path.join(provenance, "extension-proof.json"));
-    const nativeFiles = ["node/bin/node", "node/bin/node_repl", hostRelative], nativeProof = [];
+    const nativeFiles = ["node/bin/node", "node/bin/node_repl", hostRelative, cliRelative], nativeProof = [];
     for (const relative of nativeFiles) {
       const copied = path.join(runtime, relative);
       await execute("/usr/bin/codesign", ["--verify", "--strict", copied]);
       const publisher = await execute("/usr/bin/codesign", ["-d", "--verbose=2", copied]);
       const copiedTeam = (publisher.stdout + publisher.stderr).match(/^TeamIdentifier=(\w+)$/m)?.[1];
       if (copiedTeam !== team) throw new Error("Original native helper publisher differs from the application: " + relative);
-      const source = relative.startsWith("node/") ? path.join(nodeSource, relative.slice(5)) : path.join(pluginSource, relative.slice(7));
+      const source = relative.startsWith("cli/") ? path.join(resources, "codex-cli", relative.slice(4)) :
+        relative.startsWith("node/") ? path.join(nodeSource, relative.slice(5)) : path.join(pluginSource, relative.slice(7));
       const before = await digest(source), after = await digest(copied);
       if (before !== after) throw new Error("Original native runtime changed while copying: " + relative);
       nativeProof.push({ path: relative, sha256: after, copiedUnchanged: true, signed: true, team: copiedTeam });
@@ -183,12 +195,12 @@ try {
     await fs.copyFile(path.join(pluginSource, ".codex-plugin/plugin.json"), path.join(code, "plugin.json"));
     await fs.copyFile(path.join(resources, "plugin-signatures/openai-bundled/chrome/plugin.signature.json"), path.join(code, "plugin.signature.json"));
     const manifest = { version: 1, platform: "darwin", arch: process.arch, vendorVersion: version, extensionVersion: extension.proof.version,
-      paths: { nodePath: "node/bin/node", nodeReplPath: "node/bin/node_repl", nodeModuleDirs: ["node/lib/node_modules"], browserServicePath: "plugin/scripts/browser-service.mjs", browserClientPath: "plugin/scripts/browser-client.mjs", host: hostRelative },
-      requiresCodexCli: true, source: { url: sourceUrl, identifier, team } };
+      paths: { nodePath: "node/bin/node", nodeReplPath: "node/bin/node_repl", nodeModuleDirs: ["node/lib/node_modules"], browserServicePath: "plugin/scripts/browser-service.mjs", browserClientPath: "plugin/scripts/browser-client.mjs", host: hostRelative, codexCliPath: cliRelative },
+      requiresCodexCli: true, includesBrowserCli: true, source: { url: sourceUrl, identifier, team } };
     await fs.writeFile(path.join(runtime, "runtime.json"), JSON.stringify(manifest, null, 2));
     const proof = { manifest, nativeFiles: nativeProof, extension: extension.proof,
       pluginSignatureIncluded: true, pluginStandaloneSignatureVerified: false,
-      scope: "Original signed app resources and verified official CRX. No user data, auth, Codex CLI or Desktop process is included. The caller supplies its installed standalone CLI." };
+      scope: "Original signed browser resources, complete original CodexCLI.app and verified official CRX. No user data, auth or Desktop process. Product model CLI setup remains separate from this browser runtime." };
     await json("runtime-proof.json", proof);
     const archive = path.join(output, `runtime-darwin-${process.arch}.tar.gz`);
     await execute("/usr/bin/tar", ["--no-xattrs", "-czf", archive, "-C", runtime, "."]);
