@@ -73,6 +73,8 @@ jobs:
           path: |
             ${{ runner.temp }}/official-browser-proof/*.json
             ${{ runner.temp }}/official-browser-proof/*.log
+            ${{ runner.temp }}/official-browser-proof/*.png
+            ${{ runner.temp }}/official-browser-proof/*.jpg
             ${{ runner.temp }}/official-browser-proof/profile/cef.log
             ${{ runner.temp }}/browser-build/mac-browser-build.json
           if-no-files-found: warn

@@ -168,6 +168,8 @@ try {
     const value = await request("tools/call", { name: "js", arguments: { code, timeout_ms: 30000 },
       _meta: { "x-codex-turn-metadata": { session_id: task.sessionId, turn_id: task.turnId, thread_source: "qqclaw_integration_check" } } });
     await write(name + ".json", value);
+    for (const [index, item] of (value.content || []).entries()) if (item.type === "image")
+      await fs.writeFile(path.join(output, name + "-" + index + (item.mimeType === "image/png" ? ".png" : ".jpg")), Buffer.from(item.data, "base64"));
     const trace = value._meta?.["codex/nodeReplTrace"];
     if (trace?.kind === "file" && typeof trace.path === "string" && trace.path.startsWith(path.join(output, "codex/node_repl/debug/") ))
       await write(name + "-trace.json", JSON.parse(await fs.readFile(trace.path, "utf8")));
@@ -203,10 +205,17 @@ try {
   const connected = available.filter(value => value.type === "extension");
   if (connected.length !== 1) throw Error("Official discovery did not return exactly one owned extension browser: " + JSON.stringify(available));
   await call("browser-documentation", `var browser=await agent.browsers.get(${JSON.stringify(connected[0].id)}); nodeRepl.write(await browser.documentation())`);
-  // Subsequent checks are deliberately added only after reading the actual
-  // returned documentation. Discovery alone never marks this check passed.
-  result = { passed: false, connected: true, transport, task, accessEvents, unexpectedRequests,
-    next: "Read browser-documentation.json before adding actual page operations.",
+  await call("tab-open", 'await browser.nameSession("🔎 Mac 浏览验证"); var tab=await browser.tabs.new(); await tab.goto(' + JSON.stringify(url) + '); nodeRepl.write("QQCLAW_AX_AVAILABLE="+!!tab.ax); if(tab.ax) await tab.ax.write(); else nodeRepl.write(await tab.playwright.domSnapshot()); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
+  const schemaFolder = path.join(output, "api-types");
+  try {
+    await exec(cli, ["app-server", "generate-ts", "--experimental", "--out", schemaFolder], { env, timeout: 20000, maxBuffer: 1024 * 1024 });
+    const schema = [];
+    for (const file of await fs.readdir(schemaFolder, { recursive: true })) if (/(?:ProcessSpawnParams|CommandExecParams|McpServerToolCallParams)\.ts$/.test(file))
+      schema.push({ file, text: await fs.readFile(path.join(schemaFolder, file), "utf8") });
+    await write("original-process-api.json", schema);
+  } catch (error) { await write("original-process-api.json", { error: error.message }); }
+  result = { passed: false, connected: true, tabOpened: true, transport, task, accessEvents, unexpectedRequests,
+    next: "Read the actual tab state before adding its input and close checks.",
     scope: "Original official extension/runtime on actual Mac CEF. Owned local integration task, no model or WeChat account." };
 } catch (error) { result = { ...result, error: error.stack, accessEvents }; process.exitCode = 1; }
 finally {
