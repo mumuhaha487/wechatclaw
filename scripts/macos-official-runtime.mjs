@@ -182,16 +182,13 @@ try {
       await fs.copyFile(path.join(pluginSource, "scripts", name), path.join(code, name));
     await fs.copyFile(path.join(pluginSource, ".codex-plugin/plugin.json"), path.join(code, "plugin.json"));
     await fs.copyFile(path.join(resources, "plugin-signatures/openai-bundled/chrome/plugin.signature.json"), path.join(code, "plugin.signature.json"));
-    const cli = natives.find(item => /(?:^|\/)(?:codex|codex-cli)$/.test(item.path));
-    let qaCli = null;
-    if (cli) { const directory = path.join(output, "qa"); await fs.mkdir(directory, { recursive: true }); qaCli = path.join(directory, "codex"); await fs.copyFile(path.join(app, "Contents", cli.path), qaCli); await fs.chmod(qaCli, 0o755); }
     const manifest = { version: 1, platform: "darwin", arch: process.arch, vendorVersion: version, extensionVersion: extension.proof.version,
       paths: { nodePath: "node/bin/node", nodeReplPath: "node/bin/node_repl", nodeModuleDirs: ["node/lib/node_modules"], browserServicePath: "plugin/scripts/browser-service.mjs", browserClientPath: "plugin/scripts/browser-client.mjs", host: hostRelative },
       requiresCodexCli: true, source: { url: sourceUrl, identifier, team } };
     await fs.writeFile(path.join(runtime, "runtime.json"), JSON.stringify(manifest, null, 2));
-    const proof = { manifest, nativeFiles: nativeProof, extension: extension.proof, qaCli,
+    const proof = { manifest, nativeFiles: nativeProof, extension: extension.proof,
       pluginSignatureIncluded: true, pluginStandaloneSignatureVerified: false,
-      scope: "Original signed app resources and verified official CRX. No user data, auth or Desktop process is included. Codex CLI is kept outside the runtime archive for isolated checks only." };
+      scope: "Original signed app resources and verified official CRX. No user data, auth, Codex CLI or Desktop process is included. The caller supplies its installed standalone CLI." };
     await json("runtime-proof.json", proof);
     const archive = path.join(output, `runtime-darwin-${process.arch}.tar.gz`);
     await execute("/usr/bin/tar", ["--no-xattrs", "-czf", archive, "-C", runtime, "."]);
