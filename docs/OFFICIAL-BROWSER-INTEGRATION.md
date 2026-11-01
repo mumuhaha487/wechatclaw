@@ -6,6 +6,9 @@
 
 证据在项目外qqclaw-cli-browser-setup-C6DhbR/catalog.json、findings.json和official-browser-setup.txt。参考：[官方浏览器设置](https://learn.chatgpt.com/docs/chrome-extension#set-up-your-browser)、[官方插件说明](https://learn.chatgpt.com/docs/plugins#overview)。本轮没有修改产品代码、安装插件或重建候选；正式程序和原微信账号未操作。下一步需要能独立获取官方运行库与插件的实际来源，不能用Desktop本地市场路径冒充新电脑下载入口。
 
+补查官方安装器分发实现：按其实际URL拼接规则读取公开primary-runtime清单，HTTP 200，26.1030.10813的Windows档案为508,335,983字节。此清单属于办公依赖运行库，尚未证明包含浏览所需组件，未下载整个档案。当前官方安装包中实际找到cua_node/bin/node_repl.exe及plugins/openai-bundled/plugins/chrome/.codex-plugin/plugin.json；官方桌面下载页的Windows入口仍为Microsoft安装器。不能将办公依赖清单当作独立浏览安装入口。证据位于上述目录的vendor-distribution/distribution-findings.json及源片段。本轮仅补充分发来源证据，产品和候选未变。
+
+
 ## 交付补查：面板关闭优先于迟到访问事件
 
 ui/app.mjs已修复browser-automation重新展开显式关闭/收起面板的问题，并实际复现与复测。两端0.3.33草稿已重建；原版官方扩展、内核与许可机制未改，界面事件夹具检查不代表真实微信或完整原生GUI通过。最新安装包和证据见[交付说明](../交付说明.md)及[result.md](../result.md)首节。

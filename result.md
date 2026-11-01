@@ -8,6 +8,9 @@
 
 证据在项目外qqclaw-cli-browser-setup-C6DhbR/catalog.json、findings.json和official-browser-setup.txt。参考：[官方浏览器设置](https://learn.chatgpt.com/docs/chrome-extension#set-up-your-browser)、[官方插件说明](https://learn.chatgpt.com/docs/plugins#overview)。本轮没有修改产品代码、安装插件或重建候选；正式程序和原微信账号未操作。下一步需要能独立获取官方运行库与插件的实际来源，不能用Desktop本地市场路径冒充新电脑下载入口。
 
+补查官方安装器分发实现：按其实际URL拼接规则读取公开primary-runtime清单，HTTP 200，26.1030.10813的Windows档案为508,335,983字节。此清单属于办公依赖运行库，尚未证明包含浏览所需组件，未下载整个档案。当前官方安装包中实际找到cua_node/bin/node_repl.exe及plugins/openai-bundled/plugins/chrome/.codex-plugin/plugin.json；官方桌面下载页的Windows入口仍为Microsoft安装器。不能将办公依赖清单当作独立浏览安装入口。证据位于上述目录的vendor-distribution/distribution-findings.json及源片段。本轮仅补充分发来源证据，产品和候选未变。
+
+
 ## 交付补查修订：关闭面板后被迟到访问事件重新打开
 
 2026-11-02补查复现：原0.3.33候选中，用户点击关闭后，迟到的browser-automation事件仍会展开面板；此前普通状态更新检查没有覆盖此路径。ui/app.mjs现使用已有browserHidden标记尊重本次界面运行中的显式关闭/收起，手动重新打开会解除隐藏。仅调整面板显示，不修改官方扩展、原生浏览器内核或后台任务。隔离前端实际完成原失败复现、修复后关闭/收起保持隐藏、手动恢复和草稿保留；事件和原生层为夹具，0条Codex/微信任务，不当作真实许可流程或完整EXE GUI通过。两次检查进程正常退出0，临时页已关闭。证据：项目外late-browser-access-8644248663954504a13aa1d2a081bf85/。
