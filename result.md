@@ -10,11 +10,18 @@
 
 证据目录为项目外 `qqclaw-cef-contract-20261101/reload-install-fb6088bfb67a412fb1f5b63b53c1db3f/`，见ui-verification.json、fixed-final-audit.json、component-messages-fixed.jsonl及fixed-success.png。桥只在本轮较早的未发布诊断bundle `9b583538e14c9ea979b46e630b09472e` 中可逆移走resources.pak以触发修复，使用已有官方档案并由产品校验/解压，未重新做公网下载；检查暂停点和60秒上限仅在项目外桥，不在产品或Codex任务中。环境、模型发现和原生浏览器路由为明确夹具；chat.send=0，前端/服务器未处理错误0，预期失败RPC保留。不是正式EXE整套GUI、新电脑引导、微信或官方模型浏览验收。
 
-7项控制器竞争检查和2项执行实际RPC/响应监听源码的独立JS上下文检查通过：包含旧查询晚于终态、旧进度不复活任务、重复点击，以及旧文档响应不会结算新请求。当前Windows候选为本阶段package-05b196be05da45e1a68abebba7e9f826/QQClaw.exe，6370816bytes，SHA256 `44A9D8CFA2BD0EA34368074A615AE69E033D5E1578C2A8FBEFECF14E3F45996F`；59脚本语法、79源码及21payload/可信资源核对通过；最后的跨平台编号调整后重新构建并再核对。Mac云结果随后补充。
+7项控制器竞争检查和2项执行实际RPC/响应监听源码的独立JS上下文检查通过：包含旧查询晚于终态、旧进度不复活任务、重复点击，以及旧文档响应不会结算新请求。当前Windows候选为本阶段package-05b196be05da45e1a68abebba7e9f826/QQClaw.exe，6370816bytes，SHA256 `44A9D8CFA2BD0EA34368074A615AE69E033D5E1578C2A8FBEFECF14E3F45996F`；59脚本语法、79源码及21payload/可信资源核对通过；最后的跨平台编号调整后重新构建并再核对。Mac最终结果见下文。
 
 Mac兼容补查发现应用从qqclaw://app加载，不能假定crypto.randomUUID总可用。当前改用getRandomValues生成128位文档编号，保持加密随机性及原有ui-前缀；2项实际RPC源码上下文检查按最终表达式重跑通过。新增云检查通过真实Resources处理器和非持久化WKWebView加载同一自定义协议，执行生产编号表达式并记录API可用性。此前a991425的43项云检查未覆盖此API；其包和日志保存到intermediate-a991425，不以旧绿灯代替这次兼容检查。CUA安装状态全过程是在该中间UI取得，后续仅更换编号生成API；两者范围分别保留，未伪称已重跑完整安装UI。
 
 本轮检查自身的两项更正保留：首次失败档案写到阶段根目录而桥读取fixed子目录，实际是FileNotFoundException；修正路径后才真实取得“浏览器组件来源校验失败”。Node REPL直接导入esbuild遇到module未定义，随后改用项目外Node脚本正常打包；不把工具环境错误写成产品失败。
+
+
+最终Mac云运行[41316394686](https://github.com/mumuhaha487/wechatclaw/actions/runs/41316394686)成功，代码提交`bd94b44e6a8cf4aa6bd1d204421459ff92339c8b`。44条实际PASS包含新增真实自定义协议检查；原生日志明确secure=true、randomUUID=function、getRandomValues=function，**当前云端WebKit并未复现UUID不可用，不能把此前风险假设写成已发生的故障**。生产getRandomValues表达式在该环境实际执行并生成不同的32位十六进制编号。随后最终前端另在namespace-ui完成CUA启动、设置导航、读取真实C#已安装状态和再次刷新：3次snapshot、2次组件检测，0chat.send、0未处理错误；它不是在最终编号下重新跑一遍全部安装流程，也不是Mac全界面验收。
+
+最终Windows候选59脚本语法、21payload/可信资源、79源码逐字节核对通过。Mac下载ZIP摘要`40619ACE5A67DC0E43CD2C070B36431AC0A7BA61323F909200F43269F65B2E06`与artifact13087233758的GitHub digest一致，CRC及UDIF尾部通过；未发布DMG为885195bytes，SHA256`A884EBE75831F54802BCAAD31E723D220ACE0EC96AC51B5A02E15E8E8E9F92E4`。79项产品构建输入及当前workflow共80项按LF规范化与云提交匹配。见项目外reload-mac-verification.json、reload-cloud-source-match.json、current-reload-package.json。44项包含现有安装/Universal/签名/持久化/WK组件检查，不代表Mac官方扩展内核、物理键盘/IME、整套产品GUI或Apple公证。
+
+收尾：基线、安装恢复和最终启动检查均正常退出0，本轮3个临时页面已关闭，按本轮确切路径/PID复查无遗留；正式95560仍运行，正式EXE/DMG摘要和唯一成品数量保持不变。没有向原微信账号发送消息。源码与报告已同步指定仓库，整体目标继续active，两端候选均未发布。
 
 本节证明同一原生进程中前端整页刷新接续安装，不是退出软件后继续下载。旧章节“整页重载安装未测”由本节覆盖。正式0.3.32 EXE/DMG未替换，整体目标继续active；完整参考主页、原生画面/权限气泡/物理焦点/IME/其他DPI、真实微信/Google结果、Mac官方内核和仅CLI新电脑组件引导等仍未完成。
 
