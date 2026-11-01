@@ -1,5 +1,11 @@
 # 官方 ChatGPT 扩展接入调查
 
+## Mac原版运行库（后续源码）
+
+Apple Silicon原版官方Node/Node REPL、Chrome插件、官方CRX及完整CodexCLI.app已缓存到项目 `runtime/macos/official-browser/`。最新云运行41353878675使用原包CLI 0.166.0-alpha.5.1，完整包深层签名、卸载原镜像后的CLI运行、原版REPL执行42及browser-client导入通过。早期松散CLI的restricted entitlements问题通过保留原包自带的完整CLI应用解决，原签名与身份未改。独立npm CLI虽能执行REPL，但尚未通过Mac原生浏览握手。scripts/macos-browser-runtime.mjs提供统一打包解包入口。
+
+最新直连41354200593中，Node REPL/CLI/Node实际进程均为OpenAI原签名，但getInfo仍握手失败、列表为空；完整CLI包解决独立运行，没有解决此连接故障。CEF默认客户端已补齐全部扩展页面追踪，实际关闭两个页面并退出0。生产Swift Host尚未接入，正式0.3.37未变，Mac网页操作未判通过。资源、摘要、原始trace及验证边界见 [result.md](../result.md)首节。
+
 ## Mac原生适配后续源码（未发布）
 
 native/cef/macos新增CEF Chrome Views/WebKit同窗桥接。真实Mac arm64云运行[41346379388](https://github.com/mumuhaha487/wechatclaw/actions/runs/41346379388)通过8项组件检查；前两轮复制命令失败、FillLayout覆盖尺寸的失败及修复均保留在[result.md](../result.md)。该桥尚未接入生产Swift Host，没有加载原版Mac官方扩展，也没有打进正式0.3.37安装包；不能把同窗/布局检查当作官方自动浏览、完整GUI、Intel或微信通过。

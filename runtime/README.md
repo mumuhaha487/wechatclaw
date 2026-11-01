@@ -1,5 +1,7 @@
 # 项目内运行库
 
+Apple Silicon 官方浏览运行库已缓存至 `macos/official-browser/`，含原始tar、SHA256清单、签名来源、完整原版CodexCLI.app及独立REPL记录。完整CLI包、Node REPL执行与browser-client导入通过，正式Mac包尚未集成。`scripts/macos-official-runtime.mjs --download --collect --output <项目外目录>` 可在Mac收集官方原件，`scripts/macos-browser-runtime.mjs` 统一解包和校验；应保留原版CLI应用包，单独抽取受限签名的可执行文件无法正常运行。模型CLI设置与浏览器内部运行库的路径分开处理。后续连接情况见 [result.md](../result.md)。
+
 `windows/` 随当前项目目录一起复制，用于生成包含运行环境的单个 Windows EXE；这些较大的原始组件随成品发布，不提交进 Git。
 
 - `official-browser/`：原版 Node REPL、Node.js、npm、Chrome 插件和官方 ChatGPT 扩展。

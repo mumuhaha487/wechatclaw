@@ -1,5 +1,9 @@
 # macOS 适配与对话保存
 
+## 后续Mac官方浏览组件（正式0.3.37未变）
+
+Apple Silicon原版官方运行库已缓存到项目 `runtime/macos/official-browser/`，含完整原版CodexCLI.app，独立运行、REPL执行与browser-client导入通过。CEF扩展页面退出追踪已修复并退出0；官方getInfo直连仍失败，生产Host尚未接入。Intel官方primary-runtime实际档案只有办公依赖，没有所需Node REPL及扩展宿主，未作为浏览器运行库打包。来源、失败和摘要见[result.md](../result.md)首节。本轮未改变对话存储、生产退出保存或正式安装包。
+
 ## 当前进展：0.3.34 内置运行环境（2026-11-02）
 
 用户已授权内置运行库，原先等待官方离线下载的阻塞已解除，目标保持 active。Windows 项目内 runtime/windows 已备齐原版官方 ChatGPT 扩展、Node REPL、Node/npm、CEF 和编译客户端；完整 EXE 会包含这些资源，不需要另装 Codex Desktop 或借用开发聊天的浏览器。Codex CLI 仍按需安装，登录及第三方 API 配置由用户在软件中完成。
