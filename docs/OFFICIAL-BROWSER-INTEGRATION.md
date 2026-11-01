@@ -1,5 +1,11 @@
 # 官方 ChatGPT 扩展接入调查
 
+## 当前外部阻塞：官方原包下载要求交互认证
+
+第三轮接续实际调用WinGet，从官方桌面页给出的Microsoft Store产品9PLM9XGG6VKS下载原始x64安装包，未安装程序。第一次因未接受包协议取消；第二次接受包协议并跳过离线许可证/依赖获取后，仍返回`0x8A150076 / APPINSTALLER_CLI_ERROR_AUTHENTICATION_INTERACTIVE_REQUIRED`。WinGet明确说明此下载通道要求Microsoft Entra身份及相应管理角色。本轮没有启动交互登录，没有取得安装包。
+
+连续三轮已分别核对CLI市场、官方安装器/公开清单、官方Store取包，纯CLI新电脑的独立官方组件获取仍卡在外部来源/认证。需要可用官方离线包或具备下载权限的环境才能继续验证这条安装链。原生整套GUI、真实微信/Google、Mac官方自动浏览及特殊下载等原要求均保留，不能判为完成；现有0.3.33阶段候选保持。证据：项目外qqclaw-cli-browser-setup-C6DhbR/blocked-audit.json及official-store-package/的原始日志。目标按此外部阻塞处理，不以替代浏览器驱动或模拟测试缩减验收。
+
 ## 纯CLI新电脑安装入口核对（2026-11-02）
 
 读取当前官方浏览器安装说明、插件说明及真实Codex 0.157.1的plugin帮助。官方浏览器页面描述桌面端Settings > Computer Use配置流程；通用插件页面说明CLI可用/plugins，但这不能推出Chrome运行库可独立安装。本机实际执行plugin list --available --json得到11个已安装、52个可用条目；chrome@openai-bundled来自Desktop生成的本地市场路径，当前可用列表未发现独立Chrome安装源。因此没有新增未经验证的安装命令；纯CLI新电脑自动准备官方运行库仍未完成，也不据此断言所有账户或未来版本都不支持。
