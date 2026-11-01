@@ -158,6 +158,10 @@ class BrowserApp final : public CefApp, public CefBrowserProcessHandler {
     NSString* extension = options[@"extensionPath"];
     if (extension.length) command->AppendSwitchWithValue("load-extension", extension.UTF8String);
     command->AppendSwitch("no-first-run");
+    if ([options[@"diagnostics"] boolValue]) {
+      command->AppendSwitchWithValue("enable-logging", "stderr");
+      command->AppendSwitchWithValue("vmodule", "native_message*=2,native_process_launcher*=2,extension_service_worker*=2");
+    }
   }
   void OnContextInitialized() override {
     CefBrowserSettings settings;

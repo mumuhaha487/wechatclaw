@@ -38,8 +38,8 @@ const server = http.createServer((request, response) => {
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const url = "http://127.0.0.1:" + server.address().port + "/";
-await write("browser-options.json", { profile, extensionPath: path.join(runtime, "extension"), url });
-const browser = spawn(build.executable, [], { detached: true, env: { ...process.env, CODEX_HOME: path.join(output, "codex"),
+await write("browser-options.json", { profile, extensionPath: path.join(runtime, "extension"), url, diagnostics: true });
+const browser = spawn(build.executable, [], { detached: true, env: { ...process.env, RUST_LOG: "debug", CODEX_HOME: path.join(output, "codex"),
   QQCLAW_CHECK_OPTIONS: path.join(output, "browser-options.json"), QQCLAW_CHECK_STOP: path.join(output, "stop") }, stdio: ["ignore", "pipe", "pipe"] });
 let browserLog = "", repl, replLog = "", result = { passed: false }, active = true;
 browser.stdout.on("data", b => browserLog += b); browser.stderr.on("data", b => browserLog += b);
