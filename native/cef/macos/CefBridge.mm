@@ -10,6 +10,7 @@
 #include "include/cef_client.h"
 #include "include/cef_command_line.h"
 #include "include/cef_frame.h"
+#include "include/cef_request_context.h"
 #include "include/views/cef_browser_view.h"
 #include "include/views/cef_browser_view_delegate.h"
 #include "include/views/cef_box_layout.h"
@@ -26,12 +27,22 @@ CefRefPtr<CefWindow> root;
 CefRefPtr<CefBrowserView> browserView;
 CefRefPtr<CefBrowser> browser;
 std::map<int, CefRefPtr<CefBrowser>> pages;
+std::map<std::string, CefRefPtr<CefRequestContext>> profiles;
+std::map<int, std::string> owners;
+std::map<int, CefRefPtr<CefBrowserView>> views;
+std::map<int, NSString*> titles;
 std::unique_ptr<CefScopedLibraryLoader> loader;
 bool closing = false;
 CefRect requestedBounds;
 bool requestedVisible = false, hasBounds = false;
 std::string layoutSignature;
 void layoutBrowser();
+void selectBrowser(CefRefPtr<CefBrowser> value);
+NSString* ownerFor(CefRefPtr<CefBrowser> value) {
+  for (const auto& entry : profiles) if (entry.second->IsSame(value->GetRequestContext()))
+    return @(entry.first.c_str());
+  return @"";
+}
 void emit(NSDictionary* value) {
   NSData* data = [NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
   if (notify && data) {
@@ -102,13 +113,25 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
   void OnAfterCreated(CefRefPtr<CefBrowser> value) override {
     if (pages.empty()) browser = value;
     pages[value->GetIdentifier()] = value;
-    emit(@{@"event": @"browser-created", @"tabId": @(value->GetIdentifier())});
+    NSString* owner = ownerFor(value);
+    owners[value->GetIdentifier()] = owner.UTF8String;
+    auto view = CefBrowserView::GetForBrowser(value);
+    if (view) views[value->GetIdentifier()] = view;
+    emit(@{@"event": @"browser-created", @"tabId": @(value->GetIdentifier()), @"owner": owner});
     if (closing) value->GetHost()->CloseBrowser(true);
   }
   void OnBeforeClose(CefRefPtr<CefBrowser> value) override {
     if (browser && browser->IsSame(value)) browser = nullptr;
     pages.erase(value->GetIdentifier());
-    emit(@{@"event": @"browser-closed", @"tabId": @(value->GetIdentifier())});
+    NSString* owner = @(owners[value->GetIdentifier()].c_str());
+    views.erase(value->GetIdentifier()); owners.erase(value->GetIdentifier());
+    titles.erase(value->GetIdentifier());
+    if (browserView && browserView->GetBrowser() && browserView->GetBrowser()->IsSame(value)) {
+      if (root && browserView->GetParentView()) root->RemoveChildView(browserView);
+      browserView = nullptr;
+      shell.browserVisible = NO; [shell updateMask];
+    }
+    emit(@{@"event": @"browser-closed", @"tabId": @(value->GetIdentifier()), @"owner": owner});
     if (closing && pages.empty()) {
       if (root) root->Close(); else CefQuitMessageLoop();
     }
@@ -119,6 +142,7 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
            @"url": @(frame->GetURL().ToString().c_str())});
   }
   void OnTitleChange(CefRefPtr<CefBrowser> value, const CefString& title) override {
+    titles[value->GetIdentifier()] = @(title.ToString().c_str());
     emit(@{@"event": @"title", @"tabId": @(value->GetIdentifier()), @"title": @(title.ToString().c_str())});
   }
   void OnLoadingStateChange(CefRefPtr<CefBrowser> value, bool loading, bool back, bool forward) override {
@@ -136,6 +160,15 @@ class BrowserViewDelegate final : public CefBrowserViewDelegate {
   cef_runtime_style_t GetBrowserRuntimeStyle() override { return CEF_RUNTIME_STYLE_CHROME; }
   ChromeToolbarType GetChromeToolbarType(CefRefPtr<CefBrowserView> value) override { return CEF_CTT_NONE; }
   CefSize GetMinimumSize(CefRefPtr<CefView> view) override { return CefSize(1, 1); }
+  bool OnPopupBrowserViewCreated(CefRefPtr<CefBrowserView> opener, CefRefPtr<CefBrowserView> popup, bool is_devtools) override {
+    if (!root || is_devtools) return false;
+    auto value = popup->GetBrowser();
+    if (!value) return false;
+    views[value->GetIdentifier()] = popup;
+    selectBrowser(value);
+    emit(@{@"event": @"popup-adopted", @"tabId": @(value->GetIdentifier()), @"owner": ownerFor(value)});
+    return true;
+  }
  private:
   IMPLEMENT_REFCOUNTING(BrowserViewDelegate);
 };
@@ -236,6 +269,20 @@ void QQClawCefBrowserBounds(int x, int y, int width, int height, int visible) {
   layoutBrowser();
 }
 namespace {
+void selectBrowser(CefRefPtr<CefBrowser> value) {
+  if (!root || !value) return;
+  auto found = views.find(value->GetIdentifier());
+  if (found == views.end()) return;
+  auto next = found->second;
+  auto parent = next->GetParentView();
+  if (parent && !parent->IsSame(root)) {
+    emit(@{@"event": @"adoption-rejected", @"tabId": @(value->GetIdentifier())}); return;
+  }
+  if (browserView && !browserView->IsSame(next)) root->RemoveChildView(browserView);
+  browserView = next; browser = value;
+  if (!browserView->GetParentView()) root->AddChildView(browserView);
+  layoutSignature.clear(); layoutBrowser();
+}
 void layoutBrowser() {
   if (!root || !browserView || !shell || !hasBounds) return;
   NSView* parent = nativeWindow().contentView;
@@ -293,4 +340,65 @@ void QQClawCefClose() {
   if (!open.empty()) for (const auto& page : open) page.second->GetHost()->CloseBrowser(true);
   else if (root) root->Close();
   else CefQuitMessageLoop();
+}
+const char* QQClawCefControl(const char* json) {
+  NSData* bytes = [NSData dataWithBytes:json length:strlen(json)];
+  NSDictionary* request = [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil];
+  NSDictionary* result;
+  NSString* action = request[@"action"], *owner = request[@"owner"];
+  if (![request isKindOfClass:NSDictionary.class] || ![action isKindOfClass:NSString.class]) {
+    result = @{@"error": @"Invalid native browser command"};
+  } else if ([action isEqual:@"createProfile"]) {
+    NSString* key = request[@"profile"];
+    if (![owner isKindOfClass:NSString.class] || ![[NSUUID alloc] initWithUUIDString:owner] ||
+        ![key isKindOfClass:NSString.class] || key.length != 32 ||
+        [key rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"abcdef0123456789"] invertedSet]].location != NSNotFound || profiles.count(owner.UTF8String)) {
+      result = @{@"error": @"Invalid or existing browser profile"};
+    } else {
+      CefRequestContextSettings settings;
+      NSString* directory = [options[@"profile"] stringByAppendingPathComponent:key];
+      CefString(&settings.cache_path) = directory.UTF8String;
+      auto context = CefRequestContext::CreateContext(settings, nullptr);
+      profiles[owner.UTF8String] = context;
+      CefBrowserSettings browserSettings;
+      auto view = CefBrowserView::CreateBrowserView(new BrowserClient, "about:blank", browserSettings, nullptr, context, new BrowserViewDelegate);
+      if (browserView && browserView->GetParentView()) root->RemoveChildView(browserView);
+      browserView = view; root->AddChildView(view);
+      layoutSignature.clear(); layoutBrowser();
+      result = @{@"created": @YES, @"owner": owner, @"profileDirectory": directory};
+    }
+  } else {
+    int identifier = [request[@"tabId"] intValue];
+    auto found = pages.find(identifier);
+    auto owned = owners.find(identifier);
+    bool valid = found != pages.end() && [owner isKindOfClass:NSString.class] && owned != owners.end() && owned->second == owner.UTF8String;
+    if ([action isEqual:@"tabs"]) {
+      NSMutableArray* tabs = [NSMutableArray new];
+      for (const auto& page : pages) if (owners[page.first] == (owner ? owner.UTF8String : "")) {
+        auto frame = page.second->GetMainFrame();
+        [tabs addObject:@{@"id": @(page.first), @"url": frame ? @(frame->GetURL().ToString().c_str()) : @"", @"title": titles[page.first] ?: @"",
+          @"loading": @(page.second->IsLoading()), @"canGoBack": @(page.second->CanGoBack()), @"canGoForward": @(page.second->CanGoForward()),
+          @"attached": @(views.count(page.first) && views[page.first]->GetParentView() && views[page.first]->GetParentView()->IsSame(root))}];
+      }
+      result = @{@"tabs": tabs};
+    } else if (!valid) result = @{@"error": @"The tab does not belong to this session"};
+    else {
+      auto value = found->second;
+      if ([action isEqual:@"selectTab"]) selectBrowser(value);
+      else if ([action isEqual:@"closeTab"]) value->GetHost()->CloseBrowser(false);
+      else if ([action isEqual:@"open"]) {
+        NSString* url = request[@"url"]; NSURL* parsed = [url isKindOfClass:NSString.class] ? [NSURL URLWithString:url] : nil;
+        if (([parsed.scheme isEqual:@"http"] || [parsed.scheme isEqual:@"https"]) && !parsed.user && !parsed.password) value->GetMainFrame()->LoadURL(url.UTF8String);
+        else result = @{@"error": @"Only HTTP/HTTPS pages are supported"};
+      } else if ([action isEqual:@"back"]) value->GoBack();
+      else if ([action isEqual:@"forward"]) value->GoForward();
+      else if ([action isEqual:@"reload"]) value->Reload();
+      else if ([action isEqual:@"stop"]) value->StopLoad();
+      else if ([action isEqual:@"focus"]) value->GetHost()->SetFocus(true);
+      else result = @{@"error": @"Unsupported native browser command"};
+      if (!result) result = @{@"accepted": @YES};
+    }
+  }
+  NSData* data = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+  static std::string output; output.assign((const char*)data.bytes, data.length); return output.c_str();
 }

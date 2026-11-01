@@ -15,6 +15,8 @@ QQCLAW_CEF_EXPORT void* QQClawCefCreateShell(void* configuration); // Retained W
 QQCLAW_CEF_EXPORT void QQClawCefBrowserBounds(int x, int y, int width, int height, int visible);
 QQCLAW_CEF_EXPORT const char* QQClawCefState(void);               // Valid until the next call.
 QQCLAW_CEF_EXPORT void QQClawCefClose(void);
+// UI-only tab/profile controls. These are never registered as model tools.
+QQCLAW_CEF_EXPORT const char* QQClawCefControl(const char* json);
 #ifdef __cplusplus
 }
 #endif

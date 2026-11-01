@@ -28,6 +28,11 @@ int main(int argc, char** argv) { @autoreleasepool {
   int status = QQClawCefStart(argc, argv, json.UTF8String, event);
   if (status) { fprintf(stderr,"CEF start failed: %d\n",status); return status; }
   [NSTimer scheduledTimerWithTimeInterval:0.2 repeats:YES block:^(NSTimer* timer) {
+    NSString* destination = env[@"QQCLAW_CHECK_NATIVE_TABS"];
+    if (destination.length) {
+      const char* text = QQClawCefControl("{\"action\":\"tabs\",\"owner\":\"\"}");
+      [[NSData dataWithBytes:text length:strlen(text)] writeToFile:destination atomically:YES];
+    }
     if ([[NSFileManager defaultManager] fileExistsAtPath:env[@"QQCLAW_CHECK_STOP"]]) {
       [timer invalidate]; QQClawCefClose();
     }

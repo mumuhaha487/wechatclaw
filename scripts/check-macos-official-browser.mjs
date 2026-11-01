@@ -5,6 +5,7 @@ import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
+import { macOfficialTransport } from "../backend/macos-browser-transport.mjs";
 import { openMacOfficialRuntime } from "../backend/macos-official-runtime.mjs";
 import { BrowserAccessHost } from "../backend/browser-access.mjs";
 import { elicitationForm, simpleConsent, validateForm } from "../backend/codex-approvals.mjs";
@@ -43,7 +44,7 @@ await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const url = "http://127.0.0.1:" + server.address().port + "/";
 await write("browser-options.json", { profile, extensionPath: path.join(runtime, "extension"), url, diagnostics: true });
 const browser = spawn(build.executable, [], { detached: true, env: { ...process.env, RUST_LOG: "debug", CODEX_HOME: path.join(output, "codex"),
-  QQCLAW_CHECK_OPTIONS: path.join(output, "browser-options.json"), QQCLAW_CHECK_STOP: path.join(output, "stop") }, stdio: ["ignore", "pipe", "pipe"] });
+  QQCLAW_CHECK_OPTIONS: path.join(output, "browser-options.json"), QQCLAW_CHECK_NATIVE_TABS: path.join(output, "native-tabs.json"), QQCLAW_CHECK_STOP: path.join(output, "stop") }, stdio: ["ignore", "pipe", "pipe"] });
 let browserLog = "", repl, replLog = "", result = { passed: false }, active = true;
 const notifications = [], socketSnapshots = [], hostRequests = [], fixtureDecisions = [];
 const processEvents = [];
@@ -54,24 +55,7 @@ const access = await new BrowserAccessHost({ authorize: request => active && req
   observe: value => accessEvents.push(value) }).start();
 
 try {
-  let transport;
-  for (let retry = 0; retry < 45; retry++) {
-    const processes = (await exec("/bin/ps", ["-axo", "pid=,ppid=,comm="])).stdout.split("\n").flatMap(line => {
-      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/); return match ? [{ pid: Number(match[1]), parent: Number(match[2]), command: match[3] }] : [];
-    });
-    const owned = processes.filter(value => value.command === nativeHost).filter(value => {
-      const seen = new Set(); let current = value;
-      while (current && !seen.has(current.pid)) { if (current.parent === browser.pid) return true; seen.add(current.pid); current = processes.find(p => p.pid === current.parent); } return false;
-    });
-    if (owned.length === 1) {
-      const sockets = await exec("/usr/sbin/lsof", ["-a", "-p", String(owned[0].pid), "-U", "-Fn"]).catch(() => ({ stdout: "" }));
-      const paths = [...new Set(sockets.stdout.split("\n").filter(line => /^n\/(?:private\/)?tmp\/codex-browser-use\/[^/\s]+$/.test(line)).map(line => line.slice(1)))];
-      if (paths.length === 1) { transport = { browserPid: browser.pid, hostPid: owned[0].pid, nativeHost, paths, verifiedOwned: true }; break; }
-    }
-    if (browser.exitCode !== null) throw Error("Native browser exited before official host discovery");
-    await delay(500);
-  }
-  if (!transport) throw Error("The private CEF profile did not launch one owned official host/socket");
+  const transport = await macOfficialTransport({ browserPid: browser.pid, applicationPid: browser.pid, nativeHost });
   await write("transport.json", transport);
   const modules = manifest.paths.nodeModuleDirs.map(name => path.join(runtime, name));
   const env = { ...process.env, ...access.environment, CODEX_HOME: path.join(output, "codex"), CODEX_CLI_PATH: cli,
@@ -172,6 +156,13 @@ try {
   await call("tab-input", 'var axState=await tab.ax.get("state",{disableDiffing:true}); nodeRepl.write(axState); var inputMatch=axState.match(/^\\s*(\\d+)\\s+text field \\(settable\\) Verification input\\b/m); if(!inputMatch) throw Error("The actual AX state did not expose the fixture input"); await tab.ax.typeText(Number(inputMatch[1]),' + JSON.stringify(entered) + '); await tab.ax.write(); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
   for (let retry = 0; retry < 20 && !observations.includes(entered); retry++) await delay(100);
   if (!observations.includes(entered)) throw Error("The real local page did not receive the expected input event");
+  let nativeTabs;
+  for (let retry = 0; retry < 20; retry++) {
+    nativeTabs = JSON.parse(await fs.readFile(path.join(output, "native-tabs.json"), "utf8"));
+    if (nativeTabs.tabs.some(tab => tab.url === url && tab.attached)) break;
+    await delay(100);
+  }
+  if (!nativeTabs.tabs.some(tab => tab.url === url && tab.attached)) throw Error("The official new tab is not embedded in the product browser pane: " + JSON.stringify(nativeTabs));
   await call("tab-close", 'var closedTabId=tab.id; await tab.close(); nodeRepl.write("Close requested for "+closedTabId)');
   await call("tab-closed-state", 'var remainingTabs=await browser.tabs.list(); if(remainingTabs.some(item=>item.id===closedTabId)) throw Error("The original extension still lists the closed tab after its close request completed"); nodeRepl.write("QQCLAW_CLOSED="+JSON.stringify({closedTabId,remainingTabs}))');
   const schemaFolder = path.join(output, "api-types");
@@ -182,7 +173,7 @@ try {
       schema.push({ file, text: await fs.readFile(path.join(schemaFolder, file), "utf8") });
     await write("original-process-api.json", schema);
   } catch (error) { await write("original-process-api.json", { error: error.message }); }
-  result = { passed: true, connected: true, tabOpened: true, inputObserved: entered, tabClosed: true, transport, task, accessEvents, unexpectedRequests,
+  result = { passed: true, connected: true, tabOpened: true, inputObserved: entered, tabClosed: true, embedded: true, nativeTabs, transport, task, accessEvents, unexpectedRequests,
     scope: "Actual original official extension on Mac CEF: create tab, navigate, read AX, type Chinese, observe real input event, screenshot and close. Owned local fixture only; no model, WeChat or full product GUI." };
 } catch (error) { result = { ...result, error: error.stack, accessEvents }; process.exitCode = 1; }
 finally {

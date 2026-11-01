@@ -4,11 +4,12 @@ on:
   push:
     branches: [work/official-browser-integration]
     paths:
+      - backend/macos-browser-transport.mjs
       - backend/macos-official-runtime.mjs
       - scripts/macos-official-mcp.mjs
       - scripts/check-macos-official-browser.mjs
       - scripts/macos-browser-runtime.mjs
-      - native/cef/macos/OfficialCheck.mm
+      - native/cef/macos/**
       - .github/workflows/macos-official-browser.yml
 permissions:
   contents: read
