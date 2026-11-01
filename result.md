@@ -2,7 +2,70 @@
 
 更新时间：2026-11-01。正式 Windows EXE 与 Mac 唯一安装包为 **0.3.32**，Windows 已替换并启动。**未发布源码已将 CEF 接到实际 BrowserHost、正式 helper 和可选打包流程，真实配置模型已通过原版官方扩展新建、读取、关闭检查页。** 这仍是隐藏原生 Form 的组件检查，不能当作正式 EXE GUI、微信、Google、全新电脑或 Mac 验收。原始目标保持 active；下方旧检查点中的“尚未接线”等描述只表示各阶段当时状态。
 
-## 最新源码检查点：原生网页查找与首次标签就绪（未发布）
+## 最新源码检查点：下载退出收尾与最终内核复查（未发布）
+
+正式 Windows/Mac 仍是 0.3.32，本轮没有替换或停止正式程序。当前源码与下列项目外候选一致，整体目标仍 active；组件检查通过不代表完整软件已经验收。
+
+本轮进一步修复下载和退出之间的竞态：
+
+- `native/cef/BrowserEngine.cpp`：应用请求关闭标签/worker 时先取消下载，等待下载实际终态后关闭来源 browser。CEF 固定源码明确 browser 销毁后不再转发下载回调，因此不能先销毁再等结果。Chrome/扩展直接销毁页面而绕过应用关闭请求时，只记录未确认的 interrupted，不编造 cancelled/completed。
+- `native/CefBrowserEngine.cs`：worker-exit 等真实 Exited 与 stdout EOF 都到达才通知，且只通知一次；关闭期间仍接收合法 download-progress。新增 exitDelivered，Close 还必须等最终通知在 UI 线程处理完成后才返回，避免父窗口先销毁而丢失最后状态。
+- `native/BrowserHost.cs`：已关闭/已移除会话仍可更新属于同一 engine/owner 的既有下载记录；取消保留实际观察到的字节数。源文件完整索引与首次实现原因见下方前一检查点。
+
+证据根 `C:/Users/admin/AppData/Local/Temp/qqclaw-cef-contract-20261101/`；本轮最终构建阶段为 `download-stage-3e2ea88024134b1ebb29798fb93a187c`。内核 bundle **622e037a0ff991781fa918443c12172f** 由产品安装器实际安装；C++ 源码 SHA256 `41310cc624f56daca2588ac8093bcb9d984a3579dc6ea1d9686760ec5a991fcd`，客户端 DLL SHA256 `D7A7DA677B14635DEF53ECE3272E9D278FA163D82E0A66F484D665D165FD3E2D`。
+
+| 本轮实际复查 | 证据与结论 |
+| --- | --- |
+| 原生下载/历史及下载期间关闭 | `probe-f73f2dbb7d99467cbb5ae4ff910fb761`：16 项实际原生检查通过。CUA 使用原有下载面板启动 8 MiB 慢下载，观察实际取消按钮后关闭所属浏览器；独立进程重开加密存储读到 8 条记录，最新 cancelled、720896/8388608 字节，无 running，读取不改变存储摘要。根进程正常退出0。见 active-exit-verification.json、state-after-active-exit.json、ui-active-before-exit.png |
+| 关闭返回时机 | current-download-exit-ordering.json 所指目录：8 项受控检查通过，包括 EOF 前不可完成、EOF 后仍须等 UI 通知、同一次退出仅通知一次及 owner 隔离。这些模拟 Exited/EOF 的检查不冒充真实进程验收 |
+| 最终内核官方扩展下载 | `official-download-2e51e728f6c6423391812c590c233087`：真实 gpt-6.1-sol/xhigh，12 次原版官方 Node REPL 调用，一次 prepare、零手动准备，分别确认本机站点与下载。模型先登记 waitForEvent(download)，再真实点击并调用 download.path；路径与原生完成记录相同，45 字节逐字节一致，文件 SHA256 `8AAF9F6D6233CDD42660DBFB88E634A05C0F0944D1275EBF3B40DB4834E555C8`。源码快照、固定构建清单及4个运行二进制核对通过。无 Responses 夹具、独立搜索、shell 或替代驱动；根91320→CEF144248→native141788，组件正常退出0 |
+| 网页查找回归 | 同阶段 `probe-ac716ead6e9545919887faf774eaabbd`：19 项实际原生检查通过，包括真实 renderer 阻塞时明确报查找错误、同一 worker 恢复、导航/关闭取消旧查找。CUA 使用原有 BrowserFind 核对1/3→2/3并关闭。根138540正常退出0；不是正式GUI、真实键盘/IME或同URL刷新前端状态验收 |
+| 回归与打包 | 119 项既有后台回归、59 个 JS/MJS 语法检查通过；21 个 payload 条目、程序集可信资源及79个构建源码与候选核对通过。唯一新候选目录 `package-14476ace97ba4e47a4a593dda7b4a544/QQClaw.exe`，6291456 bytes，SHA256 `5B8198D341DCDEC2BE576EECEAA602D045F8E5FBE725EF11D40D7E558DF7AA46`，未发布；运行库仍按需安装 |
+
+必须保留的失败与更正：旧 active-exit 检查的 cancelled 断言失败没有删除。`probe-84c88c5a9255455184de067c4f2feda5` 独立读取显示 `Download interrupted (20)`；固定SDK中20是 NETWORK_FAILED。检查后端与下载服务器同进程，旧 finish 先关闭服务器，真实断网先于浏览器取消，所以该断言不能用于证明回调丢失。检查现改为保持服务器存活，先调用产品 dispose 并等待，再结束服务器；没有把 interrupted 改写为 cancelled 或放宽断言。另有独立受控检查 `exit-ordering-738ca51927fc4bfc84288922390d932e` 真实复现 Close 过早返回，新增 exitDelivered 后才通过。这两类问题必须分开归因。前一内核3091的12次官方调用成功只是中间证据，不能代替本轮622e复查。完整失败记录保留在 download-failure-notes.md。
+
+仍未完成：原生 Chrome 控件外观、完整参考主页/面板 GUI、真实焦点按键/中文输入法/DPI、原生/应用查找栏协同、同URL刷新前端查找状态、blob/特殊下载、真实微信完整链路、Google结果、Mac官方扩展内核、仅CLI新电脑官方组件引导，以及整页WebView重载的安装进度接续。此前Google安全拦截仍按失败保留；本机文件下载成功不代替Google搜索。当前工具禁用原生桌面控制，因此不能用本轮组件页截图声称完整EXE GUI已验收。正式 release 仍只有一个 EXE 和一个 DMG，原账户及会话数据未改。
+
+## 前一源码检查点：CEF 下载、历史及官方扩展下载流程（中间构建）
+
+本节的“最终/当前”表示该阶段当时状态；当前构建与退出复查以上节为准。
+
+本轮继续原始完整目标，没有改变正式 0.3.32 EXE/DMG，也没有把组件检查作为完整软件交付。上一轮已产生代码修复和真实模型证据，属于进展。本轮将新内核连接到原有下载面板、下载目录和加密历史记录，保留原版官方 ChatGPT 扩展及其站点/下载确认。
+
+| 文件索引 | 当前实现 |
+| --- | --- |
+| native/cef/BrowserEngine.cpp | 新增 DownloadHandler、KeyboardHandler 和成功主页面/标题事件。下载保存目的地由父应用分配；私有 UI 管道的 downloadPath/downloadCancel 只处理该 worker 的实际下载编号，拒绝目录外目标和现有文件；下载回调快照后按实际状态更新，取消/关闭来源标签/退出均收尾并释放回调引用 |
+| native/CefBrowserEngine.cs | 原生 shortcut/history/download-start/download-progress 事件核对 owner 后转到应用 UI 线程；独立 worker-exit 事件只在实际进程结束后结算；配置传入原有下载目录，不信任页面指定路径 |
+| native/BrowserHost.cs | 新内核事件复用 BrowserDownloads/BrowserHistory；HTTP 成功主页面入历史，下载和 HTTP 错误不入；标题后续更新、网址去重和现有 DPAPI 加密保存沿用。下载按 owner/engine/native ID 定位，每文件独立目录并沿用文件名清理；取消等待原生终态，不把取消请求被接收当作已停止；取消时保留已观察到的字节数 |
+| native/Program.cs | browser.downloads 改用异步 HandleAsync，旧 WebView2 记录/操作仍走原有分支；未新增模型浏览器工具 |
+| backend/official-browser.mjs | 模型指引明确使用官方 waitForEvent("download") → 点击 → 等待 → download.path()；没有登记等待的响应会被官方扩展拦截，不得通过修改扩展或底层下载行为绕过 |
+| scripts/build-browser-engine.mjs | GetFocus/IsChild 使用延迟 USER32 导入，保留原有即时导入检查、真实 sandbox_info、固定 API/版本和摘要要求 |
+
+原生快捷键已接到现有应用命令：Ctrl+F/G、F3、Esc、标签切换/关闭/恢复、地址栏、侧栏/面板、搜索、设置和新会话等。C++ 限定可见活动页及本窗口焦点，C# 再限定当前 owner/活动标签及命令名单，前端保留既有弹窗/会话门禁。**27 项仅验证键位映射和修饰键边界，未验证桌面真实焦点/输入、工具栏焦点或中文输入法，不写成原生按键验收通过。**
+
+### 真实检查和候选
+
+证据根继续为 `C:/Users/admin/AppData/Local/Temp/qqclaw-cef-contract-20261101/`。最终构建阶段 `download-stage-09fc43294ea64a529b02a0415c9beed5`，bundle `3091f164c0638da525f48a960fe5eec0` 由实际产品安装器生成，未手工复制拼装运行库。
+
+- `probe-4ff058c6ada64068820f7551ada79556`：16 项真实原生检查通过，包括成功页面与延迟中文标题、刷新去重、404 排除、重定向最终页、HTTP 附件实际字节/中文名、同名隔离、保留名/路径清理、下载不污染页面历史、已接收进度后取消、不同 worker/owner 下载隔离、关闭来源标签后的实际 cancelled、另一会话关闭后保留已完成记录。
+- 同目录 CUA 使用项目原有 BrowserDownloads/BrowserHistory，实际连接上述 CEF：完成和取消记录显示正确；通过界面启动一次 8 MiB 文件并实际完成，再启动一次并点击取消，终态显示已取消与704 KB已接收量；历史4条，搜索first只剩1条，点击后真正导航并关闭面板。未测试打开文件/系统文件管理器；未通过 UI 删除或清空记录。截图及观察在 ui-checks.json、ui-downloads.png、ui-download-cancel.png、ui-history-search.png。
+- `probe-d0d3215872ba4e098ed32210bb5b6e31`：新内核下前轮19项查找原生检查重新通过；CUA另核对1/3→2/3和关闭。范围仍为隐藏Form组件，不证明正式全GUI。
+- `persistence-72ae129baaec4787b07d2ba7d8445a92`：全新的独立Windows进程重开两组隔离加密记录。原生/CUA组9条下载、4条历史、6个已完成文件可用；官方模型组1条下载、2条历史、1个文件可用。两组状态文件读取前后摘要一致。此项验证现有存储构造函数与跨进程读取，不冒充完整软件退出重启或原用户数据迁移。
+- 119 项既有后台回归、59 个 JS/MJS 语法通过；27项原生快捷键映射检查仅属函数检查。最新候选 `package-307f01c2739848b5b3f4c7855acec1a5/QQClaw.exe` 为6239744 bytes，SHA256 `E3ABCECC79F562AC552BF4E642238CCBB1C19277BD5A982B4A3E6B30994F8DD9`。21个payload条目、程序集可信资源、4个已安装二进制及79个构建相关源码核对通过。前一个02788b...候选不含最后的下载指引，仅作历史证据，不发布。
+
+### 官方扩展实际下载：失败后按文档修正，再实际成功
+
+第一次 `official-download-38d4c8c8a0a9402e87031b76521d4105` 已真实连接且点击链接，但未登记下载等待，官方扩展返回ERR_BLOCKED_BY_CLIENT、下载记录为空，**该次失败**。不能从“工具completed/浏览器connected”推导下载成功。已只读核对原版扩展的YM下载管理逻辑：未匹配下载intent时failResponse；waitForEvent先登记intent，再经过源站/下载授权继续响应。[OpenAI官方扩展文档](https://learn.chatgpt.com/docs/chrome-extension)说明其管理下载及站点确认；精确等待API和拦截行为依据本机当前官方runtime文档与未修改的扩展实现，未冒充该公开页面提供了所有内部接口说明。证据为 official-download-policy-evidence.json、openai-extension-docs-observed.txt 和原始失败事件/截图。
+
+增加应用模型指引后，最终 `official-download-cce0f6511b67488a9dc2e76c9b6c8770` **实际成功**：QQClaw原配置 gpt-6.1-sol/xhigh，11次去重的官方Node REPL调用，1次prepareOfficial，0手动准备。CUA分别只批准一次本机站点访问和一次下载；模型按 waitForEvent → 官方AX点击 → await → download.path() 执行。官方返回路径与产品BrowserDownloads记录一致，状态completed/available=true，实际45字节逐字节一致，SHA256 `8AAF9F6D6233CDD42660DBFB88E634A05C0F0944D1275EBF3B40DB4834E555C8`。正式helper核对152492→CEF17092→native152776；当前源码快照匹配，0夹具Responses、0独立搜索/shell、0替代驱动。新建标签按任务保留至组件结束；文件没有由模型打开。见 verification.json、downloads.json、model-events.json、native-helper.json、qa-final.png。
+
+### 崩溃根因、现场和未完成项
+
+首轮新下载实现确实崩溃：下载早期的空文件名/目的地字段返回null，新增returnedString仍调用CEF userfree释放函数。实际线程栈为downloadUpdated→downloadState→returnedString(value=0)→libcef释放→异常处理；输入法CrashRpt只是显示异常提示，**不是归咎输入法，也没有禁用它**。崩溃处理框令进程保持存活并对窗口探测响应，关闭检查同时失败，不能称正常。已先保存gdb-stacks.txt、gdb-main-full.txt及进程树，再只清理该检查的9个确切进程；没有停止正式QQClaw。修复判空后重新安装新bundle，最终16项原生、界面取消、独立进程存储和官方模型下载均通过，最终组件正常退出与PID复查另有记录。编译准备失败、检查误将活动标签当目标标签、首轮崩溃与首次官方流程失败完整保留，见项目外 download-failure-notes.md。
+
+整体目标继续active，候选不发布。仍缺原生Chrome控件外观与完整主页/面板GUI验收、真实焦点键盘/输入法/DPI、Chrome原生查找栏和应用查找栏协同、同URL刷新时前端查找状态的核对、blob/特殊下载类型、真实微信整链路、Google结果、Mac及仅CLI新电脑官方组件引导、整页WebView重载的安装进度接续等。Google此前验证码/安全拦截仍按失败保留；本轮自己的本机附件成功不能代替Google搜索。未改官方扩展、站点/下载确认、沙箱、开发聊天身份、用户全局配置或原微信账号。
+
+## 前一源码检查点：原生网页查找与首次标签就绪（未发布）
 
 正式成品仍是已启动的 0.3.32；本节代码仅在项目外候选中，未替换正式 EXE/DMG。当前改动位于 `native/cef/BrowserEngine.cpp` 和 `native/CefBrowserEngine.cs`，没有更换官方 ChatGPT 扩展、后台模型或微信传输逻辑。
 

@@ -1,6 +1,28 @@
 # 官方 ChatGPT 扩展接入调查
 
-## 最新源码检查点：查找、首次标签与冷启动证据（未发布）
+## 最新源码检查点：下载退出收尾与622e内核复查（未发布）
+
+`native/cef/BrowserEngine.cpp` 在应用请求关闭时先取消下载，等待实际终态后再关闭来源browser；固定CEF源码明确browser销毁后停止转发回调。`native/CefBrowserEngine.cs` 等Exited和stdout EOF后只发一次worker-exit，Close还等exitDelivered确认最终UI通知已处理。`BrowserHost.cs`允许同一engine/owner的既有下载在会话关闭期间接收终态。没有修改官方扩展、网络错误或下载确认策略。
+
+最终bundle **622e037a0ff991781fa918443c12172f** 由产品安装器安装。证据根项目外qqclaw-cef-contract-20261101：download-stage-3e2ea88024134b1ebb29798fb93a187c/probe-f73f2dbb7d99467cbb5ae4ff910fb761中16项实际下载/历史及CUA下载中退出通过；独立进程读取8条加密记录、最新cancelled、无running。8项受控退出顺序检查覆盖Close返回时机；19项实际原生查找与前端1/3→2/3复查通过。当前源码真实模型证据official-download-2e51e728f6c6423391812c590c233087：12次原版官方Node REPL、一次自动prepare、站点/下载分别确认，按官方等待→点击→path流程取得实际45字节文件，路径与原生完成记录一致；固定C++源码/构建清单/4个运行二进制与源快照已核对，正常退出0。不是完整EXE GUI、微信、Google、Mac或新电脑验收。
+
+旧退出断言失败保留：检查后端先关同进程下载服务器，实际状态为NETWORK_FAILED(20)，不能要求其伪报cancelled。检查改为先等产品dispose再结束服务器；另用受控检查独立复现并修复Close早于EOF/UI完成的问题。详细归因、候选摘要、失败目录及仍未完成项以[result.md](../result.md)最新节为准。正式.32不变，未发布候选。
+
+## 前一源码检查点：原生下载/历史和官方下载等待（中间构建）
+
+以下“最终”只表示该阶段状态，最新构建以上节为准。
+
+当前源码把CEF下载/主页面历史接入原有BrowserDownloads/BrowserHistory及加密存储，未新增替代驱动。原生DownloadHandler把实际下载ID/元数据传到C#，父应用分配原有下载目录中的每文件独立路径，再续传；取消等待实际终态，关闭来源页/退出有清理。KeyboardHandler已接现有应用命令且双重校验owner/当前页/可见及原生焦点，但只完成27项映射函数检查，**未做真实桌面焦点按键验收**。索引和完整限制见result.md最新节。
+
+最终bundle `3091f164c0638da525f48a960fe5eec0` 由实际安装器生成。`download-stage-09fc43294ea64a529b02a0415c9beed5/probe-4ff058c6ada64068820f7551ada79556` 的16项真实下载/历史检查通过，CUA下载面板实际取消及历史搜索/导航通过；同阶段probe-d0d321...的19项原生查找回归通过。独立新进程重开两组隔离加密记录并核对文件可用，读前后状态摘要相同。119旧回归、59语法、当前候选资源/79源码核对通过，测试和候选均在项目外，正式.32未改。
+
+官方扩展会主动拦截未登记intent的下载；首次真实模型只点击链接得到ERR_BLOCKED_BY_CLIENT，按失败保留。应用指引现明确先调用官方 `tab.playwright.waitForEvent("download")`，再点击、等待并用 `download.path()` 核对。该行为来自当前原版runtime文档与源实现，只读证据在official-download-policy-evidence.json；没有修改扩展、直接CDP或绕过站点/下载确认。
+
+最终 `official-download-cce0f6511b67488a9dc2e76c9b6c8770`：真实gpt-6.1-sol/xhigh、11次官方Node REPL、一次prepare、一次站点与一次下载确认，0夹具Responses/独立搜索/shell/替代驱动。SDK返回路径与原生下载记录相同，实际45字节内容一致；正式helper链152492→17092→152776。仍为隐藏Form组件，不扩大为正式GUI、微信、Google或Mac通过。
+
+本轮也实际定位并修复新增代码对空CEF userfree字符串释放的崩溃，先保存线程栈再清理确切检查进程；不归咎输入法、不以进程存活为成功。最终通过与前轮失败分开保留，详见result.md和download-failure-notes.md。原生Chrome控件仍可见，完整GUI/快捷键焦点、特殊下载类型、同URL刷新查找、微信、Google、Mac和新电脑引导等继续待完成。整体目标active，候选未发布。
+
+## 前一源码检查点：查找、首次标签与冷启动证据（未发布）
 
 `native/cef/BrowserEngine.cpp` 已增加真实 FindHandler、每页串行请求及 Chromium 回调编号匹配、最终计数/位置、导航/关闭/清空时 stale 结算、512 UTF-16与64项队列边界和手动查找10秒无响应错误。该错误不会暂停Codex长任务、重发请求或重启浏览器。实际发现原 ready 在首标签创建前发出并使 prepareOfficial 返回空tabId，现改为首标签创建/状态发布后报告ready。`native/CefBrowserEngine.cs` 显式UTF-8读取原生输出。
 

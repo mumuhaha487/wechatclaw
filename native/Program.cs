@@ -249,7 +249,7 @@ internal sealed class DesktopWindow : Form {
             } else if (method == "browser.view") {
                 GetBrowserHost().SetView(p); result = true;
             } else if (method == "browser.downloads") {
-                result = GetBrowserHost().Downloads.Handle(p);
+                result = await GetBrowserHost().Downloads.HandleAsync(p);
             } else if (method == "browser.history") {
                 result = GetBrowserHost().History.Handle(p);
             } else if (method == "dialog.folder") {

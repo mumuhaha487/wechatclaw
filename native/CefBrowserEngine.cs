@@ -72,17 +72,19 @@ internal sealed class CefBrowserEngine {
     readonly Action<Dictionary<string, object>> changed;
     readonly Action<string> log;
     readonly Action<Process> attach;
+    readonly Action<string, Dictionary<string, object>> nativeNotify;
     readonly Process process = new Process();
     readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = 2 * 1024 * 1024, RecursionLimit = 40 };
     readonly Dictionary<int, TaskCompletionSource<Dictionary<string, object>>> pending = new Dictionary<int, TaskCompletionSource<Dictionary<string, object>>>();
     readonly TaskCompletionSource<bool> ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly TaskCompletionSource<int> exited = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly TaskCompletionSource<bool> workerClosed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    readonly TaskCompletionSource<bool> exitDelivered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly object gate = new object();
     CefInputWriter input;
     Task startup;
     FileStream lease;
-    int next;
+    int next, exitNotified;
     bool started, closing;
     volatile bool outputEnded;
     Dictionary<string, object> queuedView;
@@ -92,22 +94,23 @@ internal sealed class CefBrowserEngine {
     internal int ProcessId { get { return started ? process.Id : 0; } }
     internal bool Running { get { try { return started && !process.HasExited; } catch { return false; } } }
 
-    internal CefBrowserEngine(Form parent, string owner, CefEngineFiles files, Action<Dictionary<string, object>> changed, Action<string> log, Action<Process> attach = null) {
+    internal CefBrowserEngine(Form parent, string owner, CefEngineFiles files, Action<Dictionary<string, object>> changed, Action<string> log, Action<Process> attach = null, Action<string, Dictionary<string, object>> nativeNotify = null) {
         Guid id;
         if (!Guid.TryParseExact(owner, "D", out id)) throw new Exception("浏览器会话无效。");
         this.parent = parent; this.owner = owner; this.files = files;
         this.changed = changed ?? delegate { }; this.log = log ?? delegate { };
         this.attach = attach ?? delegate { };
+        this.nativeNotify = nativeNotify ?? delegate { };
     }
     static string Quote(string value) { return "\"" + value.Replace("\"", "\\\"") + "\""; }
-    internal Task Start(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins = null) {
-        return startup ?? (startup = StartGuarded(profilePath, extensionPath, configurationPath, logPath, allowedOrigins));
+    internal Task Start(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins = null, string downloadRoot = null) {
+        return startup ?? (startup = StartGuarded(profilePath, extensionPath, configurationPath, logPath, allowedOrigins, downloadRoot));
     }
-    private async Task StartGuarded(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins) {
-        try { await StartCore(profilePath, extensionPath, configurationPath, logPath, allowedOrigins); }
+    private async Task StartGuarded(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins, string downloadRoot) {
+        try { await StartCore(profilePath, extensionPath, configurationPath, logPath, allowedOrigins, downloadRoot); }
         catch (Exception error) { CloseInput(); if (!started) ReleaseLease(); Fail(error); throw; }
     }
-    private async Task StartCore(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins) {
+    private async Task StartCore(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins, string downloadRoot) {
         await Task.Run(delegate { lease = files.AcquireLease(false); files.Verify(); });
         Directory.CreateDirectory(profilePath);
         Directory.CreateDirectory(Path.GetDirectoryName(configurationPath));
@@ -117,6 +120,7 @@ internal sealed class CefBrowserEngine {
             {"logPath", Path.GetFullPath(logPath)}, {"parentWindow", parent.Handle.ToInt64()}, {"parentProcessId", Process.GetCurrentProcess().Id}
         };
         if (allowedOrigins != null) configuration["allowedOrigins"] = allowedOrigins;
+        if (!String.IsNullOrEmpty(downloadRoot)) configuration["downloadRoot"] = Path.GetFullPath(downloadRoot);
         File.WriteAllText(configurationPath, json.Serialize(configuration), new UTF8Encoding(false));
         var start = new ProcessStartInfo(Path.Combine(files.Directory, "QQClawBrowser.exe"), Quote(Path.GetFullPath(configurationPath))) {
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
@@ -163,6 +167,10 @@ internal sealed class CefBrowserEngine {
                 var state = (Dictionary<string, object>)message["data"];
                 if (Convert.ToString(state["owner"]) != owner) throw new Exception("浏览器状态不属于当前会话。");
                 ApplyState(state);
+            } else if (type == "shortcut" || type == "history" || type == "download-start" || type == "download-progress") {
+                var data = (Dictionary<string, object>)message["data"];
+                if (Convert.ToString(data["owner"]) != owner) throw new Exception("浏览器事件不属于当前会话。");
+                PostNative(type, data);
             } else if (type == "closed") {
                 if (Convert.ToInt32(message["remainingTabs"]) != 0) throw new Exception("浏览器组件退出时仍有未关闭标签。");
                 workerClosed.TrySetResult(true);
@@ -182,6 +190,20 @@ internal sealed class CefBrowserEngine {
             catch (Exception error) { request.TrySetException(error); throw; }
             request.TrySetResult(result);
         }
+    }
+    void PostNative(string type, Dictionary<string, object> data, TaskCompletionSource<bool> delivered = null) {
+        try {
+            if (parent.IsDisposed || !parent.IsHandleCreated) throw new InvalidOperationException("浏览器通知窗口已关闭。");
+            parent.BeginInvoke(new Action(delegate {
+                try {
+                    if (parent.IsDisposed) throw new InvalidOperationException("浏览器通知窗口已关闭。");
+                    if (!closing || type == "worker-exit" || type == "download-progress") nativeNotify(type, data);
+                    if (delivered != null) delivered.TrySetResult(true);
+                } catch (Exception error) {
+                    if (delivered != null) delivered.TrySetException(error); else Fail(error);
+                }
+            }));
+        } catch (InvalidOperationException error) { if (delivered != null) delivered.TrySetException(error); }
     }
     void ApplyState(Dictionary<string, object> state) {
         if (Convert.ToString(state["owner"]) != owner) throw new Exception("浏览器状态不属于当前会话。");
@@ -236,6 +258,11 @@ internal sealed class CefBrowserEngine {
         // Exited can arrive before redirected stdout has delivered its final
         // response. Drain the pipe before rejecting any remaining requests.
         if (!exited.Task.IsCompleted || !outputEnded) return;
+        if (Interlocked.Exchange(ref exitNotified, 1) != 0) return;
+        // The final download update must be queued before worker-exit, just
+        // like the final pipe response. Otherwise a completed file can be
+        // recorded as interrupted when the process exits first.
+        PostNative("worker-exit", new Dictionary<string, object> {{"owner",owner}}, exitDelivered);
         if (!closing || exited.Task.Result != 0) Fail(new Exception("浏览器组件已退出（" + exited.Task.Result + "）。"));
         else if (workerClosed.Task.Status != TaskStatus.RanToCompletion) Fail(new Exception("浏览器组件未返回完整的退出确认。"));
         else FailPending(new Exception("浏览器会话已关闭。"));
@@ -256,7 +283,10 @@ internal sealed class CefBrowserEngine {
             } catch (Exception failure) { shutdownFailure = failure;
             } finally { CloseInput(); }
         }
-        var completed = Task.WhenAll(exited.Task, workerClosed.Task);
+        // Native exit alone is insufficient: stdout may still contain the last
+        // download result, and its UI callback may still be queued. Keep the
+        // parent alive until the drained exit notification has been handled.
+        var completed = Task.WhenAll(exited.Task, workerClosed.Task, exitDelivered.Task);
         if (await Task.WhenAny(completed, Task.Delay(15000)) != completed)
             throw new Exception("浏览器组件仍未确认退出，请查看日志；当前不会强制停止或伪报清理成功。");
         await completed;

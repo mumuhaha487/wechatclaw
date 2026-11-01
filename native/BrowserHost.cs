@@ -256,16 +256,51 @@ internal sealed class BrowserHost {
         if (next == "" && session.Tabs.Count > 0) session.CefSelected = false;
         Layout(); Publish(session, false);
     }
+    private async void CefEvent(BrowserSession session, CefBrowserEngine engine, string type, Dictionary<string, object> data) {
+        if (type == "worker-exit" && !engine.Running) { Downloads.CloseCef(engine); return; }
+        if (!Object.ReferenceEquals(session.Cef, engine) || Value(data, "owner") != session.Owner) return;
+        // Terminal download updates still belong to their engine while a
+        // session is closing or has just been removed. They create no tabs or
+        // destinations; preserve them before the drained worker-exit event.
+        if (type != "download-progress" && (session.Disposed || !sessions.ContainsKey(session.Owner) || sessions[session.Owner] != session)) return;
+        Exception failure = null;
+        try {
+        if (type == "shortcut") {
+            string tabId = Value(data, "tabId"), command = Value(data, "command");
+            if (!visible || visibleOwner != session.Owner || !session.CefSelected || bounds.Width <= 0 || bounds.Height <= 0 || tabId != Value(engine.State, "activeTab")) return;
+            if (!new [] {"find-browser", "find-browser-next", "find-browser-previous", "find-browser-close", "browser-new-tab", "panel-close-active", "panel-reopen-tab", "browser-focus-address", "panel-next-tab", "panel-previous-tab", "toggle-sidebar", "toggle-panel", "new-session", "search", "settings"}.Contains(command)) return;
+            shortcutNotify(new { owner = session.Owner, tabId = tabId, command = command });
+        } else if (type == "history") {
+            string url = Value(data, "url"), title = Value(data, "title"), operation = Value(data, "operation");
+            if (operation == "visit") History.Visit(url, title);
+            else if (operation == "title") History.UpdateTitle(url, title);
+        } else if (type == "download-start") {
+            string downloadId = Value(data, "downloadId");
+            string path = Downloads.StartCef(engine, session.Owner, data);
+            await engine.Call("downloadPath", new Dictionary<string, object> {{"downloadId",downloadId},{"path",path}});
+        } else if (type == "download-progress") {
+            Downloads.UpdateCef(engine, data);
+        }
+        } catch (Exception error) { failure = error; }
+        if (failure != null) {
+            if (type == "download-start" || type == "download-progress") {
+                try { await engine.Call("downloadCancel", new Dictionary<string, object> {{"downloadId",Value(data,"downloadId")}}); } catch { }
+                Downloads.FailCef(engine, Value(data,"downloadId"), failure.Message);
+            }
+            try { lock (cefLogGate) { var directory=Path.Combine(Program.DataDirectory,"logs"); Directory.CreateDirectory(directory);File.AppendAllText(Path.Combine(directory,"browser-native.log"),failure+Environment.NewLine,Encoding.UTF8); } } catch { }
+        }
+    }
     private async Task PrepareCef(BrowserSession session, string extensionPath) {
-        var engine = new CefBrowserEngine(parent, session.Owner, cefFiles(), state => CefChanged(session, state), message => {
+        CefBrowserEngine engine = null;
+        engine = new CefBrowserEngine(parent, session.Owner, cefFiles(), state => CefChanged(session, state), message => {
             try { lock (cefLogGate) { var directory = Path.Combine(Program.DataDirectory, "logs"); Directory.CreateDirectory(directory); File.AppendAllText(Path.Combine(directory, "browser-native.log"), message + Environment.NewLine, Encoding.UTF8); } } catch { }
-        }, attachProcess);
+        }, attachProcess, (type, eventData) => CefEvent(session, engine, type, eventData));
         session.Cef = engine; session.OfficialExtensionPath = extensionPath;
         string profile;
         using (var sha = SHA256.Create()) profile = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(Program.DataDirectory.ToLowerInvariant() + ":" + session.Owner))).Replace("-", "").ToLowerInvariant().Substring(0, 32);
         string data = Path.Combine(Program.DataDirectory, "browser-runtime", session.Owner);
         Exception failure = null;
-        try { await engine.Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QQClaw", "browser-profiles", profile), extensionPath, Path.Combine(data, "engine.json"), Path.Combine(data, "cef.log")); }
+        try { await engine.Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QQClaw", "browser-profiles", profile), extensionPath, Path.Combine(data, "engine.json"), Path.Combine(data, "cef.log"), downloadRoot: BrowserDownloads.DirectoryRoot()); }
         catch (Exception error) { failure = error; }
         if (failure != null || session.Disposed) {
             try { await engine.Close(); } catch { }
@@ -282,7 +317,7 @@ internal sealed class BrowserHost {
         foreach (var tab in session.Tabs) tab.Close();
         session.Tabs.Clear(); session.Active = null;
         if (session.CefPreparing != null) { try { await session.CefPreparing; } catch { } }
-        if (session.Cef != null) await session.Cef.Close();
+        if (session.Cef != null) { await session.Cef.Close(); Downloads.CloseCef(session.Cef); }
         sessions.Remove(session.Owner);
         if (visibleOwner == session.Owner) { visibleOwner = ""; visible = false; }
         Layout();
@@ -666,6 +701,8 @@ internal sealed class BrowserDownloadRecord {
     internal bool Cancelled;
     internal ulong NavigationId;
     internal EventHandler<object> StateChanged;
+    internal CefBrowserEngine Cef;
+    internal string CefId, CefTabId;
 }
 
 internal sealed class BrowserDownloads {
@@ -701,7 +738,7 @@ internal sealed class BrowserDownloads {
         if (System.Text.RegularExpressions.Regex.IsMatch(name, "^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\\.|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) name = "_" + name;
         return name;
     }
-    private static string DirectoryRoot() {
+    internal static string DirectoryRoot() {
         var configured = Environment.GetEnvironmentVariable("QQCLAW_DOWNLOADS_DIR");
         if (!String.IsNullOrEmpty(configured)) return Path.GetFullPath(configured);
         Guid id = new Guid("374DE290-123F-4565-9164-39C4925E467B"); IntPtr pointer;
@@ -712,6 +749,59 @@ internal sealed class BrowserDownloads {
     }
     [System.Runtime.InteropServices.DllImport("shell32.dll")]
     private static extern int SHGetKnownFolderPath(ref Guid id, uint flags, IntPtr token, out IntPtr path);
+    internal string StartCef(CefBrowserEngine engine, string owner, Dictionary<string, object> data) {
+        if (storageError != "") throw new Exception(storageError);
+        string key = BrowserHost.Value(data,"downloadId"); uint parsed;
+        if (!UInt32.TryParse(key,out parsed) || parsed.ToString()!=key) throw new Exception("下载编号无效。");
+        var existing=items.Find(item=>Object.ReferenceEquals(item.Cef,engine)&&item.CefId==key);
+        if(existing!=null)return existing.path;
+        var record=new BrowserDownloadRecord {id=Guid.NewGuid().ToString("D"),owner=owner,at=DateTime.UtcNow.ToString("o"),status="running",name=Filename(BrowserHost.Value(data,"name")),url=BrowserHost.Value(data,"url"),error="",Cef=engine,CefId=key,CefTabId=BrowserHost.Value(data,"tabId")};
+        items.Add(record);
+        try {
+            string folder=Path.Combine(DirectoryRoot(),Guid.NewGuid().ToString("D"));Directory.CreateDirectory(folder);
+            record.path=Path.Combine(folder,record.name);Save();Publish();return record.path;
+        } catch(Exception error) {record.status="interrupted";record.error=storageError==""?error.Message:storageError;record.Cef=null;Publish();throw;}
+    }
+    internal void UpdateCef(CefBrowserEngine engine, Dictionary<string, object> data) {
+        var record=items.Find(item=>Object.ReferenceEquals(item.Cef,engine)&&item.CefId==BrowserHost.Value(data,"downloadId"));
+        if(record==null||record.status!="running")return;
+        string status=BrowserHost.Value(data,"status");
+        if(!new [] {"running","completed","cancelled","interrupted"}.Contains(status))throw new Exception("下载状态无效。");
+        long received,total;
+        if(!Int64.TryParse(BrowserHost.Value(data,"received"),out received)||!Int64.TryParse(BrowserHost.Value(data,"total"),out total)||received<0||total<0)throw new Exception("下载进度无效。");
+        // Chromium may reset its byte count when a cancelled partial file is
+        // discarded. Preserve the bytes actually observed by the application.
+        record.received=Math.Max(record.received,received);if(total>0)record.total=total;
+        if(status=="completed" && !String.Equals(Path.GetFullPath(BrowserHost.Value(data,"path")),Path.GetFullPath(record.path),StringComparison.OrdinalIgnoreCase)) {status="interrupted";record.error="下载完成路径与分配的路径不一致。";}
+        else record.error=BrowserHost.Value(data,"error");
+        record.status=status;
+        if(status!="running") {record.Cef=null;try{Save();}catch{}}
+        Publish();
+    }
+    internal void FailCef(CefBrowserEngine engine, string key, string error) {
+        var record=items.Find(item=>Object.ReferenceEquals(item.Cef,engine)&&item.CefId==key&&item.status=="running");
+        if(record!=null){record.status="interrupted";record.error=error;record.Cef=null;try{Save();}catch{}}
+        Publish();
+    }
+    internal void CloseCef(CefBrowserEngine engine) {
+        if(engine.Running)return;
+        bool changed=false;foreach(var record in items.Where(item=>Object.ReferenceEquals(item.Cef,engine)).ToArray()) {
+            record.Cef=null;if(record.status=="running"){record.status="interrupted";record.error="浏览器已退出，下载未确认完成。";changed=true;}
+        }
+        if(changed){try{Save();}catch{}Publish();}
+    }
+    internal async Task<object> HandleAsync(Dictionary<string, object> p) {
+        if(BrowserHost.Value(p,"action")=="cancel") {
+            var record=items.Find(item=>item.id==BrowserHost.Value(p,"id"));
+            if(record!=null&&record.Cef!=null&&record.status=="running") {
+                record.Cancelled=true;await record.Cef.Call("downloadCancel",new Dictionary<string,object>{{"downloadId",record.CefId}});
+                // Accepted cancellation is not a terminal download result.
+                // The native progress event confirms cancelled/completed.
+                return State();
+            }
+        }
+        return Handle(p);
+    }
     internal void Start(CoreWebView2DownloadStartingEventArgs args, BrowserTab source, string owner) {
         if (storageError != "") throw new Exception(storageError);
         var operation = args.DownloadOperation;
