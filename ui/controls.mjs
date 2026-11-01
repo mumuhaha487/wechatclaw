@@ -16,8 +16,9 @@ export function configurePickers(options) {
   onOpen = options.onOpen;
   modelData = options.modelData;
 }
-export function closePicker(restoreFocus = false) {
+export function closePicker(restoreFocus = false, within) {
   if (!active) return;
+  if (within && !within.contains(active.control)) return;
   const { trigger, surface } = active;
   trigger.setAttribute("aria-expanded", "false");
   surface.remove();
@@ -33,6 +34,7 @@ function sourceOptions(control) {
           ? "本机默认"
           : o.textContent,
       disabled: o.disabled,
+      description: o.dataset.description,
     }));
   const id = control.dataset.modelProvider;
   const data = modelData(id, control.value);
@@ -77,6 +79,7 @@ function choose(value) {
 function renderRows() {
   if (!active) return;
   const { control, surface, query } = active;
+  const refreshFocused = surface.contains(document.activeElement) && document.activeElement?.matches(".picker-refresh");
   const focusedValue =
     document.activeElement?.closest(".picker-option")?.dataset.value;
   const id = control.dataset.modelProvider;
@@ -104,6 +107,7 @@ function renderRows() {
           : "从模型服务读取列表";
     surface.querySelector(".picker-footer").innerHTML =
       `<span title="${escape(data.status?.error || "")}">${escape(note)}</span><button type="button" class="picker-refresh" aria-label="刷新模型列表">${icon("refresh")}</button>`;
+    if (refreshFocused) surface.querySelector(".picker-refresh").focus({ preventScroll: true });
     const custom = surface.querySelector(".picker-custom");
     custom.hidden = !query || choices.some((o) => o.value === query);
     custom.textContent = `使用模型 ID：${query}`;
@@ -240,7 +244,7 @@ document.addEventListener(
       return;
     }
     if (event.key === "Tab") {
-      closePicker();
+      closePicker(true);
       return;
     }
     if (

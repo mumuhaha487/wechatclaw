@@ -835,7 +835,7 @@ select:focus-visible {
   width: 10px;
   height: 10px;
 }
-.agent-control .picker-trigger {
+.permission-control .picker-trigger {
   padding-left: 12px;
 }
 .permission-control .picker-trigger[aria-expanded="true"] {
@@ -1181,7 +1181,7 @@ select:focus-visible {
   animation: menu-in 0.12s ease-out;
 }
 .picker-menu.permission-menu {
-  width: 120px;
+  width: 280px;
 }
 .picker-options {
   max-height: min(420px, calc(100vh - 160px));
@@ -1976,6 +1976,19 @@ mark[data-message-find].current-match { background: var(--text); color: var(--pa
 .goal-mode { flex: 0 0 auto; }
 .goal-mode:hover, .set-message-goal:hover { background: var(--hover); color: var(--text); }
 .goal-mode.selected { background: var(--active); color: var(--text); }
+.composer-model-button { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 290px; height: 28px; padding: 0 7px; border-radius: var(--radius-control); background: transparent; font-size: calc(12px * var(--font-scale, 1)); }
+.composer-model-button:hover, .composer-model-button[aria-expanded="true"] { background: var(--hover); }
+.composer-model-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
+.composer-model-effort { flex: 0 1 auto; min-width: 0; max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.composer-model-button > .icon { width: 10px; height: 10px; flex: 0 0 10px; }
+.composer-model-popup { width: 320px; padding: 10px; overflow: auto; overscroll-behavior: contain; }
+.composer-model-heading, .composer-model-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.composer-model-heading { padding: 0 2px 6px; border-bottom: 1px solid var(--line); }
+.composer-model-heading strong { font-size: calc(13px * var(--font-scale, 1)); }
+.composer-model-popup .field { display: grid; gap: 5px; margin: 12px 2px; }
+.composer-model-popup .field-label { font-size: calc(11px * var(--font-scale, 1)); color: var(--muted); }
+.composer-model-popup .picker-trigger { width: 100%; min-width: 0; max-width: 100%; justify-content: space-between; }
+.composer-model-footer { margin: 4px 2px 0; padding-top: 6px; border-top: 1px solid var(--line); color: var(--muted); font-size: calc(11px * var(--font-scale, 1)); }
 .goal-mode .icon, .set-message-goal .icon { width: 15px; height: 15px; }
 .user-message-actions { display: flex; justify-content: flex-end; margin-top: 5px; }
 .set-message-goal { opacity: 0; transition: opacity .15s; }

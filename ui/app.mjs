@@ -26,6 +26,7 @@ import { SessionSearch, MessageFind } from "./message-search.mjs";
 import { BrowserDownloads } from "./browser-downloads.mjs";
 import { BrowserHistory } from "./browser-history.mjs";
 import { BrowserFind } from "./browser-find.mjs";
+import { ComposerModelMenu } from "./composer-model.mjs";
 import { version as appVersion } from "../package.json";
 
 const $ = (id) => document.getElementById(id);
@@ -167,7 +168,6 @@ const ui = {
   loading: false,
   sending: false,
   approvals: new Map(),
-  agentPermissions: new Map(),
   notifications: [],
   panelPage: ["browser", "files", "review"].includes(viewStorage.getItem("panel-page")) ? viewStorage.getItem("panel-page") : "",
   panelData: null,
@@ -227,7 +227,7 @@ const applicationMenu = new ApplicationMenu({
     return addAttachments([new File([bytes], "粘贴的图片.png", { type: "image/png" })]);
   },
 });
-function workspaceKeyboardAvailable() { return !ui.page && !ui.overlay && !document.querySelector(".overlay-backdrop"); }
+function workspaceKeyboardAvailable() { return !ui.page && !ui.overlay && !document.querySelector(".overlay-backdrop,.composer-model-popup"); }
 function findRegion() { return ui.findRegion?.owner === panelOwner() && ui.findRegion.region === "panel" && ui.panel ? "panel" : "chat"; }
 function canFindCurrent() { return workspaceKeyboardAvailable() && (findRegion() === "chat" ? Boolean(session()) : ui.panelPage === "file" ? Boolean(fileFind.current()) : Boolean(browserFind.context())); }
 function findOpen() { return Boolean(messageFind.bar?.isConnected || fileFind.bar?.isConnected || browserFind.current()); }
@@ -393,6 +393,7 @@ function syncModels(providerId) {
         ui.connectionDraft.effort,
       );
   refreshPickers();
+  composerModelMenu.update();
 }
 configurePickers({
   onOpen: (providerId) => catalog.refresh(providerId, true),
@@ -406,16 +407,52 @@ configurePickers({
 });
 const permissionOptions = (selected) =>
   [
-    ["ask", "每次询问"],
-    ["accept-edits", "允许编辑"],
-    ["auto", "全自动"],
-    ...(selected === "read-only" ? [["read-only", "只读"]] : []),
+    ["read-only", "只读", "只读取和分析文件，不写入工作区。"],
+    ["ask", "需要批准", "读取工作区，需要额外权限时请求批准。"],
+    ["accept-edits", "允许编辑", "允许工作区编辑，需要额外权限时询问。"],
+    ["auto", "自动编辑", "允许工作区读写和网络，不逐次询问。"],
     ...(selected === "workspace-write"
       ? [["workspace-write", "允许编辑（工作区）"]]
       : []),
   ]
-    .map(([value, label]) => option(value, label, selected))
+    .map(([value, label, description = "保留工作区读写配置。"]) => `<option value="${esc(value)}" data-description="${esc(description)}" ${value === selected ? "selected" : ""}>${esc(label)}</option>`)
     .join("");
+const composerConfig = () => {
+  const current = session();
+  return { providerId: current?.providerId ?? state.settings.defaultProvider,
+    model: current?.model ?? state.settings.defaultModel, effort: current?.effort ?? state.settings.defaultEffort,
+    permission: current?.permission ?? state.settings.defaultPermission };
+};
+const effortLabel = value => ({ none: "无", minimal: "最低", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最大", ultra: "超高" })[value] || value || "默认";
+function composerModelLabel(config) {
+  const models = ui.models.get(config.providerId) || [], selected = models.find(model => config.model ? (model.model || model.id) === config.model : model.isDefault);
+  return `<span class="composer-model-name">${esc(selected?.displayName || config.model || (profile(config.providerId).type === "local" ? "本机默认模型" : "选择模型"))}</span><span class="composer-model-effort">${esc(effortLabel(config.effort))}</span>${icon("down")}`;
+}
+const composerModelMenu = new ComposerModelMenu({
+  context: () => {
+    const config = composerConfig();
+    return { owner: draftKey(), origin: session()?.id || null, config,
+      providers: state.providers.map(provider => [provider.id, provider.name]),
+      status: catalog.status.get(config.providerId),
+      available: environmentReady() && !ui.page && !ui.overlay,
+      busy: Boolean(session()?.busy || session()?.queued),
+      label: composerModelLabel(config), title: `${profile(config.providerId).name} · ${config.model || "默认模型"} · ${effortLabel(config.effort)}`,
+      fields: saving => {
+        const disabled = saving ? "disabled" : "";
+        return `<label class="field"><span class="field-label">模型服务</span><select id="provider-select" aria-label="模型服务" ${disabled}>${providerOptions(config.providerId)}</select></label><label class="field"><span class="field-label">模型</span><select id="model-select" data-model-provider="${esc(config.providerId)}" aria-label="模型" ${disabled}>${modelOptions(config.providerId, config.model)}</select></label><label class="field"><span class="field-label">思考等级</span><select id="effort-select" aria-label="思考等级" ${disabled}>${effortOptions(config.providerId, config.model, config.effort)}</select></label>`;
+      },
+    };
+  },
+  change: (change, origin) => {
+    if (change.providerId) {
+      const provider = profile(change.providerId);
+      change = { ...change, model: provider.type === "local" ? "" : ui.models.get(provider.id)?.[0]?.model || provider.models[0] || "", effort: "" };
+    }
+    return updateComposer(change, origin);
+  },
+  refresh: (providerId, force) => catalog.refresh(providerId, force),
+  error: error => toast(error.message),
+});
 function toast(text) {
   $("toast").textContent = text;
   $("toast").classList.add("show");
@@ -692,45 +729,15 @@ function composer() {
     esc(ui.draft) +
     '</textarea><div class="composer-bottom"><div class="composer-left">' +
     ib("composer-add", "添加文件或工作目录", "plus") +
-    '<span class="composer-control agent-control">' +
+    '<span class="composer-control permission-control">' +
     icon("shield") +
-    '<select id="agent-select" aria-label="工作模式" ' +
-    blocked +
-    ">" +
-    option(
-      "agent",
-      "智能体",
-      config.permission === "read-only" ? "read" : "agent",
-    ) +
-    option(
-      "read",
-      "只读",
-      config.permission === "read-only" ? "read" : "agent",
-    ) +
-    '</select></span><span class="composer-control permission-control"><select id="permission-select" aria-label="执行权限" ' +
+    '<select id="permission-select" aria-label="访问权限" ' +
     blocked +
     ">" +
     permissionOptions(config.permission) +
     '</select></span><button class="goal-mode' + (ui.goalMode ? ' selected' : '') + '" data-action="goal-mode" aria-pressed="' + ui.goalMode + '" title="将本次任务设为持续目标">' + icon("target") + '目标</button></div><div class="composer-right">' +
     contextUsage(s) +
-    (state.providers.length > 1
-      ? '<span class="composer-control provider-control"><select id="provider-select" aria-label="模型服务" ' +
-        blocked +
-        ">" +
-        providerOptions(config.providerId) +
-        "</select></span>"
-      : "") +
-    '<span class="composer-control model-control"><select id="model-select" data-model-provider="' +
-    esc(config.providerId) +
-    '" aria-label="模型" ' +
-    blocked +
-    ">" +
-    modelOptions(config.providerId, config.model) +
-    '</select></span><span class="composer-control effort-control"><select id="effort-select" aria-label="思考等级" ' +
-    blocked +
-    ">" +
-    effortOptions(config.providerId, config.model, config.effort) +
-    '</select></span><button class="send-button' +
+    `<button class="composer-model-button" data-action="composer-model" aria-label="模型与思考等级" aria-haspopup="dialog" aria-controls="composer-model-popup" aria-expanded="false" ${blocked}>${composerModelLabel(config)}</button><button class="send-button` +
     (!ui.draft.trim() && !ui.attachments.length && !busy ? " empty" : "") +
     '" data-action="' +
     (stopping ? "stop" : "send") +
@@ -1402,7 +1409,7 @@ function render() {
       ? document.querySelector(".settings-content")?.scrollTop || 0
       : 0;
   ui.lastSettingsPage = ui.page;
-  closePicker();
+  closePicker(false, $("app"));
   renderFrame($("app"), (!environmentReady() && ui.page !== "runtime" ? setupGate() : applicationFrame(ui.page
     ? settings() : `<div class="app-shell">${sidebar()}${workspace()}</div>`)) + resizeEdges(), composerKey, ui.draft);
   const nextEditor = $("composer-input");
@@ -1416,6 +1423,7 @@ function render() {
   conversationView.refresh();
   for (const detail of document.querySelectorAll("details[data-detail-key]")) detail.open = ui.detailStates.get(detail.dataset.detailKey) || false;
   enhancePickers($("app"));
+  composerModelMenu.update();
   if ($("composer-input")) $("composer-input").style.height = `${Math.min(180, Math.max(60, $("composer-input").scrollHeight))}px`;
   if (focusId && $(focusId)) {
     $(focusId).focus({ preventScroll: true });
@@ -1489,6 +1497,7 @@ function accountForm(d, prefix) {
 }
 function renderOverlay() {
   closePicker();
+  if (ui.overlay) composerModelMenu.close();
   if (!["search", "history"].includes(ui.overlay)) sessionSearch.hide();
   if (!ui.overlay || !environmentReady()) {
     $("overlay").innerHTML = "";
@@ -1684,8 +1693,9 @@ async function checkEnvironment(restart) {
   if (environmentReady() && ui.panel && ui.reviewTarget && !ui.panelData && !ui.panelLoading) await loadPanel();
   else if (environmentReady() && ui.panel && ui.panelPage === "files" && !ui.panelData && !ui.panelLoading) await loadPanel();
 }
-async function updateComposer(change) {
-  const s = session();
+async function updateComposer(change, origin = session()?.id || null) {
+  const s = origin ? state.sessions.find(value => value.id === origin) : null;
+  if (origin && !s) throw new Error("原会话已不存在，模型配置未保存。");
   if (s) await rpc("session.update", { id: s.id, ...change });
   else {
     const mapping = {
@@ -1779,6 +1789,7 @@ async function action(name, element) {
   if (external[name]) return rpc("shell.open", { url: external[name] });
   if (name.startsWith("window.")) return rpc(name);
   switch (name) {
+    case "composer-model": return composerModelMenu.toggle();
     case "browser-more":
       return showContext(element, [
         ...(browserFind.context() ? [{ label: "查找网页内容", icon: "search", action: "find-browser" }] : []),
@@ -2731,21 +2742,6 @@ document.addEventListener("change", (event) => {
     }
     if (el.id === "permission-select")
       await updateComposer({ permission: el.value });
-    if (el.id === "effort-select") await updateComposer({ effort: el.value });
-    if (el.id === "model-select")
-      await updateComposer({ model: el.value, effort: "" });
-    if (el.id === "provider-select") {
-      const p = profile(el.value);
-      await catalog.refresh(p.id, true);
-      await updateComposer({
-        providerId: p.id,
-        model:
-          p.type === "local"
-            ? ""
-            : ui.models.get(p.id)?.[0]?.model || p.models[0] || "",
-        effort: "",
-      });
-    }
     if (el.id === "default-provider") {
       const p = profile(el.value);
       $("default-model").value = p.type === "local" ? "" : p.models[0] || "";
@@ -2765,16 +2761,6 @@ document.addEventListener("change", (event) => {
         "",
       );
       refreshPickers();
-    }
-    if (el.id === "agent-select") {
-      const current = session()?.permission || state.settings.defaultPermission;
-      const key = session()?.id || "default";
-      const writable = ["auto", "ask", "accept-edits"];
-      if (el.value === "read" && writable.includes(current)) ui.agentPermissions.set(key, current);
-      await updateComposer({
-        permission: el.value === "read" ? "read-only" : ui.agentPermissions.get(key) ||
-          (writable.includes(state.settings.defaultPermission) ? state.settings.defaultPermission : "accept-edits"),
-      });
     }
     if (el.dataset.draft === "providerId") {
       const p = profile(el.value);
