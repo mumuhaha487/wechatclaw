@@ -189,8 +189,12 @@ try {
   await write("actual-runtime-processes.json", peerProcesses);
   let available = [];
   for (let attempt = 0; attempt < 12; attempt++) {
-    const value = await call("browser-list-" + attempt, "nodeRepl.write(JSON.stringify(await agent.browsers.list()))");
-    for (const item of value.content || []) if (item.type === "text") { try { const data = JSON.parse(item.text); if (Array.isArray(data)) available = data; } catch {} }
+    const value = await call("browser-list-" + attempt, 'nodeRepl.write("QQCLAW_BROWSER_LIST="+JSON.stringify(await agent.browsers.list()))');
+    for (const item of value.content || []) if (item.type === "text") {
+      for (const line of item.text.split(/\r?\n/)) if (line.startsWith("QQCLAW_BROWSER_LIST=")) {
+        const data = JSON.parse(line.slice("QQCLAW_BROWSER_LIST=".length)); if (Array.isArray(data)) available = data;
+      }
+    }
     socketSnapshots.push({ attempt, process: (await exec("/bin/ps", ["-p", String(transport.hostPid), "-o", "pid=,ppid=,comm="]).catch(error => ({ stdout: "exited: " + error.code }))).stdout,
       sockets: (await exec("/usr/sbin/lsof", ["-a", "-p", String(transport.hostPid), "-U", "-Fn"]).catch(() => ({ stdout: "" }))).stdout });
     if (available.length) break;
