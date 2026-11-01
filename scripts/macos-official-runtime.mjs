@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { collectOfficialExtension } from "./official-extension.mjs";
 
 // Inspect the signed original app, never user profiles, credentials or live
 // Desktop processes. The recorded resource paths drive the subsequent vendor
@@ -22,6 +23,7 @@ const execute = async (command, args) => {
   catch (error) { throw new Error([error.stdout, error.stderr, error.message].filter(Boolean).join("\n")); }
 };
 const json = async (name, value) => fs.writeFile(path.join(output, name), JSON.stringify(value, null, 2));
+const digest = async file => { const hash = createHash("sha256"); for await (const chunk of createReadStream(file)) hash.update(chunk); return hash.digest("hex"); };
 let mounted = false;
 let phase = "download";
 const mount = path.join(output, "mount");
@@ -66,6 +68,8 @@ try {
   await fs.writeFile(path.join(output, "app-signature.txt"), details);
   if (!/^Authority=Developer ID Application: OpenAI/m.test(details) || !/^Authority=Apple Root CA/m.test(details))
     throw new Error("The downloaded app does not carry the expected Apple/OpenAI publisher chain");
+  const team = details.match(/^TeamIdentifier=(\w+)$/m)?.[1];
+  if (!team) throw new Error("Original app publisher team is missing");
   const identifier = (await execute("/usr/bin/plutil", ["-extract", "CFBundleIdentifier", "raw", path.join(app, "Contents/Info.plist")])).stdout.trim();
   const version = (await execute("/usr/bin/plutil", ["-extract", "CFBundleShortVersionString", "raw", path.join(app, "Contents/Info.plist")])).stdout.trim();
   phase = "inventory";
@@ -78,9 +82,9 @@ try {
     }
   }
   await visit(path.join(app, "Contents"));
-  const matches = all.filter(item => /extension[-_]?host|browser[-_](?:client|service)|node_repl|chrome|primary[-_]runtime|(?:^|\/)node$/i.test(item.path));
+  const matches = all.filter(item => /extension[-_]?host|browser[-_](?:client|service)|node_repl|chrome|primary[-_]runtime|(?:^|\/)(?:node|codex|codex-cli)$/i.test(item.path));
   const natives = [];
-  for (const item of matches.filter(item => /(?:^|\/)(?:node|node_repl|extension[-_]host)(?:[.-][^/]*)?$/.test(item.path))) {
+  for (const item of matches.filter(item => /(?:^|\/)(?:node|node_repl|codex|codex-cli)(?:[.-][^/]*)?$|\/extension-host\/macos\/[^/]+\/[^/]+$/.test(item.path))) {
     const file = path.join(app, "Contents", item.path);
     const kind = (await execute("/usr/bin/file", ["-b", file])).stdout.trim();
     if (!kind.includes("Mach-O")) continue;
@@ -133,6 +137,55 @@ try {
     await json("asar-index.json", { fileCount: entries.size, main,
       matches: [...entries].filter(([name]) => /extension[-_]?host|browser|node_repl|chrome|runtime/i.test(name)).map(([name, item]) => ({ path: name, size: item.size, unpacked: Boolean(item.unpacked) })) });
   } finally { await handle.close(); }
+  if (process.argv.includes("--collect")) {
+    phase = "collect";
+    const runtime = path.join(output, "runtime"), resources = path.join(app, "Contents/Resources");
+    const nodeSource = path.join(resources, "cua_node"), pluginSource = path.join(resources, "plugins/openai-bundled/plugins/chrome");
+    const hostRelative = `plugin/extension-host/macos/${process.arch}/ChatGPT for Chrome`;
+    const nodeInfo = natives.find(item => item.path === "Resources/cua_node/bin/node_repl");
+    const expectedArch = process.arch === "x64" ? "x86_64" : process.arch;
+    if (!nodeInfo?.architecture.split(" ").includes(expectedArch)) throw new Error("Original Node REPL does not support this build architecture");
+    await fs.mkdir(runtime, { recursive: true });
+    await fs.cp(nodeSource, path.join(runtime, "node"), { recursive: true, dereference: true });
+    await fs.cp(pluginSource, path.join(runtime, "plugin"), { recursive: true, dereference: true });
+    const extension = await collectOfficialExtension(output, (file, directory) => execute("/usr/bin/ditto", ["-xk", file, directory]));
+    await fs.cp(extension.directory, path.join(runtime, "extension"), { recursive: true });
+    const provenance = path.join(runtime, "provenance"); await fs.mkdir(provenance, { recursive: true });
+    for (const name of ["plugin.signature.json", "public-key.der"])
+      await fs.copyFile(path.join(resources, "plugin-signatures/openai-bundled/chrome", name), path.join(provenance, name));
+    await fs.copyFile(path.join(output, "extension-proof.json"), path.join(provenance, "extension-proof.json"));
+    const nativeFiles = ["node/bin/node", "node/bin/node_repl", hostRelative], nativeProof = [];
+    for (const relative of nativeFiles) {
+      const copied = path.join(runtime, relative);
+      await execute("/usr/bin/codesign", ["--verify", "--strict", copied]);
+      const publisher = await execute("/usr/bin/codesign", ["-d", "--verbose=2", copied]);
+      const copiedTeam = (publisher.stdout + publisher.stderr).match(/^TeamIdentifier=(\w+)$/m)?.[1];
+      if (copiedTeam !== team) throw new Error("Original native helper publisher differs from the application: " + relative);
+      const source = relative.startsWith("node/") ? path.join(nodeSource, relative.slice(5)) : path.join(pluginSource, relative.slice(7));
+      const before = await digest(source), after = await digest(copied);
+      if (before !== after) throw new Error("Original native runtime changed while copying: " + relative);
+      nativeProof.push({ path: relative, sha256: after, copiedUnchanged: true, signed: true, team: copiedTeam });
+    }
+    const code = path.join(output, "runtime-code"); await fs.mkdir(code, { recursive: true });
+    for (const name of ["installManifest.mjs", "check-native-host-manifest.js", "extension-ids.json"])
+      await fs.copyFile(path.join(pluginSource, "scripts", name), path.join(code, name));
+    await fs.copyFile(path.join(pluginSource, ".codex-plugin/plugin.json"), path.join(code, "plugin.json"));
+    await fs.copyFile(path.join(resources, "plugin-signatures/openai-bundled/chrome/plugin.signature.json"), path.join(code, "plugin.signature.json"));
+    const cli = natives.find(item => /(?:^|\/)(?:codex|codex-cli)$/.test(item.path));
+    let qaCli = null;
+    if (cli) { const directory = path.join(output, "qa"); await fs.mkdir(directory, { recursive: true }); qaCli = path.join(directory, "codex"); await fs.copyFile(path.join(app, "Contents", cli.path), qaCli); await fs.chmod(qaCli, 0o755); }
+    const manifest = { version: 1, platform: "darwin", arch: process.arch, vendorVersion: version, extensionVersion: extension.proof.version,
+      paths: { nodePath: "node/bin/node", nodeReplPath: "node/bin/node_repl", nodeModuleDirs: ["node/lib/node_modules"], browserServicePath: "plugin/scripts/browser-service.mjs", browserClientPath: "plugin/scripts/browser-client.mjs", host: hostRelative },
+      requiresCodexCli: true, source: { url: sourceUrl, identifier, team } };
+    await fs.writeFile(path.join(runtime, "runtime.json"), JSON.stringify(manifest, null, 2));
+    const proof = { manifest, nativeFiles: nativeProof, extension: extension.proof, qaCli,
+      pluginSignatureIncluded: true, pluginStandaloneSignatureVerified: false,
+      scope: "Original signed app resources and verified official CRX. No user data, auth or Desktop process is included. Codex CLI is kept outside the runtime archive for isolated checks only." };
+    await json("runtime-proof.json", proof);
+    const archive = path.join(output, `runtime-darwin-${process.arch}.tar.gz`);
+    await execute("/usr/bin/tar", ["--no-xattrs", "-czf", archive, "-C", runtime, "."]);
+    await json("runtime-archive.json", { file: path.basename(archive), bytes: (await fs.stat(archive)).size, sha256: await digest(archive), arch: process.arch, vendorVersion: version, extensionVersion: extension.proof.version });
+  }
   console.log(JSON.stringify({ identifier, version, files: all.length, matches: matches.length, natives: natives.map(item => ({ path: item.path, architecture: item.architecture })) }));
 } catch (error) {
   await json("inspection-error.json", { phase, error: error.message });

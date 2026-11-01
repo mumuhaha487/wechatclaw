@@ -5,6 +5,7 @@ on:
     branches: [work/official-browser-integration]
     paths:
       - scripts/macos-official-runtime.mjs
+      - scripts/official-extension.mjs
       - .github/workflows/macos-runtime.yml
 permissions:
   contents: read
@@ -20,7 +21,62 @@ jobs:
         with:
           node-version: '22'
       - name: Inspect signed app resources without installing
-        run: node scripts/macos-official-runtime.mjs --download --output "$RUNNER_TEMP/qqclaw-mac-official"
+        run: node scripts/macos-official-runtime.mjs --download --collect --output "$RUNNER_TEMP/qqclaw-mac-official"
+      - name: Verify the original runtime outside the mounted app
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+          import {pathToFileURL} from 'node:url';
+          import {spawn,execFile} from 'node:child_process';
+          import {promisify} from 'node:util';
+          const directory=path.join(process.env.RUNNER_TEMP,'qqclaw-mac-official'),root=path.join(directory,'runtime');
+          const manifest=JSON.parse(await fs.readFile(path.join(root,'runtime.json'),'utf8'));
+          const proof=JSON.parse(await fs.readFile(path.join(directory,'runtime-proof.json'),'utf8'));
+          if(!proof.qaCli)throw Error('No original Codex CLI was available for the isolated check');
+          const home=path.join(directory,'qa/codex-home');await fs.mkdir(home,{recursive:true});
+          const node=path.join(root,manifest.paths.nodePath),repl=path.join(root,manifest.paths.nodeReplPath);
+          const modules=manifest.paths.nodeModuleDirs.map(name=>path.join(root,name));
+          const env={...process.env,PATH:'/usr/bin:/bin:/usr/sbin:/sbin',CODEX_HOME:home,CODEX_CLI_PATH:proof.qaCli,
+            NODE_REPL_NODE_PATH:node,NODE_REPL_NODE_MODULE_DIRS:modules.join(':'),
+            NODE_REPL_TRUSTED_SERVICES:JSON.stringify({browser:path.join(root,manifest.paths.browserServicePath)}),
+            NODE_REPL_TRUSTED_CODE_PATHS:[path.join(root,'plugin'),...modules].join(':'),CUA_REPL_ENABLED_SURFACES:'browser'};
+          const version=(await promisify(execFile)(node,['--version'],{env})).stdout.trim();
+          const child=spawn(repl,[],{env,detached:true,stdio:['pipe','pipe','pipe']});
+          let next=0,buffer='',stderr='',exitResult,unexpected=[];const pending=new Map();
+          const exited=new Promise(resolve=>child.once('exit',(code,signal)=>{exitResult={code,signal};for(const request of pending.values()){clearTimeout(request.timer);request.reject(Error('Original Node REPL exited'));}pending.clear();resolve(exitResult)}));
+          child.stderr.on('data',bytes=>stderr+=bytes);
+          child.stdout.on('data',bytes=>{
+            buffer+=bytes;
+            while(buffer.includes('\n')){
+              const end=buffer.indexOf('\n'),line=buffer.slice(0,end);buffer=buffer.slice(end+1);if(!line.trim())continue;
+              const value=JSON.parse(line),request=pending.get(value.id);
+              if(request){clearTimeout(request.timer);pending.delete(value.id);value.error?request.reject(Error(JSON.stringify(value.error))):request.resolve(value.result)}
+              else if(value.method&&value.id!==undefined){unexpected.push(value.method);child.stdin.write(JSON.stringify({jsonrpc:'2.0',id:value.id,error:{code:-32601,message:'This isolated runtime check supplies no browser approvals'}})+'\n')}
+            }
+          });
+          const request=(method,params)=>new Promise((resolve,reject)=>{const id=++next;const timer=setTimeout(()=>{pending.delete(id);reject(Error('Original runtime request timed out: '+method))},20000);pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n')});
+          let result;
+          try{
+            const initialized=await request('initialize',{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'qqclaw_mac_runtime_check',version:'0.3.37'}});
+            child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+            const tools=await request('tools/list',{}),js=tools.tools.find(tool=>tool.name==='js');if(!js)throw Error('Original runtime did not provide js');
+            const call=async code=>{const argumentsValue={code};if(js.inputSchema.properties?.timeout_ms)argumentsValue.timeout_ms=10000;const output=await request('tools/call',{name:'js',arguments:argumentsValue});if(output.isError)throw Error(JSON.stringify(output));return output;};
+            const arithmetic=await call('nodeRepl.write(6 * 7)');
+            if(!arithmetic.content?.some(item=>item.type==='text'&&item.text.split(/\r?\n/).some(line=>line.trim()==='42')))throw Error('Original JS result was not 42');
+            const client=pathToFileURL(path.join(root,manifest.paths.browserClientPath)).href;
+            const imported=await call('var officialClient=await import('+JSON.stringify(client)+'); nodeRepl.write(typeof officialClient.setupBrowserRuntime)');
+            if(!imported.content?.some(item=>item.type==='text'&&item.text.includes('function')))throw Error('Official browser client did not import');
+            result={passed:true,nodeVersion:version,server:initialized.serverInfo,arithmetic,imported,unexpectedRequests:unexpected,
+              scope:'Actual original signed Node/Node REPL and browser-client import after app unmount; no browser connection, model, WeChat or user profile.'};
+          }finally{
+            child.stdin.end();let timer;await Promise.race([exited,new Promise(resolve=>timer=setTimeout(resolve,5000))]);clearTimeout(timer);
+            try{process.kill(-child.pid,'SIGTERM')}catch{}
+            if(!exitResult)await exited;
+            await fs.writeFile(path.join(directory,'runtime-transport.json'),JSON.stringify({...result,exit:exitResult,stderr},null,2));
+          }
+          console.log('PASS: original packaged Node REPL tool execution and browser-client import; '+version);
+          NODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -29,5 +85,7 @@ jobs:
             ${{ runner.temp }}/qqclaw-mac-official/*.json
             ${{ runner.temp }}/qqclaw-mac-official/app-signature.txt
             ${{ runner.temp }}/qqclaw-mac-official/app-main.js
+            ${{ runner.temp }}/qqclaw-mac-official/runtime-code/**
+            ${{ runner.temp }}/qqclaw-mac-official/runtime-darwin-*.tar.gz
           if-no-files-found: warn
           retention-days: 7
