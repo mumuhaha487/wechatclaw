@@ -14,6 +14,9 @@ const option = name => { const i = process.argv.indexOf(name); return i >= 0 ? p
 const output = path.resolve(option("--output"));
 const runtime = path.resolve(option("--runtime"));
 const cli = path.resolve(option("--cli"));
+const tabMode = option("--tab-mode") || "create";
+if (!["create", "claim"].includes(tabMode)) throw Error("Unsupported official tab check mode");
+const hostProbes = [];
 const fixtureOwner = process.argv.includes("--profile-isolation") ? randomUUID() : "";
 const fixtureProfile = "68ee7e2f79164e3b914697018ee61b44";
 const build = JSON.parse(await fs.readFile(path.join(path.resolve(option("--build")), "mac-browser-build.json"), "utf8"));
@@ -57,7 +60,7 @@ const access = await new BrowserAccessHost({ authorize: request => active && req
   observe: value => accessEvents.push(value) }).start();
 
 try {
-  const transport = await macOfficialTransport({ browserPid: browser.pid, applicationPid: browser.pid, nativeHost, profileDirectory: path.join(profile, fixtureOwner ? fixtureProfile : "Default") });
+  const transport = await macOfficialTransport({ browserPid: browser.pid, applicationPid: browser.pid, nativeHost, profileDirectory: path.join(profile, fixtureOwner ? fixtureProfile : "Default"), onProbe: value => { if (!hostProbes.some(old => JSON.stringify(old) === JSON.stringify(value))) hostProbes.push(value); } });
   await write("transport.json", transport);
   const modules = manifest.paths.nodeModuleDirs.map(name => path.join(runtime, name));
   const env = { ...process.env, ...access.environment, CODEX_HOME: path.join(output, "codex"), CODEX_CLI_PATH: cli,
@@ -160,7 +163,9 @@ try {
   const connected = available.filter(value => value.type === "extension");
   if (connected.length !== 1) throw Error("Official discovery did not return exactly one owned extension browser: " + JSON.stringify(available));
   await call("browser-documentation", `var browser=await agent.browsers.get(${JSON.stringify(connected[0].id)}); nodeRepl.write(await browser.documentation())`);
-  await call("tab-open", 'await browser.nameSession("🔎 Mac 浏览验证"); var tab=await browser.tabs.new(); await tab.goto(' + JSON.stringify(createdUrl) + '); nodeRepl.write("QQCLAW_AX_AVAILABLE="+!!tab.ax); if(tab.ax) await tab.ax.write(); else nodeRepl.write(await tab.playwright.domSnapshot()); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
+  const selectTab = tabMode === "create" ? 'var tab=await browser.tabs.new();' :
+    'var openTabs=await browser.user.openTabs(); var fixtureTab=openTabs.find(item=>item.url===' + JSON.stringify(url) + '); if(!fixtureTab) throw Error("The actual embedded fixture tab was not found"); var tab=await browser.user.claimTab(fixtureTab);';
+  await call("tab-open", 'await browser.nameSession("🔎 Mac 浏览验证"); ' + selectTab + ' await tab.goto(' + JSON.stringify(createdUrl) + '); nodeRepl.write("QQCLAW_AX_AVAILABLE="+!!tab.ax); if(tab.ax) await tab.ax.write(); else nodeRepl.write(await tab.playwright.domSnapshot()); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
   const entered = "QQClaw Mac 输入验证";
   await call("tab-input", 'var axState=await tab.ax.get("state",{disableDiffing:true}); nodeRepl.write(axState); var inputMatch=axState.match(/^\\s*(\\d+)\\s+text field \\(settable\\) Verification input\\b/m); if(!inputMatch) throw Error("The actual AX state did not expose the fixture input"); await tab.ax.typeText(Number(inputMatch[1]),' + JSON.stringify(entered) + '); await tab.ax.write(); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
   for (let retry = 0; retry < 20 && !observations.includes(entered); retry++) await delay(100);
@@ -182,8 +187,8 @@ try {
       schema.push({ file, text: await fs.readFile(path.join(schemaFolder, file), "utf8") });
     await write("original-process-api.json", schema);
   } catch (error) { await write("original-process-api.json", { error: error.message }); }
-  result = { passed: true, connected: true, tabOpened: true, inputObserved: entered, tabClosed: true, embedded: true, nativeTabs, fixtureOwner, transport, task, accessEvents, unexpectedRequests,
-    scope: "Actual original official extension on Mac CEF: create tab, navigate, read AX, type Chinese, observe real input event, screenshot and close. Owned local fixture only; no model, WeChat or full product GUI." };
+  result = { passed: true, connected: true, tabMode, tabCreated: tabMode === "create", tabOpened: true, inputObserved: entered, tabClosed: true, embedded: true, nativeTabs, fixtureOwner, transport, task, accessEvents, unexpectedRequests,
+    scope: "Actual original official extension on Mac CEF; tabMode=" + tabMode + ": navigate, read AX, type Chinese, observe real input event, screenshot, verify embedding and close. Claim mode does not prove tabs.new embedding. Owned local fixture only; no model, WeChat or full product GUI." };
 } catch (error) { result = { ...result, error: error.stack, accessEvents }; process.exitCode = 1; }
 finally {
   active = false;
@@ -211,6 +216,7 @@ finally {
   const logs = await exec("/usr/bin/sqlite3", [sqlite, ".dump"], { maxBuffer: 2 * 1024 * 1024 }).catch(error => ({ stdout: error.message }));
   await fs.writeFile(path.join(output, "runtime-sqlite.log"), logs.stdout);
   await write("notifications.json", notifications); await write("socket-snapshots.json", socketSnapshots);
+  await write("host-process-probes.json", hostProbes);
   await write("host-requests.json", hostRequests); await write("fixture-decisions.json", fixtureDecisions);
   await write("original-cli-process-events.json", processEvents);
   await fs.writeFile(path.join(output, "browser.log"), browserLog); await fs.writeFile(path.join(output, "repl.log"), replLog);

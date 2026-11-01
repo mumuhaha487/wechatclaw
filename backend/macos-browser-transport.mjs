@@ -11,7 +11,7 @@ const processes = text => text.split("\n").flatMap(line => {
 
 // Look only for the exact host installed for this session, and follow its
 // actual parent chain. Never select a global Desktop/Chrome socket by age.
-export async function macOfficialTransport({ browserPid, applicationPid, nativeHost, profileDirectory, timeoutMs = 22000 }) {
+export async function macOfficialTransport({ browserPid, applicationPid, nativeHost, profileDirectory, timeoutMs = 22000, onProbe = () => {} }) {
   if (process.platform !== "darwin") throw new Error("Mac 官方浏览通道需要 macOS。");
   if (![browserPid, applicationPid].every(value => Number.isSafeInteger(value) && value > 0) || !path.isAbsolute(nativeHost))
     throw new Error("Mac 浏览器所属进程无效。");
@@ -33,16 +33,17 @@ export async function macOfficialTransport({ browserPid, applicationPid, nativeH
     if (profileDirectory) {
       const selected = [];
       for (const host of hosts) {
-        const args = (await exec("/bin/ps", ["-p", String(host.pid), "-o", "args="])).stdout;
+        const args = (await exec("/bin/ps", ["-ww", "-p", String(host.pid), "-o", "args="])).stdout;
         // Chromium supplies the actual source profile in its standard native
         // messaging reconnect argument. Read it; never manufacture one.
         const encoded = args.match(/--reconnect-command=([A-Za-z0-9+/=_-]+)/)?.[1];
-        if (!encoded) continue;
+        if (!encoded) { onProbe({ hostPid: host.pid, reconnectArgument: false, args }); continue; }
         let command;
         try { command = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")); } catch { continue; }
         if (!Array.isArray(command) || command.some(value => typeof value !== "string")) continue;
         const directory = command.find(value => value.startsWith("--user-data-dir="))?.slice("--user-data-dir=".length);
         const profile = command.find(value => value.startsWith("--profile-directory="))?.slice("--profile-directory=".length);
+        onProbe({ hostPid: host.pid, reconnectArgument: true, directory, profile, expected: profileDirectory });
         if (directory && profile && path.resolve(directory, profile) === path.resolve(profileDirectory)) selected.push(host);
       }
       hosts = selected;
