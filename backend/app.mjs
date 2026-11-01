@@ -17,6 +17,7 @@ import { groupChanges } from "../shared/change-stats.mjs";
 import { reviewView } from "../shared/review-view.mjs";
 import { viewPreferences } from "../shared/view-preferences.mjs";
 import { goalRequest, goalSnapshot } from "../shared/goal.mjs";
+import { validDraftKey, draftValue, readDrafts } from "./composer-drafts.mjs";
 
 export const EFFORTS = [
   "",
@@ -634,6 +635,17 @@ export class App {
       }
       case "snapshot":
         return { ...this.store.snapshot(), wechat: this.bridge.status() };
+      case "draft.read":
+        return readDrafts(state, this.desktopAttachments);
+      case "draft.remember": {
+        if (!validDraftKey(p.key, state)) throw new Error("草稿所属的会话或工作目录已不存在。");
+        const value = draftValue(p.value);
+        state.composerDrafts ||= {};
+        if (value.text || value.attachments.length || value.goalMode) state.composerDrafts[p.key] = value;
+        else delete state.composerDrafts[p.key];
+        await this.store.save();
+        return { saved: true };
+      }
       case "review.remember":
         state.reviewView = reviewView(p.value, state.sessions);
         await this.store.save();

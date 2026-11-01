@@ -31,6 +31,7 @@ import { websiteCards, websiteTarget } from "./website-cards.mjs";
 import { approvalFields, approvalContent } from "./approval-forms.mjs";
 import { BrowserComponentInstall, browserComponentSettings, componentProgress } from "./browser-component.mjs";
 import { version as appVersion } from "../package.json";
+import { ComposerDrafts } from "./composer-drafts.mjs";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -267,8 +268,11 @@ function rememberDraft() {
   const entry = ui.drafts.get(key) || { pending: 0 };
   Object.assign(entry, { text: ui.draft, attachments: ui.attachments, goalMode: ui.goalMode });
   ui.drafts.set(key, entry);
+  draftPersistence.remember(key, entry);
   return entry;
 }
+const draftPersistence = new ComposerDrafts({ entries: ui.drafts,
+  save: value => rpc("draft.remember", value), error: error => toast("草稿保存失败：" + error.message) });
 function restoreDraft() {
   const entry = ui.drafts.get(draftKey());
   ui.draft = entry?.text || "";
@@ -310,6 +314,7 @@ async function addAttachments(files, local = false) {
     }
   } finally {
     target.pending--;
+    draftPersistence.remember(key, target);
     if (key === draftKey()) { render(); $("composer-input")?.focus(); }
     if (errors.length) toast([...new Set(errors)].join(" "));
   }
@@ -1708,6 +1713,12 @@ async function checkEnvironment(restart) {
       if (!state.sessions.some((s) => s.id === ui.active) && !ui.project) ui.active = state.sessions[0]?.id || "";
       const p = state.projects.find((p) => sameWorkspace(p.workspace, session()?.workspace));
       if (p && !viewStorage.getItem("expanded-projects")) ui.expanded.add(p.id);
+      if (!draftPersistence.ready) {
+        const saved = await rpc("draft.read");
+        draftPersistence.hydrate(saved.drafts);
+        restoreDraft();
+        if (saved.warnings.length) toast(saved.warnings.join(" "));
+      }
       ui.environment = await rpc("environment");
       ui.officialBrowser = await rpc("browser.officialStatus", { sessionId: ui.active }).catch(() => null);
       ui.startupError = ui.environment.error || "";
@@ -1755,10 +1766,12 @@ async function send() {
   if (goalMode) goalRequest(text);
   let targetId, cleared = false;
   ui.sending = true;
+  draftPersistence.held.add(sourceKey);
   try {
     if (!session()) await newSession();
     if (!session()) return;
     targetId = ui.active;
+    draftPersistence.held.add(targetId);
     ui.draft = "";
     ui.attachments = [];
     ui.drafts.delete(sourceKey);
@@ -1781,6 +1794,10 @@ async function send() {
     }
     throw e;
   } finally {
+    draftPersistence.held.delete(sourceKey);
+    if (targetId) draftPersistence.held.delete(targetId);
+    draftPersistence.remember(sourceKey, sourceKey === targetId || !cleared ? ui.drafts.get(sourceKey) : null);
+    if (targetId && targetId !== sourceKey) draftPersistence.remember(targetId, ui.drafts.get(targetId));
     ui.sending = false;
     render();
   }

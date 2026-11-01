@@ -32,6 +32,7 @@ export const defaults = () => ({
   retainedAccounts: [],
   reviewView: null,
   viewPreferences: null,
+  composerDrafts: {},
 });
 
 export class Store {
@@ -149,6 +150,7 @@ export class Store {
   }
   snapshot() {
     const state = structuredClone(this.state);
+    delete state.composerDrafts;
     state.reviewView = reviewView(state.reviewView, state.sessions);
     state.viewPreferences = viewPreferences(state.viewPreferences, state);
     state.providers = state.providers.map(({ apiKey, ...p }) => ({

@@ -763,11 +763,13 @@ jobs:
                       let preview = try await host.call(first, "attachment.preview", params: ["id": attachmentId]) as? String
                       guard preview == "data:image/png;base64," + imageData else { throw failure("Attachment preview failed") }
                       print("PASS: native attachment pipe import and raster preview")
+                      _ = try await host.call(first, "draft.remember", params: ["key": id, "value": ["text": "native-draft-persistence-check", "attachments": [attachmentId], "goalMode": true]])
                       try await host.shutdown()
                       print("PASS: native save and shutdown acknowledgement")
                       let file = host.data.appendingPathComponent("state.json")
                       let bytes = try Data(contentsOf: file)
                       guard !String(decoding: bytes, as: UTF8.self).contains("native-persistence-check") else { throw failure("Snapshot was not encrypted") }
+                      guard !String(decoding: bytes, as: UTF8.self).contains("native-draft-persistence-check") else { throw failure("Draft was not encrypted") }
                       let encrypted = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
                       let plain = try host.vault.handle("vault.decrypt", encrypted["protected"] as! String)
                       guard plain.contains(id) else { throw failure("Keychain decrypt failed") }
@@ -788,6 +790,15 @@ jobs:
                       let restoredPreview = try await host.call(second, "attachment.preview", params: ["id": attachmentId]) as? String
                       guard restoredPreview == preview else { throw failure("Restart lost imported attachment") }
                       print("PASS: attachment copy and preview survive native backend restart")
+                      let draftResult = try await host.call(second, "draft.read") as! [String: Any]
+                      let drafts = draftResult["drafts"] as! [String: Any]
+                      guard let draft = drafts[id] as? [String: Any], draft["text"] as? String == "native-draft-persistence-check", draft["goalMode"] as? Bool == true,
+                            let draftFiles = draft["attachments"] as? [[String: Any]], draftFiles.first?["id"] as? String == attachmentId,
+                            snapshot["composerDrafts"] == nil else { throw failure("Native restart lost private draft or attachment") }
+                      _ = try await host.call(second, "draft.remember", params: ["key": id, "value": ["text": "", "attachments": [], "goalMode": false]])
+                      let clearedDrafts = try await host.call(second, "draft.read") as! [String: Any]
+                      guard (clearedDrafts["drafts"] as? [String: Any])?[id] == nil else { throw failure("Cleared draft returned after restart") }
+                      print("PASS: draft text, imported attachment and goal mode survive Keychain encryption and native restart; clearing persists")
                       try await host.shutdown()
                       SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.qqclaw.desktop.vault", kSecAttrAccount as String: host.vault.account] as CFDictionary)
                       print("PASS: native process launch, pipe RPC, Keychain encryption and restart persistence")
