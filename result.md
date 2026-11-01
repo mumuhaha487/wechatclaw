@@ -2,7 +2,34 @@
 
 更新时间：2026-11-01。正式 Windows EXE 与 Mac 唯一安装包为 **0.3.32**，Windows 已替换并启动。**未发布源码已将 CEF 接到实际 BrowserHost、正式 helper 和可选打包流程，真实配置模型已通过原版官方扩展新建、读取、关闭检查页。** 这仍是隐藏原生 Form 的组件检查，不能当作正式 EXE GUI、微信、Google、全新电脑或 Mac 验收。原始目标保持 active；下方旧检查点中的“尚未接线”等描述只表示各阶段当时状态。
 
-## 最新源码检查点：下载退出收尾与最终内核复查（未发布）
+## 最新源码检查点：同地址刷新后的查找状态与两端验证（未发布）
+
+本轮复现并修复了前端查找的实际缺陷：同一 URL 从3处匹配刷新成5处后，原查找栏仍显示1/3，必须再次操作才更新。原生查找19项通过没有覆盖此场景，不能据此宣称前端完整正确。基线截图与原始结果保留。
+
+| 文件 | 本轮行为与原因 |
+| --- | --- |
+| ui/browser-find.mjs、ui/app.mjs | 共用 browserFindContext，绑定实际选中标签的 navigationRevision；同地址刷新保留搜索词、清掉旧结果，加载结束后重查，即使中间 loading 状态被合并也能识别页面已变化。关闭查找后不会因刷新重开；组合输入未结束时不自动搜索。新序号仍拒绝迟到旧结果 |
+| backend/app.mjs | browser.find 校验并转发可选的导航版本，旧客户端省略时保留兼容；拒绝非字符串、非法或过长版本，不交给原生层执行 |
+| native/cef/BrowserEngine.cpp | 允许的主框架导航更新每标签版本并发布 loading=true；查找请求携带的版本不属于当前导航时返回 stale，旧 clear 不会清除新页面的查找 |
+| native/BrowserHost.cs | WebView2 原生 NavigationId 以字符串传到前端；导航开始取消旧查找等待、重置查找状态，版本不匹配时返回 stale |
+| native/macos/BrowserHost.swift、.github/workflows/macos.yml | WK 主导航更新版本、结束旧查找等待；状态与请求采用同一版本核对。云端增加实际同地址 reload、当前页面 find、旧 search/next/clear 隔离检查 |
+
+本轮源码提交 **10e3124784f91fe1744105d790f82ad0b4d216e7** 已推送 work/official-browser-integration。证据根仍为项目外 `C:/Users/admin/AppData/Local/Temp/qqclaw-cef-contract-20261101/`，本轮阶段 `refresh-stage-26520b286bb04e7e96bcace94e5cf71d`。新 CEF bundle **69f220ac8d73af0bb077d43d7e1bd185**，源码 SHA256 `C8210D9031B495391DD7FF8E35DBE3AE7BD6857EBD87E4A9EBC5CD5AA1B116F3`，客户端 DLL SHA256 `5BB88ACA74DA8775A985ED1B4177C706FA3ED93C814FD1C439455BD0786DE614`。
+
+- 基线 `probe-79e514dbcbf54e3198787f22668f47f4`：19项原生通过，但CUA刷新后仍1/3，再点击才1/5，属于确认的缺陷。修复后 `probe-61304ec493a24a7f981c87e1b073841a`：19项再次通过，CUA同地址刷新自动1/5，搜索词保留、再次刷新重算、关闭后刷新不复活。实际旧版本 search/next/clear 返回stale；旧clear后当前查找仍能到2/5。组件正常退出0。见 ui-refreshed-count.png、native-generation-verification.json、原始请求/响应和基线两张截图。
+- `probe-a84933d066c64300bb709dfd83a1afd3`：6项实际手动 WebView2 原生检查通过，同地址刷新3→5、版本更替、过期请求隔离、当前查找移动和关闭空组；backendExit与rootExit均0。首轮检查包遗漏原有browser-page.js，open时失败、backendExit=1，失败目录未删；补入原有产品资源后重跑，不将rootExit0单独当通过。
+- 同一69f内核 `probe-12c980c658ce42668875fcccb25707de`：16项实际下载/历史回归通过，CUA下载中关闭后，独立进程重开加密记录仍为8条、最新cancelled、720896/8388608字节、无running，存储读取不改变摘要，根正常退出0。此次导航状态修改后的下载退出行为已重新核对，不套用旧622e结果。
+- 10项受控前端/实际App handler检查通过，包括合并掉中间loading的刷新、迟到结果、加载中改词/关闭、组合输入、URL/标签切换、标题变化不重复查找，以及后端验证/转发。这里只验证受控状态，不声称真实原生中文输入法、可信按键或完整GUI验收。119项既有回归、59个JS/MJS语法、79个构建源码与候选匹配、21个payload及可信资源核对通过。
+- 当前内核 `official-download-89655943690941ce96d86cfb3ea7f592`：真实gpt-6.1-sol/xhigh、8次未修改的官方Node REPL调用、一次自动prepare、站点与下载分别确认，实际下载45字节及官方返回路径与原生记录一致，源码/固定构建/4个运行二进制核对通过，组件正常退出0。没有夹具Responses、独立搜索/shell或替代驱动。本轮检查器最初只匹配双引号且无选项的waitForEvent写法，对真实合法的单引号加timeoutMs形式误报；保留失败说明，改为同时严格验证登记→AX点击→等待→path的顺序及实际文件/返回路径，不修改扩展或放宽为仅连接成功。
+- [Mac云构建与原生验证](https://github.com/mumuhaha487/wechatclaw/actions/runs/41294195243) 成功，精确构建提交10e3124；已从日志核对38条实际native PASS，包含本轮WK同地址刷新/旧请求隔离。Universal构建、安装器检查、钥匙串数据等沿用既有云端验证。artifact13078152371下载ZIP摘要与GitHub digest一致；项目外 mac-verified/QQClaw.dmg为880189bytes，SHA256 `26976E36F12350F8AF7772C8C231FB0058C7FF3AB0FF3638A60DC0CE21BA586A`，未发布。此项不证明Mac已能通过原版官方扩展自动浏览，也不是用户Mac实机GUI验收。
+
+本轮Windows候选仍在项目外 `package-909947a9142646e89ff22c89f6526297/QQClaw.exe`，6304256bytes，SHA256 `C33A167B48BC338F5343818344CA70361D59BD7BBD5D8D3DD7894880A93EC4B5`。正式0.3.32 EXE/DMG没有替换，原微信账号、消息和全局配置未改。失败说明另见项目外 refresh-failure-notes.md。
+
+**整体仍未完成。** 下一步优先处理新CEF仍显示原生Chrome控件造成的重复工具栏与参考外观差异，继续核对完整主页/面板拖宽、关闭/空组、焦点/输入法/DPI及Chrome/应用查找栏协同；不能用本轮组件截图代替完整GUI验收。真实微信完整链路、Google搜索结果、Mac官方扩展内核、仅CLI新电脑官方组件引导、blob/特殊下载和整页重载的安装进度接续仍缺。此前Google安全拦截保留为失败，禁止更换驱动或借用开发聊天身份来伪造通过。目标保持active。
+
+## 前一源码检查点：下载退出收尾与最终内核复查（中间构建）
+
+以下“当前/最终”只表示当时622e构建，最新源码以上节为准。
 
 正式 Windows/Mac 仍是 0.3.32，本轮没有替换或停止正式程序。当前源码与下列项目外候选一致，整体目标仍 active；组件检查通过不代表完整软件已经验收。
 

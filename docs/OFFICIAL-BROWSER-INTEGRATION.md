@@ -1,5 +1,11 @@
 # 官方 ChatGPT 扩展接入调查
 
+## 最新源码检查点：刷新查找隔离与当前内核复查（未发布）
+
+源码10e3124在CEF/WebView2/WK状态中提供navigationRevision，前端同地址刷新保留查询词并自动重查，手动查找请求携带版本；后端验证/转发，原生拒绝过期search/next/clear，避免旧clear清除新结果。基线确实刷新后仍1/3，修复后实际CEF自动1/5，WebView2与Mac云端WK均核对真实同地址reload及请求隔离。本轮没有新增模型浏览器工具或修改官方扩展。组件检查、受控状态检查与完整GUI必须分开，详细证据见[result.md](../result.md)最新节。
+
+新bundle69f220ac8d73af0bb077d43d7e1bd185已由产品安装器安装；official-download-89655943690941ce96d86cfb3ea7f592用真实配置模型、8次原版官方Node REPL、一次自动prepare及站点/下载两次正常确认取得45字节文件，路径/内容与原生完成记录一致，根正常exit0。首轮检查器错误地只接受双引号且不带options的waitForEvent形式，修正为接受当前实际合法语法后，仍严格检查登记→点击→等待→path顺序、实际返回路径、下载文件、构建与源快照；未仅凭工具completed算成功。Mac云run41294195243的WK检查不是Mac官方扩展自动浏览，后者仍缺；Chrome原生控件外观、完整GUI、微信/Google和全新仅CLI电脑等原目标未完成，正式.32未替换。
+
 ## 最新源码检查点：下载退出收尾与622e内核复查（未发布）
 
 `native/cef/BrowserEngine.cpp` 在应用请求关闭时先取消下载，等待实际终态后再关闭来源browser；固定CEF源码明确browser销毁后停止转发回调。`native/CefBrowserEngine.cs` 等Exited和stdout EOF后只发一次worker-exit，Close还等exitDelivered确认最终UI通知已处理。`BrowserHost.cs`允许同一engine/owner的既有下载在会话关闭期间接收终态。没有修改官方扩展、网络错误或下载确认策略。
