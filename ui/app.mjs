@@ -90,7 +90,7 @@ const markdown = (value, websites = false) => {
   return html;
 };
 let sequence = 0;
-const documentRequestId = crypto.randomUUID();
+const documentRequestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("");
 const pending = new Map();
 const isMac = window.qqclaw?.platform === "darwin" || /Macintosh|Mac OS X/.test(navigator.userAgent);
 const nativeBridge = window.qqclaw?.bridge || window.chrome?.webview;

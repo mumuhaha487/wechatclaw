@@ -237,6 +237,10 @@ jobs:
             } catch(error) {window.__findDone=error.message}
           ` + '</script>';
           const findHTML64=Buffer.from(findHTML).toString('base64');
+          const appSource=await fs.readFile(path.join(root,'ui/app.mjs'),'utf8');
+          const requestNamespace=appSource.match(/^const documentRequestId = (.+);$/m)?.[1];
+          if(!requestNamespace)throw new Error('Application request namespace missing');
+          const namespaceProbe64=Buffer.from('JSON.stringify({id:('+requestNamespace+'),secure:isSecureContext,randomUUID:typeof crypto.randomUUID,getRandomValues:typeof crypto.getRandomValues})').toString('base64');
           // Only this temporary verifier replaces main. The shipped .app is unchanged.
           const main = String.raw`
           @main struct VerifyMain {
@@ -264,6 +268,31 @@ jobs:
                       do { _ = try DesktopIntegration.url(["threadId": "https://invalid"]); throw failure("Invalid thread accepted") }
                       catch let error as NSError { guard error.localizedDescription.contains("会话 ID 无效") else { throw error } }
                       print("PASS: Desktop URL encoding and invalid thread rejection")
+                      let schemeRoot = host.data.appendingPathComponent("scheme-check")
+                      try FileManager.default.createDirectory(at: schemeRoot, withIntermediateDirectories: true)
+                      try Data("<!doctype html><title>QQClaw scheme check</title>".utf8).write(to: schemeRoot.appendingPathComponent("index.html"))
+                      let schemeConfig = WKWebViewConfiguration()
+                      schemeConfig.websiteDataStore = WKWebsiteDataStore.nonPersistent()
+                      schemeConfig.setURLSchemeHandler(Resources(root: schemeRoot), forURLScheme: "qqclaw")
+                      let schemeWeb = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: schemeConfig)
+                      schemeWeb.load(URLRequest(url: URL(string: "qqclaw://app/index.html")!))
+                      var schemeReady = false
+                      for _ in 0..<100 {
+                          if (try? await schemeWeb.evaluateJavaScript("document.title")) as? String == "QQClaw scheme check" { schemeReady = true; break }
+                          try await Task.sleep(nanoseconds: 50_000_000)
+                      }
+                      guard schemeReady else { throw failure("Custom app resource scheme did not load") }
+                      let namespaceProbe = String(decoding: Data(base64Encoded: "${namespaceProbe64}")!, as: UTF8.self)
+                      let firstNamespaceText = try await schemeWeb.evaluateJavaScript(namespaceProbe) as! String
+                      let secondNamespaceText = try await schemeWeb.evaluateJavaScript(namespaceProbe) as! String
+                      let firstNamespace = try JSONSerialization.jsonObject(with: Data(firstNamespaceText.utf8)) as! [String: Any]
+                      let secondNamespace = try JSONSerialization.jsonObject(with: Data(secondNamespaceText.utf8)) as! [String: Any]
+                      guard let firstId = firstNamespace["id"] as? String, let secondId = secondNamespace["id"] as? String,
+                            firstId.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil, firstId != secondId,
+                            firstNamespace["getRandomValues"] as? String == "function" else { throw failure("Application request namespace failed in actual custom scheme") }
+                      print("OBSERVED custom-scheme crypto: " + firstNamespaceText)
+                      print("PASS: actual qqclaw resource scheme executes production request namespace with WebKit crypto (component check, not full application GUI)")
+                      schemeWeb.stopLoading()
                       host.web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1000, height: 760))
                       host.web.loadHTMLString("<!doctype html><script>window.__menuReady=true</script>", baseURL: nil)
                       var menuPageReady = false
