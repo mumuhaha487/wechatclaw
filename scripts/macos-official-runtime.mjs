@@ -166,6 +166,17 @@ try {
       if (before !== after) throw new Error("Original native runtime changed while copying: " + relative);
       nativeProof.push({ path: relative, sha256: after, copiedUnchanged: true, signed: true, team: copiedTeam });
     }
+    const diagnostics = [];
+    const evalCode = "let sum=0;for(let i=0;i<1000000;i++)sum+=i;console.log(JSON.stringify({value:42,sum,version:process.version}))";
+    for (const [name, executable] of [["source", path.join(nodeSource, "bin/node")], ["copied", path.join(runtime, "node/bin/node")]]) {
+      const entitlements = await execute("/usr/bin/codesign", ["-d", "--entitlements", ":-", executable]);
+      const linkage = await execute("/usr/bin/otool", ["-L", executable]);
+      let execution;
+      try { const result = await exec(executable, ["-e", evalCode], { timeout: 10000 }); execution = { code: 0, stdout: result.stdout, stderr: result.stderr }; }
+      catch (error) { execution = { code: error.code, signal: error.signal, stdout: error.stdout, stderr: error.stderr }; }
+      diagnostics.push({ name, execution, entitlements: entitlements.stdout + entitlements.stderr, linkage: linkage.stdout });
+    }
+    await json("native-node-diagnostics.json", diagnostics);
     const code = path.join(output, "runtime-code"); await fs.mkdir(code, { recursive: true });
     for (const name of ["installManifest.mjs", "check-native-host-manifest.js", "extension-ids.json"])
       await fs.copyFile(path.join(pluginSource, "scripts", name), path.join(code, name));

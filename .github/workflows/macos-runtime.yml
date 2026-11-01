@@ -69,6 +69,8 @@ jobs:
             if(!imported.content?.some(item=>item.type==='text'&&item.text.includes('function')))throw Error('Official browser client did not import');
             result={passed:true,nodeVersion:version,server:initialized.serverInfo,arithmetic,imported,unexpectedRequests:unexpected,
               scope:'Actual original signed Node/Node REPL and browser-client import after app unmount; no browser connection, model, WeChat or user profile.'};
+          }catch(error){
+            result={passed:false,nodeVersion:version,error:error.message,unexpectedRequests:unexpected};throw error;
           }finally{
             child.stdin.end();let timer;await Promise.race([exited,new Promise(resolve=>timer=setTimeout(resolve,5000))]);clearTimeout(timer);
             try{process.kill(-child.pid,'SIGTERM')}catch{}
@@ -76,6 +78,25 @@ jobs:
             await fs.writeFile(path.join(directory,'runtime-transport.json'),JSON.stringify({...result,exit:exitResult,stderr},null,2));
           }
           console.log('PASS: original packaged Node REPL tool execution and browser-client import; '+version);
+          NODE
+      - name: Preserve native termination diagnostics
+        if: always()
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';import path from 'node:path';import os from 'node:os';
+          import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+          const output=path.join(process.env.RUNNER_TEMP,'qqclaw-mac-official');await fs.mkdir(output,{recursive:true});
+          const reports=[];const folder=path.join(os.homedir(),'Library/Logs/DiagnosticReports');
+          for(const name of await fs.readdir(folder).catch(()=>[])){
+            if(!/^node(?:_|-).*\.ips$/.test(name))continue;
+            const file=path.join(folder,name),stat=await fs.stat(file);if(stat.mtimeMs<Date.now()-300000)continue;
+            const raw=await fs.readFile(file,'utf8'),line=raw.indexOf('\n');
+            try{const value=JSON.parse(raw.slice(line+1));reports.push({file:name,procName:value.procName,procPath:value.procPath,exception:value.exception,termination:value.termination,vmregioninfo:value.vmregioninfo})}catch{}
+          }
+          await fs.writeFile(path.join(output,'native-crash-reasons.json'),JSON.stringify(reports,null,2));
+          const predicate='(process == "amfid" OR process == "kernel" OR process == "taskgated-helper") AND eventMessage CONTAINS[c] "node"';
+          const result=await promisify(execFile)('/usr/bin/log',['show','--last','3m','--style','compact','--predicate',predicate],{maxBuffer:2*1024*1024}).catch(error=>({stdout:'',stderr:error.message}));
+          await fs.writeFile(path.join(output,'native-system-log.txt'),result.stdout+result.stderr);
           NODE
       - uses: actions/upload-artifact@v4
         if: always()
@@ -85,6 +106,7 @@ jobs:
             ${{ runner.temp }}/qqclaw-mac-official/*.json
             ${{ runner.temp }}/qqclaw-mac-official/app-signature.txt
             ${{ runner.temp }}/qqclaw-mac-official/app-main.js
+            ${{ runner.temp }}/qqclaw-mac-official/native-system-log.txt
             ${{ runner.temp }}/qqclaw-mac-official/runtime-code/**
             ${{ runner.temp }}/qqclaw-mac-official/runtime-darwin-*.tar.gz
           if-no-files-found: warn
