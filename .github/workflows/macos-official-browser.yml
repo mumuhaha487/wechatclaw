@@ -1,0 +1,63 @@
+name: Connect original macOS browser extension
+on:
+  workflow_dispatch:
+  push:
+    branches: [work/official-browser-integration]
+    paths:
+      - scripts/check-macos-official-browser.mjs
+      - native/cef/macos/OfficialCheck.mm
+      - .github/workflows/macos-official-browser.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  browser:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: mac-official-runtime-inventory
+          run-id: 41350287636
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/official-runtime
+      - name: Unpack verified original runtime and install standalone CLI
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';import path from 'node:path';import {createHash} from 'node:crypto';
+          const root=path.join(process.env.RUNNER_TEMP,'official-runtime');
+          const archive=await fs.readFile(path.join(root,'runtime-darwin-arm64.tar.gz'));
+          if(createHash('sha256').update(archive).digest('hex')!=='edd36d48a6604f897aa985cfe3a550e5305174325b3cd572378cc371b1e298f5')throw Error('Original runtime archive differs');
+          await fs.mkdir(path.join(root,'runtime'));
+          NODE
+          tar -xzf "$RUNNER_TEMP/official-runtime/runtime-darwin-arm64.tar.gz" -C "$RUNNER_TEMP/official-runtime/runtime"
+          npm install --prefix "$RUNNER_TEMP/official-runtime/cli" --no-audit --no-fund @openai/codex@0.166.0
+      - name: Compile sandboxed CEF Chrome Views component
+        run: node scripts/build-macos-browser.mjs --entry native/cef/macos/OfficialCheck.mm --output "$RUNNER_TEMP/browser-build"
+      - name: Connect original extension through its owned native host
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';import path from 'node:path';import {spawn} from 'node:child_process';
+          const root=path.join(process.env.RUNNER_TEMP,'official-runtime'),found=[];
+          async function visit(folder){for(const item of await fs.readdir(folder,{withFileTypes:true})){const file=path.join(folder,item.name);if(item.isDirectory())await visit(file);else if(item.isFile()&&item.name==='codex'){const data=await fs.readFile(file);if(['cffaedfe','feedfacf','cafebabe','bebafeca'].includes(data.subarray(0,4).toString('hex')))found.push(file)}}}
+          await visit(path.join(root,'cli'));if(found.length!==1)throw Error('Standalone CLI not uniquely identified');
+          const child=spawn(process.execPath,['scripts/check-macos-official-browser.mjs','--output',path.join(process.env.RUNNER_TEMP,'official-browser-proof'),'--runtime',path.join(root,'runtime'),'--cli',found[0],'--build',path.join(process.env.RUNNER_TEMP,'browser-build')],{stdio:'inherit'});
+          const code=await new Promise(resolve=>child.on('exit',resolve));if(code!==0)throw Error('Official browser component check failed');
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-official-browser-evidence
+          path: |
+            ${{ runner.temp }}/official-browser-proof/*.json
+            ${{ runner.temp }}/official-browser-proof/*.log
+            ${{ runner.temp }}/official-browser-proof/profile/cef.log
+            ${{ runner.temp }}/browser-build/mac-browser-build.json
+          if-no-files-found: warn
+          retention-days: 7
