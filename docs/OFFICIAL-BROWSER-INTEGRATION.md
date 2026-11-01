@@ -8,6 +8,8 @@
 
 当前UI另修复刷新后恢复现有原生标签且不覆盖新关闭意图，以及新聊天继承当前服务/模型/思考等级/权限。侧栏入口/拖宽/关闭/上下文为CUA实际前端+App/Store检查，原生层为明确夹具，不能冒充真实EXE、微信、Google、Mac或新电脑。最新代码、候选、失败和局限见[result.md](../result.md)首节。正式.32不变，goal active。
 
+本轮代码9dd3132的Mac云run41311804049成功，43条实际执行检查及79输入规范化匹配、artifact摘要/CRC/UDIF核对通过；这只补充现有WK/AppKit/安装/持久化链路，没有为Mac增加CEF或原版官方扩展支持。用户Mac物理GUI/IME和公证仍未完成。两端新候选均在项目外，正式包未替换。
+
 ## 最新源码检查点：网页区域嵌入与标签同步（未发布）
 
 Windows保持普通Chrome窗口及未修改的官方扩展/签名/沙箱，通过renderer实际边界把网页对齐应用裁切面板。真实故障中两个renderer均保留可见父链，旧最大面积选择选到越界后台矩形；现先以根客户区过滤，再测量并更新布局。CEF固定源码14c5a089e8452874cb1a556dc3fde26ed2d87723的ChromeBrowserHostImpl::OnSetFocus会SelectNumberedTab，现以公共SetFocus在创建栈退出后同步，核对选择/关闭/面板可见性。此非官方toolbar-hide API；权限气泡、焦点、IME、完整GUI与其他DPI仍未验收。
