@@ -131,7 +131,7 @@ private struct BrowserHistoryRecord: Codable {
         let tab = session.active
         session.revision += 1
         return ["owner": session.owner, "revision": session.revision, "reveal": reveal, "activeTab": tab?.id ?? "",
-                "tabs": session.tabs.map { ["id": $0.id, "title": $0.web.title ?? "新标签页", "url": $0.displayURL, "loading": $0.loading] as [String: Any] },
+                "tabs": session.tabs.map { ["id": $0.id, "title": $0.web.title ?? "新标签页", "url": $0.displayURL, "loading": $0.loading, "navigationRevision": String($0.navigationRevision)] as [String: Any] },
                 "url": tab?.displayURL ?? "", "title": tab?.web.title ?? "", "loading": tab?.loading ?? false,
                 "canGoBack": tab?.web.canGoBack ?? false, "canGoForward": tab?.web.canGoForward ?? false, "error": tab?.errorText ?? ""]
     }
@@ -271,6 +271,7 @@ private struct BrowserHistoryRecord: Codable {
     private var operationCompletion: (() -> Void)?
     var operationRevision = 0, queueRevision = 0
     var findRevision = 0
+    var navigationRevision: UInt64 = 0
     var findOpen = false, findCanStep = false
     var findOperation: Task<[String: Any], Never>?
     private var findCompletion: (() -> Void)?
@@ -327,6 +328,9 @@ private struct BrowserHistoryRecord: Codable {
         guard !closed, let navigation, !retiredNavigations.contains(where: { $0 === navigation }) else { return }
         if let awaitedNavigation, awaitedNavigation !== navigation { finishNavigation(.failure(failure("网页已被新的导航替代。"))) }
         currentNavigation = navigation
+        navigationRevision += 1
+        findRevision += 1; findOpen = false; findCanStep = false; findCompletion?()
+        changed()
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard !closed, let navigation, currentNavigation === navigation else { return }
@@ -398,6 +402,7 @@ private struct BrowserHistoryRecord: Codable {
     func find(_ p: [String: Any]) async throws -> [String: Any] {
         let operation = p["operation"] as? String ?? "", query = p["query"] as? String ?? ""
         guard ["search", "next", "previous", "clear"].contains(operation), query.utf16.count <= 512 else { throw failure("网页查找参数无效。") }
+        if p.keys.contains("navigationRevision"), p["navigationRevision"] as? String != String(navigationRevision) { return ["stale": true] }
         if operation == "search" || operation == "clear" { findRevision += 1; findOpen = operation != "clear"; findCanStep = false; findCompletion?() }
         let revision = findRevision, previous = findOperation
         let task = Task { @MainActor () -> [String: Any] in

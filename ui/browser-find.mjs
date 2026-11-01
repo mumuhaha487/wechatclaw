@@ -2,6 +2,12 @@ import { icon } from "./icons.mjs";
 
 const escape = value => String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 
+export function browserFindContext({ data, owner, sessionId, tabId }) {
+  const tab = data?.tabs?.find(item => item.id === tabId);
+  return tab && data.activeTab === tabId && data.url
+    ? { owner, sessionId, tabId, url: data.url, loading: Boolean(data.loading), navigationRevision: tab.navigationRevision } : null;
+}
+
 // This is a user-operated find bar. It never sends page content to a model.
 export class BrowserFind {
   constructor({ context, rpc, layout, changed, focusPage, active = () => true }) {
@@ -9,7 +15,7 @@ export class BrowserFind {
     this.sequence = 0;
     document.addEventListener("input", event => {
       if (event.target.id !== "browser-find-input" || !this.current()) return;
-      this.state.query = event.target.value; this.state.result = null;
+      this.state.query = event.target.value; this.state.result = null; this.state.composing = event.isComposing;
       this.state.error = ""; this.state.pending = true; this.sequence++;
       clearTimeout(this.timer);
       if (!event.isComposing) this.timer = setTimeout(() => this.request("search"), 120);
@@ -17,7 +23,7 @@ export class BrowserFind {
     });
     document.addEventListener("compositionend", event => {
       if (event.target.id !== "browser-find-input" || !this.current()) return;
-      this.state.query = event.target.value; clearTimeout(this.timer);
+      this.state.query = event.target.value; this.state.composing = false; clearTimeout(this.timer);
       this.timer = setTimeout(() => this.request("search"), 120);
     });
     document.addEventListener("click", event => {
@@ -30,9 +36,23 @@ export class BrowserFind {
   }
   current() {
     const context = this.context(), state = this.state;
-    return state && context && state.owner === context.owner && state.tabId === context.tabId && state.url === context.url ? context : null;
+    return state && context && state.owner === context.owner && state.tabId === context.tabId && state.url === context.url && state.navigationRevision === context.navigationRevision ? context : null;
   }
-  sync() { if (this.state && !this.current()) this.close(false); }
+  sync() {
+    const state = this.state, context = this.context();
+    if (!state) return;
+    if (!context || state.owner !== context.owner || state.tabId !== context.tabId || state.url !== context.url) { this.close(false); return; }
+    // A same-URL reload replaces the document even if fast native updates
+    // coalesce away its intermediate loading state. Keep the query, discard
+    // old results, and search the replacement only after loading has ended.
+    if (state.navigationRevision !== context.navigationRevision || context.loading && !state.waitingForLoad) {
+      this.sequence++; clearTimeout(this.timer);
+      state.navigationRevision = context.navigationRevision;
+      state.result = null; state.error = ""; state.pending = Boolean(state.query); state.waitingForLoad = true;
+      this.changed();
+    }
+    if (state.waitingForLoad && !context.loading && !state.composing) { state.waitingForLoad = false; this.request("search"); }
+  }
   open() {
     const context = this.context();
     if (!context?.tabId) return false;
@@ -49,10 +69,10 @@ export class BrowserFind {
     if (!state) return;
     this.state = null; this.sequence++; clearTimeout(this.timer);
     this.layout(); this.changed();
-    this.rpc("browser.find", { sessionId: state.sessionId, tabId: state.tabId, operation: "clear", query: "" }).catch(() => {});
+    this.rpc("browser.find", { sessionId: state.sessionId, tabId: state.tabId, navigationRevision: state.navigationRevision, operation: "clear", query: "" }).catch(() => {});
     if (restore) Promise.resolve(this.focusPage(state)).catch(() => {});
   }
-  canStep() { return Boolean(this.current() && this.state.query && !this.state.error && (this.state.pending || this.state.result?.found)); }
+  canStep() { const context = this.current(); return Boolean(context && !context.loading && !this.state.waitingForLoad && this.state.query && !this.state.error && (this.state.pending || this.state.result?.found)); }
   html() {
     if (!this.current()) return "";
     const state = this.state;
@@ -85,16 +105,17 @@ export class BrowserFind {
     const context = this.current(), state = this.state;
     if (!context || !state) return;
     clearTimeout(this.timer);
+    if (context.loading || state.composing) { this.sequence++; state.waitingForLoad = true; state.result = null; state.error = ""; state.pending = Boolean(state.query); this.changed(); return; }
     const sequence = ++this.sequence, query = state.query;
     state.pending = true; state.error = ""; this.changed();
     try {
-      const result = await this.rpc("browser.find", { sessionId: context.sessionId, tabId: context.tabId, operation, query });
-      if (this.state !== state || !this.current() || sequence !== this.sequence) return;
+      const result = await this.rpc("browser.find", { sessionId: context.sessionId, tabId: context.tabId, navigationRevision: context.navigationRevision, operation, query });
+      if (this.state !== state || !this.current() || this.current().loading || sequence !== this.sequence) return;
       state.pending = false;
       if (result?.stale) { state.result = null; state.error = "网页已变化，请重新查找。"; }
       else state.result = result;
     } catch (error) {
-      if (this.state !== state || !this.current() || sequence !== this.sequence) return;
+      if (this.state !== state || !this.current() || this.current().loading || sequence !== this.sequence) return;
       state.pending = false; state.result = null; state.error = error.message;
     }
     this.changed();

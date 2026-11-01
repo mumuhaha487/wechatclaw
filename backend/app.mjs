@@ -668,7 +668,10 @@ export class App {
         const session = this.getSession(p.sessionId);
         if (!["search", "next", "previous", "clear"].includes(p.operation) || typeof p.query !== "string" || p.query.length > 512)
           throw new Error("网页查找参数无效，最多输入 512 个字符。");
-        return new BrowserViewer({ native: this.native, session }).call("find", { tabId: String(p.tabId || ""), operation: p.operation, query: p.query });
+        if (p.navigationRevision !== undefined && (typeof p.navigationRevision !== "string" || !/^(0|[1-9]\d{0,19})$/.test(p.navigationRevision)))
+          throw new Error("网页导航状态无效，请重新打开查找。");
+        return new BrowserViewer({ native: this.native, session }).call("find", { tabId: String(p.tabId || ""), operation: p.operation, query: p.query,
+          ...(p.navigationRevision === undefined ? {} : { navigationRevision: p.navigationRevision }) });
       }
       case "browser.officialStatus": {
         const installed = await officialBrowserStatus();

@@ -25,7 +25,7 @@ import { ConversationView } from "./conversation-view.mjs";
 import { SessionSearch, MessageFind } from "./message-search.mjs";
 import { BrowserDownloads } from "./browser-downloads.mjs";
 import { BrowserHistory } from "./browser-history.mjs";
-import { BrowserFind } from "./browser-find.mjs";
+import { BrowserFind, browserFindContext } from "./browser-find.mjs";
 import { ComposerModelMenu } from "./composer-model.mjs";
 import { websiteCards, websiteTarget } from "./website-cards.mjs";
 import { approvalFields, approvalContent } from "./approval-forms.mjs";
@@ -219,8 +219,8 @@ const fileFind = new MessageFind({ current: () => {
   view: { closeOutline() {}, reveal() {}, captureReading: rememberDocumentScroll }, changed: findChanged, active: () => findRegion() === "panel" });
 const browserFind = new BrowserFind({ context: () => {
   const tab = panelTabs.selected(panelOwner()), data = browserStates.get(session()?.id);
-  return ui.panel && !ui.page && ui.panelPage === "browser" && tab?.id && data?.activeTab === tab.id && data.url
-    ? { owner: panelOwner(), sessionId: session().id, tabId: tab.id, url: data.url } : null;
+  return ui.panel && !ui.page && ui.panelPage === "browser" && tab?.id
+    ? browserFindContext({ data, owner: panelOwner(), sessionId: session()?.id, tabId: tab.id }) : null;
 }, rpc, layout: refreshBrowserPanel, changed: findChanged, active: () => findRegion() === "panel",
   focusPage: target => target.owner === panelOwner() && target.tabId === panelTabs.selected(panelOwner())?.id ? focusPanelSelection(target.owner, true) : undefined });
 const sessionSearch = new SessionSearch({ sessions: () => state.sessions, select: id => { selectSession(id); exposeConversation(); }, reveal: index => conversationView.reveal(index),

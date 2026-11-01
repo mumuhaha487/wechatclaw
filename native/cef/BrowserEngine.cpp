@@ -67,6 +67,7 @@ struct Page {
   bool findOpen=false, historyLoaded=false;
   int lastFindIdentifier=-1, findFloor=-1, findIdentifier=-1;
   ULONGLONG findStarted=0;
+  uint64_t navigationRevision=0;
 };
 Object<cef_app_t>* app;
 Object<cef_client_t>* client;
@@ -164,6 +165,7 @@ void find(Page& page, const Json& request) {
   auto query=wide(request.value("query",""));
   if((operation!="search" && operation!="next" && operation!="previous" && operation!="clear") || query.size()>512)
     throw std::runtime_error("Invalid page find parameters");
+  if(request.contains("navigationRevision") && request.value("navigationRevision","")!=std::to_string(page.navigationRevision)) {answer(request,{{"stale",true}});return;}
   if(operation=="search" || operation=="clear") page.findOpen=operation!="clear";
   // Chromium removes CR itself. Handle an empty normalized query here: its
   // StartFinding would clear without ever returning a final find callback.
@@ -204,7 +206,7 @@ int browserId(const Json& request) {
 }
 Json state(bool reveal=false) {
   Json tabs=Json::array();
-  for(auto& [key,page]:pages) tabs.push_back({{"id",id(key)},{"title",page.title},{"url",page.url},{"loading",page.loading}});
+  for(auto& [key,page]:pages) tabs.push_back({{"id",id(key)},{"title",page.title},{"url",page.url},{"loading",page.loading},{"navigationRevision",std::to_string(page.navigationRevision)}});
   Page* page=pages.count(active)?&pages.at(active):nullptr;
   RECT bounds{}; if(surface) GetClientRect(surface,&bounds);
   std::set<HWND> windows;size_t attached=0;
@@ -421,7 +423,7 @@ int CEF_CALLBACK beforeBrowse(cef_request_handler_t*,cef_browser_t* browser,cef_
   auto* raw=request->get_url(request);bool permitted=false;
   try {permitted=allowed(utf8(raw));}catch(...){}
   API(cef_string_userfree_utf16_free)(raw);
-  if(permitted && frame->is_main(frame)) {auto page=pages.find(browser->get_identifier(browser));if(page!=pages.end()){stopFind(page->second);page->second.findOpen=false;page->second.historyLoaded=false;}}
+  if(permitted && frame->is_main(frame)) {auto page=pages.find(browser->get_identifier(browser));if(page!=pages.end()){stopFind(page->second);page->second.findOpen=false;page->second.historyLoaded=false;page->second.loading=true;page->second.navigationRevision++;}publish();}
   if(!permitted && frame->is_main(frame)) {auto page=pages.find(browser->get_identifier(browser));if(page!=pages.end()) page->second.error="This URL is not available in this browser surface";publish();}
   release(request);release(frame);release(browser);return permitted?0:1;
 }

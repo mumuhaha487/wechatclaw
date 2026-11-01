@@ -367,7 +367,7 @@ jobs:
                       func control(_ action: String, _ values: [String: Any] = [:]) async throws -> Any {
                           try await browser.handle(values.merging(["action": action, "owner": owner, "profile": String(repeating: "a", count: 32)]) { _, value in value })
                       }
-                      let page = try await control("open", ["url": fixture]) as! [String: Any]
+                      var page = try await control("open", ["url": fixture]) as! [String: Any]
                       let focusTab = browser.sessions[owner]!.active!
                       guard browser.focus(owner: owner, tabId: focusTab.id), let focusedPage = browserWindow.firstResponder as? NSView,
                             focusedPage === focusTab.web || focusedPage.isDescendant(of: focusTab.web) else { throw failure("Native page did not receive window focus") }
@@ -399,6 +399,21 @@ jobs:
                       do { _ = try await control("find", ["tabId":"missing","operation":"search","query":"alpha"]); throw failure("Find accepted invalid tab") }
                       catch let error as NSError { guard error.localizedDescription.contains("已关闭") else { throw error } }
                       print("PASS: real WKWebView find true/false, inline/Unicode/literal text, directions, honest unavailable counts, clear, invalid tab and focused AppKit dispatch (component verification)")
+                      let previousNavigation = String(focusTab.navigationRevision), previousURL = focusTab.url
+                      _ = try await control("reload", ["tabId":focusTab.id])
+                      guard String(focusTab.navigationRevision) != previousNavigation, focusTab.url == previousURL,
+                            !focusTab.findOpen, !focusTab.findCanStep else { throw failure("WK same-URL reload did not reset native find generation/state") }
+                      let navigationState = try await control("state") as! [String: Any]
+                      guard let generationTabs = navigationState["tabs"] as? [[String: Any]],
+                            generationTabs.first(where: { $0["id"] as? String == focusTab.id })?["navigationRevision"] as? String == String(focusTab.navigationRevision) else { throw failure("WK native navigation revision missing from frontend state") }
+                      let refreshedMatch = try await control("find", ["tabId":focusTab.id,"operation":"search","query":"alpha beta","navigationRevision":String(focusTab.navigationRevision)]) as! [String: Any]
+                      guard refreshedMatch["found"] as? Bool == true else { throw failure("WK current-document search did not work after reload") }
+                      for operation in ["search","next","clear"] {
+                          let stale = try await control("find", ["tabId":focusTab.id,"operation":operation,"query":"alpha beta","navigationRevision":previousNavigation]) as! [String: Any]
+                          guard stale["stale"] as? Bool == true, focusTab.findCanStep else { throw failure("WK late request from previous navigation changed current find state") }
+                      }
+                      page = try await control("snapshot") as! [String: Any]
+                      print("PASS: actual WK same-URL reload advances frontend navigation revision, resets find and rejects stale search/next/clear without disturbing the new document")
                       _ = try await control("newTab"); _ = try await control("open", ["url":fixture])
                       let retiringTab = browser.sessions[owner]!.active!, findCloseStart = Date()
                       let retiringFind = Task { @MainActor in try await retiringTab.find(["operation":"search","query":"alpha beta"]) }

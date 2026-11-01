@@ -224,7 +224,7 @@ internal sealed class BrowserHost {
     private object State(BrowserSession s, bool reveal) {
         var tab = s.Active;
         var cef = s.Cef == null ? null : s.Cef.State;
-        var all = s.Tabs.Select(t => (object)new { id = t.Id, title = t.Title, url = t.DisplayUrl, loading = t.Loading }).ToList();
+        var all = s.Tabs.Select(t => (object)new { id = t.Id, title = t.Title, url = t.DisplayUrl, loading = t.Loading, navigationRevision = t.NavigationId.ToString(System.Globalization.CultureInfo.InvariantCulture) }).ToList();
         all.AddRange(CefTabs(s));
         if (s.CefSelected && cef != null) {
             return new { owner = s.Owner, revision = ++s.Revision, reveal = reveal, activeTab = Value(cef, "activeTab"), tabs = all.ToArray(),
@@ -509,6 +509,10 @@ internal sealed class BrowserTab {
         Web.CoreWebView2.Settings.IsStatusBarEnabled = false;
         Web.CoreWebView2.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e) {
             NavigationId = e.NavigationId;
+            findRevision++; findOpen = false; findQuery = "";
+            findInterrupted.TrySetResult(true);
+            findInterrupted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (findSession != null) findSession.Stop();
             if (e.Uri != "about:blank" && !BrowserHost.Allowed(e.Uri)) { e.Cancel = true; Error = "已阻止不支持的链接。"; }
             else { Loading = true; requestedUrl = e.Uri == "about:blank" ? "" : e.Uri; Error = ""; downloadNavigation = false; }
             changed();
@@ -615,6 +619,7 @@ internal sealed class BrowserTab {
     internal async Task<object> Find(Dictionary<string, object> p) {
         string operation = BrowserHost.Value(p, "operation"), query = BrowserHost.Value(p, "query");
         if (!new [] { "search", "next", "previous", "clear" }.Contains(operation) || query.Length > 512) throw new Exception("网页查找参数无效。");
+        if (p.ContainsKey("navigationRevision") && BrowserHost.Value(p,"navigationRevision") != NavigationId.ToString(System.Globalization.CultureInfo.InvariantCulture)) return new { stale = true };
         if (operation == "search" || operation == "clear") {
             findRevision++; findInterrupted.TrySetResult(true);
             findInterrupted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
