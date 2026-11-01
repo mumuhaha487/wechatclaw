@@ -104,7 +104,11 @@ try {
   const call = async (name, code) => {
     const value = await request("tools/call", { name: "js", arguments: { code, timeout_ms: 30000 },
       _meta: { "x-codex-turn-metadata": { session_id: task.sessionId, turn_id: task.turnId, thread_source: "qqclaw_integration_check" } } });
-    await write(name + ".json", value); if (value.isError) throw Error("Official runtime: " + JSON.stringify(value)); return value;
+    await write(name + ".json", value);
+    const trace = value._meta?.["codex/nodeReplTrace"];
+    if (trace?.kind === "file" && typeof trace.path === "string" && trace.path.startsWith(path.join(output, "codex/node_repl/debug/") ))
+      await write(name + "-trace.json", JSON.parse(await fs.readFile(trace.path, "utf8")));
+    if (value.isError) throw Error("Official runtime: " + JSON.stringify(value)); return value;
   };
   const client = pathToFileURL(path.join(runtime, manifest.paths.browserClientPath)).href;
   await call("runtime-environment", 'nodeRepl.write({backendPaths:nodeRepl.env?.BROWSER_USE_BACKEND_PATHS,backends:nodeRepl.env?.BROWSER_USE_AVAILABLE_BACKENDS,surfaces:nodeRepl.env?.CUA_REPL_ENABLED_SURFACES})');
