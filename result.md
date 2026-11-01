@@ -10,7 +10,9 @@
 
 只读官方扩展源码发现Blob需blobDownloadsSupported===true及setBlobDownloadOrigin/完成事件契约；尚未取得当前宿主能力字段的确切返回，不能从函数存在推定已支持。公开[OpenAI官方说明](https://learn.chatgpt.com/docs/chrome-extension)仅确认扩展管理下载和站点确认，不证明Blob API。此次开发聊天的文档搜索不作为产品Google结果验收。证据为项目外blob-stage-ea15e9a440f5494fa04bc949999506d6/、official-special-2068b991f1464323a812921cbabf41d8/与official-special-d452e9373199408e8cc84b649409280d/。两个模型组件均root/backend正常退出0，未向原微信账号发测试。
 
-候选构建和最终摘要随后补充。原始目标继续active，正式程序不停止或替换；完整GUI/真实微信/Google结果、Mac官方扩展、仅CLI新电脑引导、特殊下载等缺口不缩减。
+0.3.33候选准备完成：Windows 6370816bytes，SHA256 `18388F4D4ACECA97D1213042D11783CA7A110EAA90C05A0906A883CD3D0C27D5`；反射版本0.3.33，59语法/79源码/21payload及可信资源核对通过。Mac代码提交`c3b608c4598cdb44c40826b98887d2570b86d9fb`的[云运行41320446527](https://github.com/mumuhaha487/wechatclaw/actions/runs/41320446527)成功，44条实际PASS；artifact13089630866 ZIP摘要`e3b0922e7177e78a2b63838b491942d77f5688d21c31942eb4049f77539f628d`与GitHub一致，CRC/UDIF通过。DMG 885211bytes，SHA256`f53af38e3f3d52d101532af0f7c44f6ddbed9d9fcaff0e84552ecbdf05f41dd8`。80项产品源码/workflow与该云提交按LF规范化一致。
+
+已在指定仓库创建[0.3.33草稿候选](https://github.com/mumuhaha487/wechatclaw/releases/tag/untagged-68c734caeb924c966bdd)，draft=true、prerelease=true，只有QQClaw.exe和QQClaw.dmg两份资产；上传后的大小与摘要逐一核对。草稿未公开发布。正式95560继续运行，项目release仍只有原正式0.3.32 EXE/DMG且摘要不变。Blob两轮模型组件及其确切CEF/helper PID复查无遗留，3个临时浏览器页已关闭。当前候选可交给用户检查；完整要求仍未全部通过，不能标记goal完成。原始目标继续active，正式程序不停止或替换；完整GUI/真实微信/Google结果、Mac官方扩展、仅CLI新电脑引导、特殊下载等缺口不缩减。
 
 ## 前一源码检查点：整页刷新接续组件安装（未发布）
 
