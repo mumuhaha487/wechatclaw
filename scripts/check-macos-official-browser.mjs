@@ -228,7 +228,8 @@ try {
   await call("tab-input", 'var axState=await tab.ax.get("state",{disableDiffing:true}); nodeRepl.write(axState); var inputMatch=axState.match(/^\\s*(\\d+)\\s+text field \\(settable\\) Verification input\\b/m); if(!inputMatch) throw Error("The actual AX state did not expose the fixture input"); await tab.ax.typeText(Number(inputMatch[1]),' + JSON.stringify(entered) + '); await tab.ax.write(); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
   for (let retry = 0; retry < 20 && !observations.includes(entered); retry++) await delay(100);
   if (!observations.includes(entered)) throw Error("The real local page did not receive the expected input event");
-  await call("tab-close", 'var closedTabId=tab.id; await tab.close(); var remainingTabs=await browser.tabs.list(); if(remainingTabs.some(item=>item.id===closedTabId)) throw Error("The original extension still lists the closed tab"); nodeRepl.write("QQCLAW_CLOSED="+JSON.stringify({closedTabId,remainingTabs}))');
+  await call("tab-close", 'var closedTabId=tab.id; await tab.close(); nodeRepl.write("Close requested for "+closedTabId)');
+  await call("tab-closed-state", 'var remainingTabs=await browser.tabs.list(); if(remainingTabs.some(item=>item.id===closedTabId)) throw Error("The original extension still lists the closed tab after its close request completed"); nodeRepl.write("QQCLAW_CLOSED="+JSON.stringify({closedTabId,remainingTabs}))');
   const schemaFolder = path.join(output, "api-types");
   try {
     await exec(cli, ["app-server", "generate-ts", "--experimental", "--out", schemaFolder], { env, timeout: 20000, maxBuffer: 1024 * 1024 });
