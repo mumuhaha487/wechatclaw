@@ -140,7 +140,7 @@ const ui = {
   sidebar: viewStorage.getItem("sidebar-open") !== "false",
   panelMax: viewStorage.getItem("panel-maximized") === "true",
   browserHidden: new Set(),
-  projectLimits: new Map(),
+  projectMore: new Set(),
   detailStates: new Map(),
   expanded: new Set(),
   draft: "",
@@ -546,9 +546,10 @@ function sidebar() {
       "row-more",
     ) +
     "</div>";
+  const recentFirst = (a, b) => (Date.parse(b.updatedAt || b.createdAt) || 0) - (Date.parse(a.updatedAt || a.createdAt) || 0);
   const general = state.sessions.filter(
     (s) => !state.projects.some((p) => sameWorkspace(p.workspace, s.workspace)),
-  );
+  ).sort(recentFirst);
   return (
     '<aside class="sidebar' +
     (ui.sidebar ? "" : " collapsed") +
@@ -575,7 +576,11 @@ function sidebar() {
             const open = ui.expanded.has(p.id),
               children = state.sessions.filter(
                 (s) => sameWorkspace(s.workspace, p.workspace),
-              );
+              ).sort(recentFirst),
+              expanded = ui.projectMore.has(p.id),
+              visible = children.slice(0, expanded ? children.length : 5);
+            const current = children.find(s => s.id === ui.active);
+            if (current && !visible.includes(current)) visible[visible.length - 1] = current;
             return (
               '<div class="project-row' +
               (open ? " open" : "") +
@@ -605,10 +610,9 @@ function sidebar() {
               ib("project-menu", "项目菜单", "more", 'data-id="' + p.id + '"') +
               "</div></div>" +
               (open
-                ? children
-                    .slice(0, ui.projectLimits.get(p.id) || 20)
+                ? visible
                     .map((s) => sessionRow(s, true))
-                    .join("") + (children.length > (ui.projectLimits.get(p.id) || 20) ? `<button class="show-more-sessions" data-action="project-show-more" data-id="${esc(p.id)}">展开显示 ${children.length - (ui.projectLimits.get(p.id) || 20)} 个会话${icon("down")}</button>` : "")
+                    .join("") + (children.length > 5 ? `<button class="show-more-sessions${expanded ? " expanded" : ""}" data-action="project-show-more" data-id="${esc(p.id)}" aria-expanded="${expanded}">${expanded ? "收起" : "展开显示"}${icon("down")}</button>` : "")
                 : "")
             );
           })
@@ -779,16 +783,13 @@ function workspace() {
     '</button>' +
     (s?.messages.length ? '</h1>' : '</span>') +
     '</div><div class="top-actions">' +
-    button("open-browser-window", "内置浏览器", "browser", "outline desktop-continue", `title="打开内置浏览器" aria-label="打开内置浏览器"`) +
     (ui.sidebar ? "" : '<div class="top-capsule">' +
     ib("new-session", "新建会话", "new") +
     ib("search", "搜索会话", "search") +
     "</div>") +
     ib("session-menu", "会话菜单", "more", `data-id="${esc(s?.id || "")}" ${s ? "" : "disabled"}`) +
     ib("conversation-outline", "会话目录", "outline", `aria-haspopup="dialog" aria-expanded="false" ${s?.messages.some(m => m.role === "user") ? "" : "disabled"}`) +
-    ib("panel-new", "新建面板", "plus") +
-    ib("maximize-panel", "展开工作面板", "expand") +
-    ib("toggle-panel", "显示或隐藏工作面板", "panel") +
+    (ui.panel ? "" : `<button class="icon-button panel-toggle" data-action="toggle-panel" aria-label="显示工作面板" title="显示工作面板${panelTabs.group(panelOwner()).tabs.length ? `（${panelTabs.group(panelOwner()).tabs.length} 个标签）` : ""}">${icon("panel")}${panelTabs.group(panelOwner()).tabs.length ? `<span class="panel-tab-count">${panelTabs.group(panelOwner()).tabs.length}</span>` : ""}</button>`) +
     "</div>" +
     "</header>" +
     (missing
@@ -2301,7 +2302,7 @@ async function action(name, element) {
       if (ui.panel && (ui.reviewTarget || ui.panelPage === "files") && !ui.panelData && !ui.panelLoading) return loadPanel();
       return;
     case "project-show-more":
-      ui.projectLimits.set(id, (ui.projectLimits.get(id) || 20) + 20);
+      ui.projectMore.has(id) ? ui.projectMore.delete(id) : ui.projectMore.add(id);
       return render();
     case "add-project":
       return addProject();

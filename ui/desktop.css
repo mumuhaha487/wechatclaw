@@ -445,6 +445,9 @@ select:focus-visible {
   width: 28px;
   height: 28px;
 }
+.top-actions > .panel-toggle { position: relative; }
+.panel-tab-count { position: absolute; right: 1px; bottom: 0; min-width: 12px; padding: 0 2px; border-radius: 3px; background: var(--page); color: var(--muted); font-size: 9px; line-height: 12px; text-align: center; }
+.show-more-sessions.expanded > .icon { transform: rotate(180deg); }
 .window-buttons {
   height: 46px;
   margin-left: 10px;
@@ -789,10 +792,10 @@ select:focus-visible {
 }
 .composer {
   border: 1px solid var(--line);
-  border-radius: var(--radius-surface);
+  border-radius: 18px;
   padding: 12px 0 0;
   max-width: none;
-  box-shadow: var(--shadow);
+  box-shadow: 0 2px 12px #0000000a;
   background: var(--input);
 }
 .composer:focus-within {
