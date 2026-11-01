@@ -18,28 +18,86 @@ internal static class CefBrowserInstaller {
     static Task<object> installation;
     static CancellationTokenSource cancellation;
     static bool committing;
+    static string operationId, operationState;
+    static long operationRevision;
+    static object latestProgress;
+    static InstallOutcome latestResult;
+    static string latestError;
+    static bool cancelling;
+    static Action<object> notification;
+    sealed class InstallOutcome {
+        public bool installed { get; set; }
+        public bool cancelled { get; set; }
+        public string message { get; set; }
+    }
+    // The native process owns this snapshot. A new WebView document can recover
+    // the same operation even after its original RPC response has been lost.
+    static object Snapshot() {
+        return operationId == null ? null : new { id = operationId, revision = operationRevision, state = operationState, progress = latestProgress, result = latestResult, error = latestError, cancelling = cancelling };
+    }
+    static object OperationStatus() { lock (gate) return Snapshot(); }
+    static void Notify(Action<object> callback, object value) { try { if (callback != null) callback(value); } catch { } }
+    static void Finish(string id, string state, InstallOutcome result, string error, Action<object> callback) {
+        object snapshot;
+        lock (gate) {
+            if (operationId != id) return;
+            operationState = state; latestResult = result; latestError = error; cancelling = false;
+            latestProgress = new { phase = state, message = result == null ? error : result.message, canCancel = false };
+            operationRevision++; snapshot = Snapshot();
+        }
+        Notify(callback, snapshot);
+    }
     static readonly string[] required = { "icudtl.dat", "resources.pak", "chrome_100_percent.pak", "chrome_200_percent.pak", "v8_context_snapshot.bin", "d3dcompiler_47.dll", "dxcompiler.dll", "dxil.dll", "locales/en-US.pak", "locales/zh-CN.pak" };
     internal static async Task<object> Status() {
         return await Task.Run<object>(delegate {
             CefEngineFiles files;
             try { files = CefBrowserRuntime.RequireFiles(); }
-            catch { return new { packaged = false, installed = false, needsRepair = false, reason = "当前版本未包含浏览器组件，请更新应用。" }; }
-            try { using (files.AcquireLease(false)) { VerifyRuntime(files); } return new { packaged = true, installed = true, needsRepair = false, reason = "浏览器组件已安装并通过校验。官方扩展需要另外安装和连接。" }; }
-            catch { bool exists = Directory.Exists(files.Directory); return new { packaged = true, installed = false, needsRepair = exists, reason = exists ? "浏览器组件未通过校验，请修复后重试。" : "尚未安装浏览器组件，下载约 132 MiB。" }; }
+            catch { return new { packaged = false, installed = false, needsRepair = false, reason = "当前版本未包含浏览器组件，请更新应用。", operation = OperationStatus() }; }
+            lock (gate) {
+                if (operationState == "running") return new { packaged = true, installed = false, needsRepair = false, reason = "浏览器组件安装正在进行。", operation = Snapshot() };
+            }
+            try { using (files.AcquireLease(false)) { VerifyRuntime(files); } return new { packaged = true, installed = true, needsRepair = false, reason = "浏览器组件已安装并通过校验。官方扩展需要另外安装和连接。", operation = OperationStatus() }; }
+            catch { bool exists = Directory.Exists(files.Directory); return new { packaged = true, installed = false, needsRepair = exists, reason = exists ? "浏览器组件未通过校验，请修复后重试。" : "尚未安装浏览器组件，下载约 132 MiB。", operation = OperationStatus() }; }
         });
     }
     internal static Task<object> Install(string payloadDirectory, Action<object> progress, Action<Process> attach, string verifiedArchive = null) {
         lock (gate) {
             if (installation != null && !installation.IsCompleted) return installation;
             if (cancellation != null) cancellation.Dispose();
-            cancellation = new CancellationTokenSource(); committing = false;
+            cancellation = new CancellationTokenSource(); committing = false; cancelling = false;
+            string id = operationId = Guid.NewGuid().ToString("N");
+            operationState = "running"; latestResult = null; latestError = null;
+            latestProgress = new { phase = "prepare", message = "正在准备浏览器组件…", canCancel = true };
+            operationRevision++; notification = progress;
             var token = cancellation.Token;
-            Action<object> report = value => { try { if (progress != null) progress(value); } catch { } };
-            installation = Task.Run<object>(() => InstallCore(payloadDirectory, report, attach ?? delegate { }, token, verifiedArchive));
+            Action<object> report = value => {
+                object snapshot;
+                lock (gate) { if (operationId != id) return; latestProgress = value; operationRevision++; snapshot = Snapshot(); }
+                Notify(progress, snapshot);
+            };
+            installation = Task.Run<object>(delegate {
+                report(new { phase = "prepare", message = "正在准备浏览器组件…", canCancel = true });
+                try {
+                    var result = InstallCore(payloadDirectory, report, attach ?? delegate { }, token, verifiedArchive);
+                    Finish(id, result.cancelled ? "cancelled" : "succeeded", result, null, progress);
+                    return result;
+                } catch (Exception error) {
+                    Finish(id, "failed", null, error.Message, progress);
+                    throw;
+                }
+            });
             return installation;
         }
     }
-    internal static bool Cancel() { lock (gate) { if (installation == null || installation.IsCompleted || committing) return false; cancellation.Cancel(); return true; } }
+    internal static bool Cancel() {
+        object snapshot; Action<object> callback;
+        lock (gate) {
+            if (installation == null || installation.IsCompleted || operationState != "running" || committing || cancelling) return false;
+            cancelling = true; cancellation.Cancel(); operationRevision++;
+            snapshot = Snapshot(); callback = notification;
+        }
+        Notify(callback, snapshot); return true;
+    }
     internal static async Task Shutdown() {
         Cancel(); Task<object> pending; lock (gate) pending = installation;
         if (pending != null) { try { await pending; } catch { } }
@@ -94,14 +152,14 @@ internal static class CefBrowserInstaller {
         foreach (var id in new [] { "S-1-15-2-1", "S-1-15-2-2" }) security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(id), FileSystemRights.ReadAndExecute | FileSystemRights.Synchronize, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
         Directory.SetAccessControl(directory, security);
     }
-    static object InstallCore(string payloadDirectory, Action<object> progress, Action<Process> attach, CancellationToken token, string verifiedArchive) {
+    static InstallOutcome InstallCore(string payloadDirectory, Action<object> progress, Action<Process> attach, CancellationToken token, string verifiedArchive) {
         var files = CefBrowserRuntime.RequireFiles();
         string target = Path.GetDirectoryName(files.Directory), root = Path.GetDirectoryName(target), stage = Path.Combine(root, ".install-" + Guid.NewGuid().ToString("N")), backup = Path.Combine(root, ".previous-" + Guid.NewGuid().ToString("N"));
         string partial = null; bool moved = false, installed = false, committed = false;
         Directory.CreateDirectory(root);
         using (files.AcquireLease(true)) {
             try {
-                try { VerifyRuntime(files); return new { installed = true, message = "浏览器组件已通过校验。" }; } catch { }
+                try { VerifyRuntime(files); return new InstallOutcome { installed = true, message = "浏览器组件已通过校验。" }; } catch { }
                 progress(new { phase = "prepare", message = "正在准备浏览器组件…", canCancel = true });
                 string archive = verifiedArchive;
                 if (archive == null) {
@@ -132,8 +190,8 @@ internal static class CefBrowserInstaller {
                 progress(new { phase = "commit", message = "正在完成安装…", canCancel = false });
                 if (Directory.Exists(target)) { Directory.Move(target, backup); moved = true; }
                 Directory.Move(stage, target); installed = true; VerifyRuntime(files); committed = true;
-                return new { installed = true, message = "浏览器组件安装成功。请通过官方入口安装扩展，再开始浏览任务。" };
-            } catch (OperationCanceledException) { return new { installed = false, cancelled = true, message = "已取消安装，原有组件已保留。" }; }
+                return new InstallOutcome { installed = true, message = "浏览器组件安装成功。请通过官方入口安装扩展，再开始浏览任务。" };
+            } catch (OperationCanceledException) { return new InstallOutcome { installed = false, cancelled = true, message = "已取消安装，原有组件已保留。" }; }
             catch {
                 if (installed && Directory.Exists(target)) DeleteTemporary(root, target);
                 if (moved && Directory.Exists(backup)) { Directory.Move(backup, target); moved = false; }

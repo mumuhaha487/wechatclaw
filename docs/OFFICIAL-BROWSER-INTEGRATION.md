@@ -1,6 +1,10 @@
 # 官方 ChatGPT 扩展接入调查
 
-## 最新检查点：官方焦点模拟与新UI恢复（未发布）
+## 最新检查点：组件安装整页刷新恢复（未发布）
+
+本轮只修改原生安装任务快照、UI恢复/终态与按文档隔离的RPC编号；不修改官方扩展、浏览器驱动、授权或沙箱。CUA实际前端与实际C#安装器验证刷新后恢复同一任务、取消、来源校验失败刷新保留、正常修复刷新后成功；9项JS竞争/实际RPC源码检查通过。它们不是本轮真实模型浏览、完整EXE GUI或Mac官方扩展检查。候选与证据范围见[result.md](../result.md)最新节，正式.32不变，goal active。
+
+## 前一检查点：官方焦点模拟与新UI恢复（未发布）
 
 不能用document.visibilityState单独判断原版官方工具连接后哪个标签在物理前台。实际隐藏/可见Form两轮都观察到A/B报告visible。只读原版browser-service.mjs（SHA256 1AF22149F394099EBF6C3D8AED8814A9362DDA4C0BB2369EF0C37AAF239A7696）确认attachTab→enableFocusEmulation→Emulation.setFocusEmulationEnabled(true)；固定Chromium154.0.8037.98的content/browser/devtools/protocol/emulation_handler.cc使用IncrementCapturerCount(stay_hidden=false)，content/public/browser/web_contents.h:923明确这种模式始终告知renderer可见。未修改/禁用该原版行为，未独立发送CDP；证据及固定公开源码在项目外official-visibility-source-evidence.json。保留原误报，不将更正当成物理GUI成功。
 
