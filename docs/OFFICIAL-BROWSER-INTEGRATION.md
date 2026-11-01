@@ -1,6 +1,18 @@
 # 官方 ChatGPT 扩展接入调查
 
-## 最新源码检查点：按需安装与使用中保护（未发布）
+## 最新源码检查点：查找、首次标签与冷启动证据（未发布）
+
+`native/cef/BrowserEngine.cpp` 已增加真实 FindHandler、每页串行请求及 Chromium 回调编号匹配、最终计数/位置、导航/关闭/清空时 stale 结算、512 UTF-16与64项队列边界和手动查找10秒无响应错误。该错误不会暂停Codex长任务、重发请求或重启浏览器。实际发现原 ready 在首标签创建前发出并使 prepareOfficial 返回空tabId，现改为首标签创建/状态发布后报告ready。`native/CefBrowserEngine.cs` 显式UTF-8读取原生输出。
+
+最终证据在 `qqclaw-cef-contract-20261101/find-stage-6cf690b891ab46e78091bf1221afa9dd/probe-b540fef4614c44b0a7d4f58d4d961b04`：产品安装器产出新bundle `36ffd1afc048e197f1f545f79bbbf905`，19项真实BrowserHost/CEF检查通过；CUA实际前端查找栏接同一内核验证英文/中文计数、前后/Enter/Shift+Enter、未找到禁用、Esc/叉号及重开。仍为隐藏Form组件，不能称正式全GUI或原生网页可信按键通过。119项旧回归、59语法检查、当前候选资源与79源码核对通过，见result.md最新节。候选6097920 bytes，SHA256 `7A16EA1611D1B27D5786BA7799A8DA732C7E316EB30B00A70F21665950B64F13`，未发布。
+
+此前 `cold-google-fe536aeee375440fb540b6fde503d0f9` 证明当时安装所得旧bundle可在没有手动准备操作时，经一次prepare、9次官方Node REPL，自动创建标签并提交真实Google查询。Google的 `/sorry/index` unusual traffic 拦截使结果未取得，**Google验收失败**；未解验证码、未用其他驱动/搜索/HTTP/CDP替代。该运行早于本次查找/ready/UTF-8修订，根/worker/native host及直接子进程退出已核对。
+
+最终代码又在 `cold-local-f52fd5db4f874920897b4b7748c48909` 完成一次无手动准备的真实模型自动冷启动：新bundle、gpt-6.1-sol/xhigh、11次官方Node REPL、一次prepare及一次本机站点确认。真实新建/读取/关闭标签并确认removed=true，0夹具Responses/独立搜索/shell，正式helper核对147088→145708→148336；当前源码快照一致，全部组件正常退出且无确切PID/直接子进程遗留。本机页成功不能扩大为Google/正式GUI/微信/Mac，见同目录verification.json与result.md。
+
+仍缺CEF控件外观、原生快捷键、下载/历史、完整GUI/微信/Google结果/Mac、仅CLI新电脑官方组件引导、整页重载安装接续与全部参考主页操作。保留普通窗口以满足原版扩展，不能直接改为Views/popup隐藏工具栏后宣称完成。失败和验收范围详见result.md；正式.32成品未替换，整体目标active。
+
+## 前一源码检查点：按需安装与使用中保护（未发布）
 
 Windows源码已增加CefBrowserInstaller及设置入口，下载固定官方CEF档，校验后暂存、验证、提交；支持取消与修复，不覆盖持共享lease的运行worker。CefBrowserEngine仅在真实退出或未创建进程的启动失败后释放lease；Program接原生状态/安装/取消、进度、job及退出收尾。组件与官方扩展连接分别显示，已安装不会变成已连接。
 

@@ -2,7 +2,45 @@
 
 更新时间：2026-11-01。正式 Windows EXE 与 Mac 唯一安装包为 **0.3.32**，Windows 已替换并启动。**未发布源码已将 CEF 接到实际 BrowserHost、正式 helper 和可选打包流程，真实配置模型已通过原版官方扩展新建、读取、关闭检查页。** 这仍是隐藏原生 Form 的组件检查，不能当作正式 EXE GUI、微信、Google、全新电脑或 Mac 验收。原始目标保持 active；下方旧检查点中的“尚未接线”等描述只表示各阶段当时状态。
 
-## 最新源码检查点：浏览器组件按需安装、取消与修复（未发布）
+## 最新源码检查点：原生网页查找与首次标签就绪（未发布）
+
+正式成品仍是已启动的 0.3.32；本节代码仅在项目外候选中，未替换正式 EXE/DMG。当前改动位于 `native/cef/BrowserEngine.cpp` 和 `native/CefBrowserEngine.cs`，没有更换官方 ChatGPT 扩展、后台模型或微信传输逻辑。
+
+| 修复 | 实现与原因 |
+| --- | --- |
+| CEF 网页查找缺失 | 接入固定 CEF 154 的 FindHandler，将 `browser.find` 的 search/next/previous/clear 对应到真实页面查找；返回实际总数与从 1 开始的位置，没有匹配时为 0/null |
+| 连续请求与迟到结果 | 每页一次仅发一个原生请求，其余按序处理；依据实际回调的 Chromium identifier 区分结果，不将管道编号冒充原生编号；新搜索、清空、主页面导航、关闭与退出结算旧请求为 stale |
+| 无响应页面 | 原生单次查找 10 秒未返回最终结果时明确报错并清空本页查找队列；不杀浏览器、不重试原动作、不暂停或限制 Codex 长任务；仅影响手动网页查找 |
+| 空查询与边界 | 限制 512 个 UTF-16 单位，去除 Chromium 自身也会去除的 CR；空查询立即清空，避免等待不会出现的原生回调；单页队列最多 64 项 |
+| 首次标签未创建就报告就绪 | 实际检查发现 prepareOfficial 会返回空 tabId，随后请求可能落到旧手动浏览器；现在先完成首个真实标签创建并发布状态，再发 ready，不用延时或自动重试掩盖竞态 |
+| 原生 UTF-8 输出 | C# 明确以 UTF-8 读取新 worker 的 stdout/stderr，避免中文网页标题、网址等被系统默认编码破坏 |
+
+固定版本实现依据包括本机保存的 `browser_host_base.cc`、`browser_contents_delegate.cc` 与 Chromium 154.0.8037.98 的 `components/find_in_page/find_tab_helper.cc`。CEF 的 findNext 在此版本传递为 Chromium 的 find_match；新会话以 true 才会同时选择匹配。结果等待 finalUpdate，未用猜测的计数或截图静态文字代替。
+
+### 实际检查、证据与候选
+
+证据根为 `C:/Users/admin/AppData/Local/Temp/qqclaw-cef-contract-20261101/`。最终原生与前端检查目录为 `find-stage-6cf690b891ab46e78091bf1221afa9dd/probe-b540fef4614c44b0a7d4f58d4d961b04`。
+
+- 19 项实际原生检查通过：使用产品安装器安装本次摘要对应 bundle `36ffd1afc048e197f1f545f79bbbf905`，未手动拼装运行目录；实际 BrowserHost/C# 管道/CEF 完成可见匹配计数、大小写、首个匹配、前后循环、中文、未找到、CR 清空、9 次并发 next、快速换词、512/513 边界、双标签隔离、其他会话拒绝、导航与关闭结算。受控页面阻塞 renderer 12.5 秒时查找明确超时，恢复后同一 worker 又可查找。
+- CUA 操作项目原有 `ui/browser-find.mjs` 并连接上述真实原生路由：needle 为 1/3→2/3→1/3，中文为 1/2→Enter 2/2→Shift+Enter 1/2；未找到时禁用前后按钮，Esc 和叉号确实关闭，再打开为空。证据为 `ui-checks.json`、`ui-find-needle.png`、`ui-find-chinese.png`。这是隐藏 Form 的组件页面，不是正式 EXE 全界面或原生网页焦点下的可信按键检查。
+- 119 项既有后台回归通过；59 个 JS/MJS 语法检查通过。新候选 `find-stage-6cf690b891ab46e78091bf1221afa9dd/package-a93d86072df746cca89d83cb1af863ea/QQClaw.exe` 为 6097920 bytes，SHA-256 `7A16EA1611D1B27D5786BA7799A8DA732C7E316EB30B00A70F21665950B64F13`。程序集可信资源、21 个 payload 条目、4 个已安装二进制及 79 个构建相关源码逐字节核对通过；没有塞入大型 CEF/Codex/vendor Node REPL。
+- 组件根程序 141572 正常结束，收到全部标签关闭确认，backend/root exit0；随后按确切根/worker PID 及直接子进程复查没有遗留。正式程序 PID95560 未停止。失败现场、旧候选和测试均保存在项目外，发布目录仍只有原来的一个 EXE 与一个 DMG。
+
+### 自动冷启动与 Google 的真实结果
+
+最终代码另在 `cold-local-f52fd5db4f874920897b4b7748c48909` 重新完成真实模型检查：使用本次产品安装器产出的 `36ffd1afc048e197f1f545f79bbbf905`，gpt-6.1-sol/xhigh，11 次去重后的官方 Node REPL 调用、一次 prepareOfficial、一次 localhost 站点确认，0 Responses 夹具、0 独立搜索/shell。没有手动准备操作；原版扩展新建标签964951073，读取主标题及说明原文，关闭后再次列出为空并确认removed=true，原有标签不受影响。模型/backend源码快照与当前文件核对一致；当前候选使用同一原生构建。正式 helper 核对根147088→CEF145708→native host148336，结束时标签全关闭、backend/root exit0，随后确切PID及直接子进程无遗留。证据为该目录verification.json、model-events.json、sources.json、runtime-provenance.json、native-helper.json、qa-final.png及cleanup-verification.json。该结果证明最终组件的自动连接、新建/读取/关闭，没有把本机页检查当Google、完整GUI、真实微信或Mac通过。
+
+前一轮真实模型证据为 `cold-google-fe536aeee375440fb540b6fde503d0f9/verification.json`，使用当时产品安装器产出的 bundle `9b583538e14c9ea979b46e630b09472e`。没有手动准备按钮，真实配置 gpt-6.1-sol/xhigh 经一次 prepareOfficial、9 次官方 Node REPL 工具调用，自动新建标签、打开 Google 并实际提交“2026年11月1日 AI 热点”；CUA 仅允许一次对应站点访问。没有 Responses 夹具、独立搜索、shell 或其他浏览器驱动。
+
+**Google 返回 `/sorry/index` unusual traffic，没有取得搜索结果，Google 需求未通过。** 模型在拦截后停止，未解验证码、未换浏览器/代理或替换驱动。根144640/worker154936/native156992与直接子进程复查无遗留，退出0，QA标签已关闭，见 cleanup-verification.json。该证据在本次查找/ready/UTF-8修订之前取得，不冒充最终所有字节的 Google 实测。
+
+### 失败记录和未完成项
+
+首轮新检查夹具传错产品安装器的 payload 目录，尚未启动浏览器；修正后实际发现空 tabId 的 ready 竞态，随后才修产品。另一次中文检查失败来自检查桥未像正式后台那样指定 UTF-8，修正夹具后中文通过，同时补齐产品 CEF stdout/stderr 的显式 UTF-8。准备错误、源码修复和最终通过分别保留，详见项目外 `find-failure-notes.md`。一次 QA 端口误填产生临时错误标签38，工具在 data URL 上拒绝绑定/关闭；不声称已关闭该页，也未绕过限制控制原生桌面。
+
+CEF 原生 Chrome 控件仍可见（chromeControlsVisible=true），没有使用会变成 popup 的 Views 创建方式伪装完成外观。原生网页焦点下 Ctrl+F/F3 等快捷键转发尚未完成，Chrome 自己的查找栏与应用查找栏的交互未验收。下载/取消/历史、完整 GUI/拖宽/DPI/输入法、真实微信、Google结果、Mac、新电脑仅 CLI 的官方组件引导、WebView整页重载安装接续、参考主页全部操作仍待完成。**整体目标保持 active，候选不发布。**
+
+## 前一源码检查点：浏览器组件按需安装、取消与修复（未发布）
 
 源码已提供真实 Windows 安装器与设置入口，正式两端仍为0.3.32、未替换。安装器只下载固定版本官方 CEF 档，校验大小与SHA-256后在独立目录解压，验证运行资源和四个二进制，再替换目标目录。安装失败/取消保留原目录；最终提交阶段不接受取消，应用退出会等待安装收尾。组件下载不设前端100秒RPC超时，不影响Codex长任务；网络读写本身有60秒无响应限制。
 

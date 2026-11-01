@@ -7,6 +7,7 @@
 #include <tlhelp32.h>
 #include <atomic>
 #include <algorithm>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -20,6 +21,7 @@
 #include "include/capi/cef_app_capi.h"
 #include "include/capi/cef_client_capi.h"
 #include "include/capi/cef_display_handler_capi.h"
+#include "include/capi/cef_find_handler_capi.h"
 #include "include/capi/cef_focus_handler_capi.h"
 #include "include/capi/cef_life_span_handler_capi.h"
 #include "include/capi/cef_load_handler_capi.h"
@@ -48,10 +50,20 @@ template<class T> struct Object {
 };
 template<class T> T* owned(Object<T>* o) { o->value.base.add_ref(&o->value.base); return &o->value; }
 template<class T> void release(T* p) { if(p) {auto* base=reinterpret_cast<cef_base_ref_counted_t*>(p);base->release(base);} }
+struct FindRequest {
+  Json request;
+  std::wstring query;
+  bool forward;
+};
 struct Page {
   cef_browser_t* browser;
   std::string title, url="about:blank", error;
   bool loading=false, back=false, forward=false;
+  std::deque<FindRequest> findQueue;
+  std::wstring findQuery;
+  bool finding=false;
+  int lastFindIdentifier=-1, findFloor=-1, findIdentifier=-1;
+  ULONGLONG findStarted=0;
 };
 Object<cef_app_t>* app;
 Object<cef_client_t>* client;
@@ -61,6 +73,7 @@ Object<cef_display_handler_t>* display;
 Object<cef_load_handler_t>* load;
 Object<cef_request_handler_t>* requests;
 Object<cef_focus_handler_t>* focus;
+Object<cef_find_handler_t>* finder;
 std::map<int, Page> pages;
 std::map<int, std::vector<Json>> closingRequests;
 std::vector<Json> shutdownRequests;
@@ -71,6 +84,7 @@ HWND surface=nullptr;
 int active=0, width=1000, height=760;
 bool visible=false, closing=false;
 bool creatingForUi=false;
+bool readySent=false;
 uint64_t revision=0;
 uint64_t viewUpdates=0;
 HANDLE input=INVALID_HANDLE_VALUE, output=INVALID_HANDLE_VALUE, readerHandle=nullptr;
@@ -104,6 +118,60 @@ void write(const Json& value) {
 }
 void answer(const Json& request, const Json& result, const std::string& error="") {
   if(request.contains("id")) write({{"id",request["id"]},{"result",result},{"error",error.empty()?Json(nullptr):Json(error)}});
+}
+void stopFind(Page& page, const std::string& error="", bool clearNative=true) {
+  // Invalidate before StopFinding, including any synchronous notifications.
+  page.finding=false; page.findIdentifier=-1; page.findQuery.clear();
+  auto pending=std::move(page.findQueue); page.findQueue.clear();
+  if(clearNative) {auto* host=page.browser->get_host(page.browser); host->stop_finding(host,1); release(host);}
+  for(auto& request:pending) answer(request.request,{{"stale",true}},error);
+}
+void startFind(Page& page) {
+  if(page.finding || page.findQueue.empty()) return;
+  auto query=page.findQueue.front().query;
+  auto* host=page.browser->get_host(page.browser);
+  if(query!=page.findQuery) {
+    host->stop_finding(host,1); page.findQuery=query;
+  }
+  page.finding=true; page.findFloor=page.lastFindIdentifier;
+  page.findIdentifier=-1; page.findStarted=GetTickCount64();
+  auto value=text(query);
+  // CEF 154 forwards findNext as Chromium's find_match. A fresh session
+  // with true selects a match as well as counting/highlighting the results.
+  host->find(host,&value,page.findQueue.front().forward,0,1); release(host);
+}
+void find(Page& page, const Json& request) {
+  const auto operation=request.value("operation","");
+  auto query=wide(request.value("query",""));
+  if((operation!="search" && operation!="next" && operation!="previous" && operation!="clear") || query.size()>512)
+    throw std::runtime_error("Invalid page find parameters");
+  // Chromium removes CR itself. Handle an empty normalized query here: its
+  // StartFinding would clear without ever returning a final find callback.
+  query.erase(std::remove(query.begin(),query.end(),L'\r'),query.end());
+  if(operation=="search" || operation=="clear" || query.empty() || query!=page.findQuery) stopFind(page);
+  if(operation=="clear" || query.empty()) {answer(request,{{"cleared",true},{"found",false},{"total",0},{"index",nullptr}});return;}
+  if(page.findQueue.size()>=64) throw std::runtime_error("Too many pending page find requests");
+  page.findQueue.push_back({request,std::move(query),operation!="previous"}); startFind(page);
+}
+void CEF_CALLBACK findResult(cef_find_handler_t*,cef_browser_t* browser,int identifier,int count,const cef_rect_t*,int ordinal,int finalUpdate) {
+  auto entry=pages.find(browser->get_identifier(browser));
+  if(entry!=pages.end()) {
+    auto& page=entry->second;
+    // Chromium owns these IDs. Never equate them to our pipe request IDs.
+    // Only one native request per page is in flight; old final callbacks must
+    // not finish the next queued next/previous operation.
+    page.lastFindIdentifier=std::max(page.lastFindIdentifier,identifier);
+    if(page.finding && identifier>page.findFloor) {
+      if(page.findIdentifier<0) page.findIdentifier=identifier;
+      if(identifier==page.findIdentifier && finalUpdate) {
+        auto request=page.findQueue.front().request; page.findQueue.pop_front(); page.finding=false;
+        if(count<0) answer(request,nullptr,"The page did not return a complete find result");
+        else answer(request,{{"found",count>0},{"total",count},{"index",ordinal>0&&ordinal<=count?Json(ordinal):Json(nullptr)}});
+        startFind(page);
+      }
+    }
+  }
+  release(browser);
 }
 std::string id(int browser) { return browser>0 ? "cef:"+std::to_string(browser) : ""; }
 int browserId(const Json& request) {
@@ -177,7 +245,7 @@ void finishShutdown() {
 void closeAll() {
   if(closing) {finishShutdown(); return;}
   closing=true;
-  for(auto& [key,page]:pages) {auto* host=page.browser->get_host(page.browser); host->close_browser(host,1); release(host);}
+  for(auto& [key,page]:pages) {stopFind(page);auto* host=page.browser->get_host(page.browser); host->close_browser(host,1); release(host);}
   finishShutdown();
 }
 void CEF_CALLBACK created(cef_life_span_handler_t*, cef_browser_t* browser) {
@@ -187,10 +255,17 @@ void CEF_CALLBACK created(cef_life_span_handler_t*, cef_browser_t* browser) {
   pages.emplace(key,Page{browser}); active=key;
   if(closing || pages.size()>12) {auto* host=browser->get_host(browser);host->close_browser(host,1);release(host);}
   layout(); if(!creatingForUi) publish();
+  // OnContextInitialized precedes asynchronous browser creation. Reporting
+  // ready there allowed the next UI request to see an empty activeTab and
+  // accidentally select the manual browser route instead of this engine.
+  if(!readySent && !closing) {
+    readySent=true;
+    write({{"event","ready"},{"pid",GetCurrentProcessId()},{"owner",owner},{"sandboxProvided",true},{"apiVersion",CEF_API_VERSION}});
+  }
 }
 void CEF_CALLBACK closed(cef_life_span_handler_t*, cef_browser_t* browser) {
   int key=browser->get_identifier(browser); auto entry=pages.find(key);
-  if(entry!=pages.end()) {release(entry->second.browser); pages.erase(entry);}
+  if(entry!=pages.end()) {stopFind(entry->second,"",false);release(entry->second.browser); pages.erase(entry);}
   if(active==key) active=pages.empty()?0:pages.rbegin()->first;
   release(browser); layout(); publish();
   auto requests=closingRequests.find(key);
@@ -198,7 +273,7 @@ void CEF_CALLBACK closed(cef_life_span_handler_t*, cef_browser_t* browser) {
   finishShutdown();
 }
 void CEF_CALLBACK address(cef_display_handler_t*, cef_browser_t* browser, cef_frame_t* frame, const cef_string_t* url) {
-  if(frame->is_main(frame)) {auto page=pages.find(browser->get_identifier(browser)); if(page!=pages.end()) page->second.url=utf8(url); publish();}
+  if(frame->is_main(frame)) {auto page=pages.find(browser->get_identifier(browser)); if(page!=pages.end()) {auto next=utf8(url);if(next!=page->second.url)stopFind(page->second);page->second.url=next;} publish();}
   release(frame); release(browser);
 }
 void CEF_CALLBACK title(cef_display_handler_t*, cef_browser_t* browser, const cef_string_t* value) {
@@ -217,6 +292,7 @@ int CEF_CALLBACK beforeBrowse(cef_request_handler_t*,cef_browser_t* browser,cef_
   auto* raw=request->get_url(request);bool permitted=false;
   try {permitted=allowed(utf8(raw));}catch(...){}
   API(cef_string_userfree_utf16_free)(raw);
+  if(permitted && frame->is_main(frame)) {auto page=pages.find(browser->get_identifier(browser));if(page!=pages.end())stopFind(page->second);}
   if(!permitted && frame->is_main(frame)) {auto page=pages.find(browser->get_identifier(browser));if(page!=pages.end()) page->second.error="This URL is not available in this browser surface";publish();}
   release(request);release(frame);release(browser);return permitted?0:1;
 }
@@ -227,6 +303,7 @@ cef_display_handler_t* CEF_CALLBACK displays(cef_client_t*) {return owned(displa
 cef_load_handler_t* CEF_CALLBACK loads(cef_client_t*) {return owned(load);}
 cef_request_handler_t* CEF_CALLBACK requestHandler(cef_client_t*) {return owned(requests);}
 cef_focus_handler_t* CEF_CALLBACK focusHandler(cef_client_t*) {return owned(focus);}
+cef_find_handler_t* CEF_CALLBACK findHandler(cef_client_t*) {return owned(finder);}
 cef_browser_process_handler_t* CEF_CALLBACK browserProcess(cef_app_t*) {return owned(process);}
 void createPage(const std::string& value) {
   cef_window_info_t info{};info.size=sizeof(info);info.runtime_style=CEF_RUNTIME_STYLE_CHROME;
@@ -249,7 +326,6 @@ int createUiPage(const std::string& value, bool select) {
 void CEF_CALLBACK contextReady(cef_browser_process_handler_t*) {
   auto* context=API(cef_request_context_get_global_context)();context->set_chrome_color_scheme(context,CEF_COLOR_VARIANT_LIGHT,0);release(context);
   createPage("about:blank");
-  write({{"event","ready"},{"pid",GetCurrentProcessId()},{"owner",owner},{"sandboxProvided",true},{"apiVersion",CEF_API_VERSION}});
 }
 void CEF_CALLBACK commandLine(cef_app_t*,const cef_string_t* type,cef_command_line_t* command) {
   if(!type||!type->length) {std::wstring name=L"load-extension";auto key=text(name),value=text(extension);command->append_switch_with_value(command,&key,&value);}
@@ -280,14 +356,16 @@ void execute(const Json& request) {
     }
     const int key=browserId(request);auto entry=pages.find(key);if(entry==pages.end())throw std::runtime_error("The browser tab has closed");
     auto* browser=entry->second.browser;
-    if(action=="closeTab") {closingRequests[key].push_back(request);auto* host=browser->get_host(browser);host->close_browser(host,1);release(host);return;}
+    if(action=="closeTab") {stopFind(entry->second);closingRequests[key].push_back(request);auto* host=browser->get_host(browser);host->close_browser(host,1);release(host);return;}
+    if(action=="find") {find(entry->second,request);return;}
     if(action=="selectTab" || action=="focus") {active=key;auto* host=browser->get_host(browser);host->set_focus(host,1);release(host);layout();}
     else if(action=="stop") browser->stop_load(browser);
-    else if(action=="back") browser->go_back(browser);
-    else if(action=="forward") browser->go_forward(browser);
-    else if(action=="reload") browser->reload(browser);
+    else if(action=="back") {stopFind(entry->second);browser->go_back(browser);}
+    else if(action=="forward") {stopFind(entry->second);browser->go_forward(browser);}
+    else if(action=="reload") {stopFind(entry->second);browser->reload(browser);}
     else if(action=="open") {
       auto value=request.value("url","");if(!allowed(value))throw std::runtime_error("Unsupported browser URL");
+      stopFind(entry->second);
       entry->second.error.clear();auto* frame=browser->get_main_frame(browser);if(!frame)throw std::runtime_error("The browser is not ready");
       auto buffer=wide(value);auto url=text(buffer);frame->load_url(frame,&url);release(frame);
     } else throw std::runtime_error("Unsupported browser UI action");
@@ -313,7 +391,11 @@ void readInput() {
 }
 LRESULT CALLBACK windowProc(HWND window,UINT message,WPARAM w,LPARAM l) {
   if(message==WM_CLOSE) {closeAll();return 0;}
-  if(message==WM_TIMER) {layout();return 0;}
+  if(message==WM_TIMER) {
+    for(auto& [key,page]:pages) if(page.finding && GetTickCount64()-page.findStarted>=10000)
+      stopFind(page,"The page did not confirm the find result within 10 seconds; the browser was kept open");
+    layout();return 0;
+  }
   return DefWindowProcW(window,message,w,l);
 }
 } // namespace
@@ -326,10 +408,11 @@ extern "C" __declspec(dllexport) int RunWinMain(HINSTANCE instance,LPWSTR,int,vo
   cef_version_info_t actual{};actual.size=sizeof(actual);API(cef_version_info_all)(&actual);
   if(bootstrap->size<CEF_VERSION_INFO_SIZE_WITH_SANDBOX_HASH||!actual.sandbox_compat_hash[0]||std::strcmp(actual.sandbox_compat_hash,bootstrap->sandbox_compat_hash))return 21;
   app=new Object<cef_app_t>();client=new Object<cef_client_t>();process=new Object<cef_browser_process_handler_t>();
-  lifetime=new Object<cef_life_span_handler_t>();display=new Object<cef_display_handler_t>();load=new Object<cef_load_handler_t>();requests=new Object<cef_request_handler_t>();focus=new Object<cef_focus_handler_t>();
+  lifetime=new Object<cef_life_span_handler_t>();display=new Object<cef_display_handler_t>();load=new Object<cef_load_handler_t>();requests=new Object<cef_request_handler_t>();focus=new Object<cef_focus_handler_t>();finder=new Object<cef_find_handler_t>();
   app->value.get_browser_process_handler=browserProcess;app->value.on_before_command_line_processing=commandLine;
   process->value.get_default_client=defaultClient;process->value.on_context_initialized=contextReady;
-  client->value.get_life_span_handler=life;client->value.get_display_handler=displays;client->value.get_load_handler=loads;client->value.get_request_handler=requestHandler;client->value.get_focus_handler=focusHandler;
+  client->value.get_life_span_handler=life;client->value.get_display_handler=displays;client->value.get_load_handler=loads;client->value.get_request_handler=requestHandler;client->value.get_focus_handler=focusHandler;client->value.get_find_handler=findHandler;
+  finder->value.on_find_result=findResult;
   lifetime->value.on_after_created=created;lifetime->value.on_before_close=closed;
   display->value.on_address_change=address;display->value.on_title_change=title;
   load->value.on_loading_state_change=loading;load->value.on_load_error=loadError;requests->value.on_before_browse=beforeBrowse;focus->value.on_got_focus=gotFocus;
@@ -355,6 +438,6 @@ extern "C" __declspec(dllexport) int RunWinMain(HINSTANCE instance,LPWSTR,int,vo
     reader=std::thread(readInput);API(cef_run_message_loop)();stopping=true;
     if(readerHandle)CancelSynchronousIo(readerHandle);if(reader.joinable())reader.join();if(readerHandle)CloseHandle(readerHandle);
     API(cef_shutdown)();KillTimer(surface,1);DestroyWindow(surface);write({{"event","closed"},{"remainingTabs",pages.size()}});
-    release(&app->value);release(&client->value);release(&process->value);release(&lifetime->value);release(&display->value);release(&load->value);release(&requests->value);release(&focus->value);return 0;
+    release(&app->value);release(&client->value);release(&process->value);release(&lifetime->value);release(&display->value);release(&load->value);release(&requests->value);release(&focus->value);release(&finder->value);return 0;
   }catch(const std::exception& error) {write({{"event","startup-error"},{"error",error.what()}});return 24;}
 }

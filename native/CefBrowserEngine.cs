@@ -120,7 +120,8 @@ internal sealed class CefBrowserEngine {
         File.WriteAllText(configurationPath, json.Serialize(configuration), new UTF8Encoding(false));
         var start = new ProcessStartInfo(Path.Combine(files.Directory, "QQClawBrowser.exe"), Quote(Path.GetFullPath(configurationPath))) {
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
-            RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = files.Directory
+            RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = files.Directory,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
         start.EnvironmentVariables.Clear();
         foreach (var key in new [] {"SystemRoot", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "ProgramFiles", "ProgramFiles(x86)"}) {
