@@ -44,6 +44,12 @@
 
 ## 当前结论
 
+2026-11-01 补查 `requestAttestation`：已实际读取 [初始化文档](https://learn.chatgpt.com/docs/app-server#initialization) 及固定提交的 `app-server/src/attestation.rs`、`core/src/attestation.rs`、`core/src/client.rs`、`model-provider/src/provider.rs` 等 8 份公开源码。该能力让已具备证明能力的宿主返回 opaque token，app-server 包装后放到上游 `x-oai-attestation` 请求头；它不会签发浏览器授权。公开 provider 默认不发送证明，所检查实现按 ChatGPT auth 决定是否发送；因此用本地假模型回合也不能证明具备真实宿主证明能力。浏览器 `request_headers` 则是 requirements 数据，不能补齐原生连接和当前任务授权。
+
+独立安装版 0.157.1 以自身 `qqclaw_browser_attestation_probe` 身份、空 CODEX_HOME、`requestAttestation=true` 完成初始化并查询元数据，退出码 0；没有 browser requirements，元数据检查期间没有 server request。**没有发起模型请求或生成有效证明，不能把这个结果扩大为浏览器授权已被完整测试。** 没有使用开发聊天管道/令牌或第一方客户端名称，也没有签一个始终允许的响应。公开主分支没有在本轮编译，不能等同于安装版代码。
+
+证据在项目外 `C:/Users/admin/AppData/Local/Temp/qqclaw-browser-attestation-20261101`：`review.json` 保存 8 份源码摘要、文档与探针范围；`official-initialization.json` 是实际页面摘录；`attestation-capability.json` 是运行结果。源仓库采用 sparse checkout，缺少的工作区文件改由 `git show` 读取、跨树检索使用 Git 对象，未把本地 `rg` 未命中当作源码不存在。首次探针退出 1，旧脚本未保留 stderr，原因不能精确追溯；补建独立目录并保存诊断后成功。这些不是产品浏览器验收通过项。
+
 **QQClaw 尚不能通过官方 ChatGPT 扩展执行微信发起的浏览器任务。** 本机存在官方扩展安装文件和签名有效的官方 native host；这些证据不能证明 QQClaw 已获得独立连接、可信运行环境、任务授权或站点许可。
 
 已读取的官方文档描述桌面应用连接扩展的流程；本次未找到可直接用于 QQClaw 的独立第三方宿主接入契约。静态协议分析揭示了更多组件，但没有形成可发布的独立连接实现。不能把这个结论扩大为“所有技术路径都已证明不可能”，也不能把私有接口名称或安装检测当作成功接入。

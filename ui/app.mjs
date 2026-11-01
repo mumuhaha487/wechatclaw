@@ -27,6 +27,7 @@ import { BrowserDownloads } from "./browser-downloads.mjs";
 import { BrowserHistory } from "./browser-history.mjs";
 import { BrowserFind } from "./browser-find.mjs";
 import { ComposerModelMenu } from "./composer-model.mjs";
+import { websiteCards, websiteTarget } from "./website-cards.mjs";
 import { version as appVersion } from "../package.json";
 
 const $ = (id) => document.getElementById(id);
@@ -46,7 +47,8 @@ md.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
   const href = tokens[index].attrGet("href");
   return workspaceFileReference(href) ? `<a href="#" data-workspace-file="${esc(href)}">` : defaultLinkOpen(tokens, index, options, env, renderer);
 };
-// The renderer and sanitizer configuration is fixed; only the text affects HTML.
+// Sanitization is fixed; file previews keep links as written, while completed
+// assistant replies can decorate standalone website links.
 const renderMarkdown = (value) => DOMPurify.sanitize(md.render(value), {
   FORBID_TAGS: ["img", "iframe", "form", "style"],
   FORBID_ATTR: ["style"],
@@ -58,18 +60,19 @@ const evictMarkdown = (value) => {
   markdownCharacters -= value.length + markdownCache.get(value).length;
   markdownCache.delete(value);
 };
-const markdown = (value) => {
-  if (markdownCache.has(value)) {
-    const html = markdownCache.get(value);
-    markdownCache.delete(value);
-    markdownCache.set(value, html);
+const markdown = (value, websites = false) => {
+  const key = (websites ? "1" : "0") + value;
+  if (markdownCache.has(key)) {
+    const html = markdownCache.get(key);
+    markdownCache.delete(key);
+    markdownCache.set(key, html);
     return html;
   }
-  const html = renderMarkdown(value);
-  const characters = value.length + html.length;
+  const sanitized = renderMarkdown(value), html = websites ? websiteCards(sanitized, document) : sanitized;
+  const characters = key.length + html.length;
   // A single oversized reply must not flush the entire history cache.
   if (characters > maximumMarkdownCharacters) return html;
-  markdownCache.set(value, html);
+  markdownCache.set(key, html);
   markdownCharacters += characters;
   if (markdownCache.size > 500) evictMarkdown(markdownCache.keys().next().value);
   while (markdownCharacters > maximumMarkdownCharacters) {
@@ -629,7 +632,7 @@ function messageView(m, index, s) {
   const time = m.at && !Number.isNaN(Date.parse(m.at)) ? `<time datetime="${esc(m.at)}" title="${esc(new Date(m.at).toLocaleString())}">${esc(new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time>` : "";
   return `<article class="message ${m.role}${m.kind === "progress" ? " progress-message" : ""}" data-message-index="${index}" tabindex="-1">
     ${m.kind === "progress" ? '<div class="progress-label">过程进度</div>' : assistant && m.runStats ? runSummary(m.runStats, `${s.id}-${index}`) : ""}
-    ${m.role === "user" ? attachments : ""}<div class="message-content${m.role === "user" ? " user-message-content" : ""}">${m.role === "user" ? `<div class="user-message-text${conversationView.expanded(s.id, index, m.text) ? "" : " is-collapsed"}" id="message-text-${index}">${esc(m.text)}</div><button class="message-expand" data-action="toggle-message" data-index="${index}" aria-expanded="${conversationView.expanded(s.id, index, m.text)}" aria-controls="message-text-${index}" hidden><span>显示更多</span>${icon("down")}</button>` : m.role === "assistant" ? markdown(m.text) : esc(m.text)}</div>${m.role === "user" ? "" : attachments}
+    ${m.role === "user" ? attachments : ""}<div class="message-content${m.role === "user" ? " user-message-content" : ""}">${m.role === "user" ? `<div class="user-message-text${conversationView.expanded(s.id, index, m.text) ? "" : " is-collapsed"}" id="message-text-${index}">${esc(m.text)}</div><button class="message-expand" data-action="toggle-message" data-index="${index}" aria-expanded="${conversationView.expanded(s.id, index, m.text)}" aria-controls="message-text-${index}" hidden><span>显示更多</span>${icon("down")}</button>` : m.role === "assistant" ? markdown(m.text, true) : esc(m.text)}</div>${m.role === "user" ? "" : attachments}
     ${changeCard(m, index, s)}
     ${m.role === "user" ? `<div class="user-message-actions"><button class="set-message-goal" data-action="message-goal" data-index="${index}" ${s.busy || s.queued ? "disabled" : ""}>${icon("target")}设为目标</button></div>` : ""}
     ${assistant ? `<div class="message-actions">${ib("copy-message", "复制回复", "copy", `data-index="${index}"`)}${ib("message-menu", "回复菜单", "more", `data-id="${index}"`)}${time}<span class="message-model" title="${esc(s.model || "Codex")}">${esc(s.model || "Codex")}</span></div>` : ""}</article>`;
@@ -1779,6 +1782,23 @@ async function action(name, element) {
   if (name.startsWith("window.")) return rpc(name);
   switch (name) {
     case "composer-model": return composerModelMenu.toggle();
+    case "website-menu": {
+      const url = websiteTarget(id); if (!url) return;
+      const menu = showContext(element, [
+        { label: "在网页预览中打开", icon: "browser", action: "website-preview", id: url },
+        { label: "在系统浏览器中打开", icon: "external", action: "website-external", id: url },
+        { label: "复制链接", icon: "copy", action: "website-copy", id: url },
+      ]);
+      menu.dataset.websiteOwner = panelOwner();
+      return;
+    }
+    case "website-preview": case "website-external": case "website-copy": {
+      const url = websiteTarget(id), menu = element.closest(".context-menu");
+      if (!url || menu?.dataset.websiteOwner && menu.dataset.websiteOwner !== panelOwner()) return;
+      if (name === "website-preview") return runBrowserCommand("open", { url });
+      if (name === "website-external") return rpc("shell.open", { url });
+      await copyText(url); return toast("链接已复制。");
+    }
     case "browser-more":
       return showContext(element, [
         ...(browserFind.context() ? [{ label: "查找网页内容", icon: "search", action: "find-browser" }] : []),
@@ -2781,6 +2801,7 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.key === "Escape") {
+    if (document.querySelector(".context-menu")) return;
     if (["search", "history"].includes(ui.overlay)) return sessionSearch.close();
     ui.overlay = "";
     renderOverlay();
@@ -2992,6 +3013,7 @@ function showContext(anchor, items) {
   document.querySelector(".context-menu")?.remove();
   const menu = document.createElement("div");
   menu.className = "context-menu";
+  menu.contextAnchor = anchor;
   menu.setAttribute("role", "menu");
   menu.innerHTML = items
     .map(
@@ -3009,21 +3031,36 @@ function showContext(anchor, items) {
     .join("");
   document.body.append(menu);
   const r = anchor.getBoundingClientRect();
-  menu.style.left = Math.min(innerWidth - menu.offsetWidth - 8, r.left) + "px";
+  menu.style.left = Math.max(8, Math.min(innerWidth - menu.offsetWidth - 8, r.left)) + "px";
   menu.style.top =
-    Math.min(innerHeight - menu.offsetHeight - 8, r.bottom + 4) + "px";
-  menu.querySelector("button")?.focus();
+    Math.max(8, Math.min(innerHeight - menu.offsetHeight - 8, r.bottom + 4)) + "px";
+  menu.querySelector("button:not(:disabled)")?.focus();
+  return menu;
 }
 document.addEventListener("click", (e) => {
   if (
     !e.target.closest(
-      '.row-more,.project-tools,[data-action="session-menu"],[data-action="composer-add"],[data-action="panel-add-tab"],[data-action="context-info"],[data-action="message-menu"],[data-action="browser-more"],[data-action="app-menu"],.application-menu-popup,.conversation-outline,[data-action="conversation-outline"]',
+      '.row-more,.project-tools,[data-action="session-menu"],[data-action="composer-add"],[data-action="panel-add-tab"],[data-action="context-info"],[data-action="message-menu"],[data-action="browser-more"],[data-action="app-menu"],[data-action="website-menu"],.application-menu-popup,.conversation-outline,[data-action="conversation-outline"]',
     )
-  )
-    document.querySelector(".context-menu")?.remove();
+  ) {
+    const menu = document.querySelector(".context-menu"), anchor = menu?.contextAnchor;
+    const restore = menu?.contains(e.target) && ["website-copy", "website-external"].includes(e.target.closest("[data-action]")?.dataset.action) && menu.dataset.websiteOwner === panelOwner();
+    menu?.remove();
+    if (restore && anchor?.isConnected) anchor.focus({ preventScroll: true });
+  }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") document.querySelector(".context-menu")?.remove();
+  const menu = document.querySelector(".context-menu"); if (!menu?.contextAnchor || e.isComposing) return;
+  if (e.key === "Escape") {
+    e.preventDefault(); menu.remove(); if (menu.contextAnchor?.isConnected) menu.contextAnchor.focus({ preventScroll: true }); return;
+  }
+  if (e.key === "Tab") { menu.remove(); if (menu.contextAnchor?.isConnected) menu.contextAnchor.focus({ preventScroll: true }); return; }
+  if (!menu.contains(e.target) || !["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+  const rows = [...menu.querySelectorAll('button:not(:disabled)')], index = rows.indexOf(document.activeElement);
+  if (!rows.length) return;
+  e.preventDefault();
+  const next = e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : (index + (e.key === "ArrowUp" ? -1 : 1) + rows.length) % rows.length;
+  rows[next].focus();
 });
 function panelContext() {
   return JSON.stringify([ui.active, workspaceKey(session()?.workspace || project()?.workspace), ui.panelPage, ui.reviewTarget]);

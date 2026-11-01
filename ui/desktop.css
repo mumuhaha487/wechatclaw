@@ -1989,6 +1989,17 @@ mark[data-message-find].current-match { background: var(--text); color: var(--pa
 .composer-model-popup .field-label { font-size: calc(11px * var(--font-scale, 1)); color: var(--muted); }
 .composer-model-popup .picker-trigger { width: 100%; min-width: 0; max-width: 100%; justify-content: space-between; }
 .composer-model-footer { margin: 4px 2px 0; padding-top: 6px; border-top: 1px solid var(--line); color: var(--muted); font-size: calc(11px * var(--font-scale, 1)); }
+.website-card { display: flex; align-items: center; gap: 12px; min-width: 0; max-width: 100%; margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--page); }
+.website-main { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; text-align: left; }
+.website-glyph { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 44px; border-radius: 10px; color: var(--text); background: var(--tile); }
+.website-glyph > .icon { width: 23px; height: 23px; }
+.website-text { display: grid; gap: 4px; min-width: 0; }
+.website-text strong, .website-text small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.website-text strong { font-size: calc(14px * var(--font-scale, 1)); }
+.website-text small { font-size: calc(12px * var(--font-scale, 1)); color: var(--muted); }
+.website-open { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 7px 9px; border: 1px solid var(--line); border-radius: 9px; font-size: calc(12px * var(--font-scale, 1)); white-space: nowrap; }
+.website-open:hover, .website-main:hover .website-text strong { color: var(--text); text-decoration: underline; }
+.website-open .icon { width: 12px; height: 12px; }
 .goal-mode .icon, .set-message-goal .icon { width: 15px; height: 15px; }
 .user-message-actions { display: flex; justify-content: flex-end; margin-top: 5px; }
 .set-message-goal { opacity: 0; transition: opacity .15s; }

@@ -181,9 +181,9 @@ export class MessageFind {
   textNodes(article) {
     const nodes = []; let previousBlock;
     for (const part of this.documentMode ? [article] : article.querySelectorAll(".message-content,.attachment-name")) {
-      const walker = document.createTreeWalker(part, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement.closest(".message-expand") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+      const walker = document.createTreeWalker(part, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement.closest(".message-expand,.website-meta,.website-open") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
       while (walker.nextNode()) {
-        const node = walker.currentNode, block = node.parentElement.closest("p,div,pre,li,h1,h2,h3,h4,h5,h6,blockquote,td,th") || part;
+        const node = walker.currentNode, block = node.parentElement.closest("p,div,pre,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,.website-card") || part;
         // Inline formatting remains contiguous; separate paragraphs and
         // attachment labels must not manufacture a word spanning two blocks.
         if (nodes.length && block !== previousBlock) nodes.push(document.createTextNode("\n"));
