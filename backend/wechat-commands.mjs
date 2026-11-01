@@ -17,6 +17,8 @@ export const helpText = [
   "/prompt done · 提交合并内容",
   "/prompt cancel · 取消合并",
   "/stop · 停止当前会话任务",
+  "/allow <确认编号> · 允许本次网站访问或操作",
+  "/deny <确认编号> · 拒绝本次确认",
   "支持图片、视频、文件及语音转写；生成的本地文件以微信附件发送。",
 ].join("\n");
 
@@ -25,7 +27,7 @@ export function commandOf(raw) {
   const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
   return match && { name: match[1].toLowerCase(), arg: (match[2] || "").trim() };
 }
-export const urgentCommand = (raw) => ["help", "h", "status", "where", "stop", "stream"].includes(commandOf(raw)?.name);
+export const urgentCommand = (raw) => ["help", "h", "status", "where", "stop", "stream", "allow", "deny"].includes(commandOf(raw)?.name);
 
 export async function handleCommand(bridge, account, item, command) {
   const sender = item.message.from_user_id;
@@ -42,8 +44,13 @@ export async function handleCommand(bridge, account, item, command) {
         `思考等级：${session.effort || runtime.effort || "默认"}`,
         `权限：${session.permission === "read-only" ? "只读" : ["ask", "accept-edits"].includes(session.permission) ? "需要桌面审批" : "工作区读写"}`,
         `过程进度：${session.streamReplies !== false ? "开启" : "关闭"}`,
-        `状态：${session.busy ? "运行中" : session.queued ? "排队中" : "空闲"}`, "/help 查看命令"].join("\n");
+        `状态：${session.busy ? "运行中" : session.queued ? "排队中" : "空闲"}`,
+        ...(bridge.pendingApprovals?.(account.id, sender) || []).map(record => `等待确认：${record.summary}\n/allow ${record.code} 允许，/deny ${record.code} 拒绝。`),
+        "/help 查看命令"].join("\n");
     }
+    case "allow": case "deny":
+      if (!/^[a-f0-9]{8}$/i.test(arg)) return `用法：/${name} <8位确认编号>`;
+      return bridge.respondApproval(account, sender, arg, name === "allow");
     case "stop":
       await bridge.stop(session.id);
       return "已请求停止当前会话任务。";

@@ -1415,3 +1415,7 @@ input[type="range"] {
     scroll-behavior: auto !important;
   }
 }
+.approval-field { display: grid; gap: 6px; margin: 12px 0; font-size: 13px; }
+.approval-field small { color: var(--text-muted, #6b6b6b); }
+.approval-field input, .approval-field select, .approval-field textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.approval-field textarea { min-height: 72px; }

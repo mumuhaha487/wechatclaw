@@ -10,6 +10,7 @@ import { parseActionBlocksSafe } from "./wechat-actions.mjs";
 import { buildPrompt } from "./wechat-format.mjs";
 import { sameWorkspace, workspaceKey } from "../shared/workspace.mjs";
 import { BrowserViewer, officialBrowserStatus } from "./browser.mjs";
+import { prepareOfficialBrowser } from "./official-browser.mjs";
 import { DesktopAttachments, attachmentPreview } from "./desktop-attachments.mjs";
 import { Checkpoints } from "./checkpoints.mjs";
 import { groupChanges } from "../shared/change-stats.mjs";
@@ -213,13 +214,27 @@ export class App {
       entry?.client.close();
       entry = {
         signature,
-        client: this.clientFactory({ executable, profile }),
+        client: this.clientFactory({ executable, profile, prepareBrowser: () => prepareOfficialBrowser({
+          session, executable, directory: this.store.directory, native: this.native,
+        }) }),
         lastUsed: Date.now(),
       };
       this.clients.set(session.id, entry);
-      entry.client.on?.("approval", (request) =>
-        this.emit("approval", { sessionId: session.id, ...request }),
-      );
+      entry.client.on?.("approval", (request) => {
+        this.emit("approval", { sessionId: session.id, ...request });
+        if (entry.taskKey) this.bridge.requestApproval(session.id, entry.taskKey, request,
+          (allow, content) => entry.client.respondApproval(request.requestId, allow, content)).catch(error => this.log("ERROR", error));
+      });
+      entry.client.on?.("approval-ended", ({ requestId }) => {
+        this.bridge.dismissApproval(session.id, requestId);
+        this.emit("approval-ended", { sessionId: session.id, requestId });
+      });
+      entry.client.on?.("browser-access", () => {
+        if (!session.busy || entry.browserShownAt === session.runStats?.startedAt) return;
+        entry.browserShownAt = session.runStats?.startedAt;
+        this.emit("browser-automation", { sessionId: session.id });
+      });
+      entry.client.on?.("browser-status", status => this.emit("browser-status", { sessionId: session.id, ...status }));
       entry.client.on?.("unexpected-close", (error) => this.log("ERROR", error));
       entry.client.on?.("notification", ({ method, params }) => {
         if (params?.threadId !== session.threadId || !["thread/goal/updated", "thread/goal/cleared"].includes(method)) return;
@@ -313,6 +328,8 @@ export class App {
         return await this.finish(session, "任务已停止。", taskKey);
       if (this.hasPendingRestore(session.workspace)) throw new Error("工作目录有尚未完成的文件恢复，请先在更改卡片中恢复操作前状态。");
       const client = await this.client(session);
+      const runningEntry = this.clients.get(id);
+      if (runningEntry) runningEntry.taskKey = taskKey || null;
       session.runStats = { startedAt: Date.now(), tools: 0, actions: [], changes: [] };
       this.emit("activity", { sessionId: id, text: "正在准备文件更改快照…" });
       try { session.runStats.checkpoint = await this.checkpoints.begin(session.workspace); }
@@ -398,7 +415,7 @@ export class App {
     } finally {
       session.busy = false;
       const entry = this.clients.get(id);
-      if (entry) entry.lastUsed = Date.now();
+      if (entry) { entry.lastUsed = Date.now(); entry.taskKey = null; }
       this.cancelled.delete(id);
       unlock();
       if (this.workspaces.get(key) === lock) this.workspaces.delete(key);
@@ -612,7 +629,7 @@ export class App {
       case "approval.respond": {
         const client = this.clients.get(p.sessionId)?.client;
         if (!client) throw new Error("此会话已结束。");
-        client.respondApproval(p.requestId, p.allow === true);
+        client.respondApproval(p.requestId, p.allow === true, p.content);
         return { ok: true };
       }
       case "snapshot":
@@ -653,8 +670,11 @@ export class App {
           throw new Error("网页查找参数无效，最多输入 512 个字符。");
         return new BrowserViewer({ native: this.native, session }).call("find", { tabId: String(p.tabId || ""), operation: p.operation, query: p.query });
       }
-      case "browser.officialStatus":
-        return officialBrowserStatus();
+      case "browser.officialStatus": {
+        const installed = await officialBrowserStatus();
+        const client = this.clients.get(p.sessionId)?.client;
+        return { ...installed, ...(client?.browserStatus ? client.browserStatus() : {}) };
+      }
       case "attachment.import":
         return this.desktopAttachments.import(p);
       case "attachment.preview": {

@@ -28,6 +28,7 @@ import { BrowserHistory } from "./browser-history.mjs";
 import { BrowserFind } from "./browser-find.mjs";
 import { ComposerModelMenu } from "./composer-model.mjs";
 import { websiteCards, websiteTarget } from "./website-cards.mjs";
+import { approvalFields, approvalContent } from "./approval-forms.mjs";
 import { version as appVersion } from "../package.json";
 
 const $ = (id) => document.getElementById(id);
@@ -159,6 +160,7 @@ const ui = {
   environment: null,
   runtime: null,
   officialBrowser: null,
+  browserConnections: new Map(),
   startupError: "",
   environmentChecked: false,
   checkingEnvironment: false,
@@ -682,11 +684,11 @@ function composer() {
       ? ib("scroll-bottom", "滚动到底部", "down", "", "scroll-bottom")
       : "") +
     (approval
-      ? '<div class="approval-card"><div class="row">' +
+      ? '<div class="approval-card" data-approval-key="' + esc(approval.key) + '"><div class="row">' +
         icon("shield") +
         "<strong>等待你的确认</strong></div><p>" +
         esc(approval.params.reason || "Codex 请求执行以下操作。") +
-        "</p><pre>" +
+        "</p>" + approvalFields(approval, esc) + (approval.kind === "form" ? "" : "<pre>" +
         esc(
           approval.params.command ||
             JSON.stringify(
@@ -695,7 +697,7 @@ function composer() {
               2,
             ),
         ) +
-        '</pre><div class="row">' +
+        '</pre>') + '<div class="row">' +
         button(
           "approval-deny",
           "拒绝",
@@ -705,7 +707,7 @@ function composer() {
         ) +
         button(
           "approval-allow",
-          "允许本次",
+          approval.kind === "form" && approval.consent === null ? "提交" : "允许本次",
           "check",
           "primary",
           'data-id="' + approval.key + '"',
@@ -766,7 +768,7 @@ function workspace() {
     '</button>' +
     (s?.messages.length ? '</h1>' : '</span>') +
     '</div><div class="top-actions">' +
-    button("open-browser-window", "网页预览", "browser", "outline desktop-continue", `title="打开手动网页预览；官方扩展自动操作尚未接通" aria-label="打开网页预览"`) +
+    button("open-browser-window", "内置浏览器", "browser", "outline desktop-continue", `title="打开内置浏览器" aria-label="打开内置浏览器"`) +
     '<div class="top-capsule">' +
     ib("new-session", "新建会话", "new") +
     ib("search", "搜索会话", "search") +
@@ -1082,10 +1084,10 @@ function browserPanel() {
     <div class="browser-toolbar"><div class="browser-navigation">${ib("browser-back", "后退", "back", b.canGoBack ? "" : "disabled")}${ib("browser-forward", "前进", "chevron", b.canGoForward ? "" : "disabled")}${ib(b.loading ? "browser-stop" : "browser-reload", b.loading ? "停止加载" : "刷新网页", b.loading ? "close" : "refresh", b.url ? "" : "disabled")}</div>
     <form id="browser-form" class="browser-address">${icon(b.url?.startsWith("https:") ? "shield" : "search")}<input id="browser-address" name="url" data-owner="${esc(panelOwner())}" data-key="${esc(tab?.key)}" aria-label="网页地址或搜索" placeholder="${creating ? "正在创建标签页…" : "搜索或输入网址"}" autocomplete="off" spellcheck="false" maxlength="8192" ${creating ? "disabled" : ""} value="${esc(tab?.addressDraft ?? b.url ?? "")}"></form>
     ${ib("browser-downloads", "下载", "download")}${ib("browser-more", "网页更多操作", "more")}</div>
-    <div class="browser-connection-note" role="status"><span>手动预览 · 官方扩展尚未接通</span><button data-action="runtime">配置</button></div>
+    <div class="browser-connection-note" role="status"><span>${ui.browserConnections.get(session()?.id)?.connected ? "官方 ChatGPT 扩展已连接" : ui.browserConnections.get(session()?.id)?.available ? "官方扩展已准备 · 等待连接验证" : "手动预览 · 官方扩展待配置"}</span><button data-action="runtime">配置</button></div>
     ${browserFind.html()}
     ${b.error ? `<div class="browser-error" role="status">${icon("info")}<span>${esc(b.error)}</span></div>` : ""}
-    <div id="browser-viewport" class="browser-viewport">${!b.url ? `<div class="browser-start">${icon("browser")}<strong>网页预览</strong><span>输入网址或搜索内容。自动操作需接通官方 ChatGPT 扩展。</span><button class="outline" data-action="browser-google">${icon("search")}Google 搜索</button></div>` : ""}</div>
+    <div id="browser-viewport" class="browser-viewport">${!b.url ? `<div class="browser-start">${icon("browser")}<strong>内置浏览器</strong><span>${ui.browserConnections.get(session()?.id)?.available ? "输入网址，或在对话及微信中提出浏览任务。" : "输入网址或搜索内容。自动操作需先配置官方 ChatGPT 扩展。"}</span><button class="outline" data-action="browser-google">${icon("search")}Google 搜索</button></div>` : ""}</div>
     ${b.loading ? '<div class="browser-loading-line"></div>' : ""}</aside>`;
 }
 function updateBrowserState(data) {
@@ -1322,7 +1324,12 @@ function projectSettings() {
 }
 function officialBrowserSettings() {
   const status = ui.officialBrowser;
-  return `<h2>网页预览</h2><div class="settings-card"><div class="setting-row"><div class="grow"><p class="setting-title">本机浏览记录与下载</p><p class="setting-description">浏览记录只包含本软件访问的网页；清除记录不会删除登录状态、下载文件或聊天。</p></div></div><div class="row">${button("browser-history", "浏览记录", "clock", "outline")}${button("browser-downloads", "下载", "download", "outline")}</div></div><h2>官方浏览器扩展</h2><div class="settings-card"><p class="setting-title">尚未接通官方扩展</p><p class="setting-description">${esc(status?.reason || "暂未获得官方扩展连接状态。")}</p>${(status?.browsers || []).map(b => `<div class="setting-row"><span class="grow">${esc(b.name)}</span><span class="muted">${b.installed ? "检测到官方扩展文件" : b.detection === "unknown" ? "安装情况未知" : "未检测到官方扩展文件"}</span></div>`).join("")}<p class="setting-description">安装检测不代表启用或授权成功。当前只能手动预览网页，微信和 QQClaw 的 Codex 会话尚不能通过官方扩展操作浏览器。</p><div class="row">${button("official-browser-store", "官方扩展安装入口", "external", "outline")}${button("official-browser-docs", "查看官方说明", "external", "outline")}</div></div>`;
+  const title = status?.connected ? "官方扩展已连接" : status?.available ? "官方扩展已准备" : "官方扩展尚未就绪";
+  return `<h2>内置浏览器</h2><div class="settings-card"><div class="setting-row"><div class="grow"><p class="setting-title">本机浏览记录与下载</p><p class="setting-description">浏览记录只包含本软件访问的网页；清除记录不会删除登录状态、下载文件或聊天。</p></div></div><div class="row">${button("browser-history", "浏览记录", "clock", "outline")}${button("browser-downloads", "下载", "download", "outline")}</div></div>
+    <h2>官方浏览器扩展</h2><div class="settings-card"><p class="setting-title">${title}</p><p class="setting-description">${esc(status?.reason || "尚未检测当前会话的连接状态。")}</p>
+    ${(status?.browsers || []).map(b => `<div class="setting-row"><span class="grow">${esc(b.name)}</span><span class="muted">${b.installed ? "检测到官方扩展文件" : b.detection === "unknown" ? "安装情况未知" : "未检测到官方扩展文件"}</span></div>`).join("")}
+    <p class="setting-description">浏览任务会为当前会话独立检测官方组件与扩展。网站确认会显示在任务来源的微信或 QQClaw 中；安装检测不代表连接成功。</p>
+    <div class="row">${button("official-browser-store", "官方扩展安装入口", "external", "outline")}${button("official-browser-docs", "查看官方说明", "external", "outline")}</div></div>`;
 }
 function runtimeSettings() {
   const e = ui.environment;
@@ -1665,7 +1672,7 @@ async function checkEnvironment(restart) {
       const p = state.projects.find((p) => sameWorkspace(p.workspace, session()?.workspace));
       if (p && !viewStorage.getItem("expanded-projects")) ui.expanded.add(p.id);
       ui.environment = await rpc("environment");
-      ui.officialBrowser = await rpc("browser.officialStatus").catch(() => null);
+      ui.officialBrowser = await rpc("browser.officialStatus", { sessionId: ui.active }).catch(() => null);
       ui.startupError = ui.environment.error || "";
       if (!nodeWasReady && !ui.environment.codexPath)
         toast("NodeJS 环境配置成功，Codex 未检测到配置");
@@ -2046,6 +2053,7 @@ async function action(name, element) {
           sessionId: request.sessionId,
           requestId: request.requestId,
           allow: name === "approval-allow",
+          ...(name === "approval-allow" ? { content: approvalContent(request, document.querySelector(".approval-card")) } : {}),
         });
       ui.approvals.delete(id);
       return render();
@@ -2654,6 +2662,12 @@ document.addEventListener("dblclick", (event) => {
     rpc("window.maximize").catch(() => {});
 });
 document.addEventListener("input", (event) => {
+  if (event.target.hasAttribute("data-approval-field")) {
+    const key = event.target.closest(".approval-card")?.dataset.approvalKey;
+    const request = ui.approvals.get(key);
+    if (request) (request.fieldValues ||= {})[event.target.dataset.approvalField] = event.target.value;
+    return;
+  }
   if (ui.goalEditor && event.target.id === "goal-objective") ui.goalEditor.objective = event.target.value;
   if (ui.goalEditor && event.target.id === "goal-budget") ui.goalEditor.tokenBudget = event.target.value;
   const el = event.target;
@@ -2860,6 +2874,21 @@ function onEvent(event, data) {
     action(data.command).then(() => { if (["toggle-sidebar", "toggle-panel"].includes(data.command)) return focusPanelSelection(owner); }).catch(error => toast(error.message));
   } else if (event === "browser-state") {
     updateBrowserState(data);
+  } else if (event === "browser-automation") {
+    if (data.sessionId !== session()?.id) return;
+    const browser = browserStates.get(data.sessionId);
+    if (!browser?.activeTab) return;
+    ui.panelIntent++; invalidatePanel();
+    panelTabs.select(panelOwner(), `browser:${browser.activeTab}`);
+    applyPanelTab(); ui.panel = true; ui.browserHidden.delete(data.sessionId);
+    rememberPanel(); render();
+  } else if (event === "browser-status") {
+    ui.browserConnections.set(data.sessionId, data);
+    if (data.sessionId === session()?.id) {
+      ui.officialBrowser = { ...ui.officialBrowser, ...data };
+      if (ui.page === "runtime") render();
+      else if (ui.panelPage === "browser") refreshBrowserPanel();
+    }
   } else if (event === "browser-downloads") {
     browserDownloads.update(data);
   } else if (event === "browser-history") {
@@ -2868,6 +2897,9 @@ function onEvent(event, data) {
     const key = `${data.sessionId}:${data.requestId}`;
     ui.approvals.set(key, { ...data, key });
     toast("Codex 正在等待操作确认。");
+    render();
+  } else if (event === "approval-ended") {
+    ui.approvals.delete(`${data.sessionId}:${data.requestId}`);
     render();
   } else if (event === "state") {
     const previous = new Map(state.sessions.map((s) => [s.id, s]));

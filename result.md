@@ -1,6 +1,35 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-11-01。当前源码 **0.3.32**。在 0.3.31 输入栏修复基础上补齐助手消息的网站卡片及“打开方式”，保留原始 Markdown、消息查找和源会话归属。Windows 最新候选在项目外，正式仍为运行中的 0.3.30；0.3.32 Mac 云构建和替换现场见文末。**官方 ChatGPT 扩展自动浏览仍未接通，主页全部 1:1 仍未完成，整体目标保持 active。** 以下旧版本章节属于当时现场。
+更新时间：2026-11-01。正式 Windows EXE 与 Mac 唯一安装包为 **0.3.32**；Windows 已替换并启动，原有账户/会话/配置核对保留。工作区另有**未发布的官方扩展接入开发**，不能再将源码与 .32 成品视为完全一致。真实模型及隔离微信接口的官方浏览器流程已走通，但自动新建标签、Google 搜索结果、全新电脑安装与 macOS 接入尚未通过，主页全部 1:1 仍未完成，整体目标保持 active。以下旧版本章节属于当时现场。
+
+## 未发布开发：官方扩展实际调用与当前阻碍
+
+真实链路：产品 App / WeChatBridge → 独立 CodexClient 任务 → 未修改的官方 Node REPL、browser-service/client → QQClaw 自身活动任务许可 → 数字签名及父子进程归属检查 → 应用内 WebView2 的原版 ChatGPT 扩展。扩展 ID `hehggadaopoacecdllhhajmbjkdcmajg`。没有将官方运行组件复制进发行包，没有借用开发聊天、Desktop/IAB 的身份、管道或站点许可。完整索引见 [官方扩展接入记录](docs/OFFICIAL-BROWSER-INTEGRATION.md)。
+
+| 检查 | 实际结果与范围 |
+| --- | --- |
+| 真实模型读取隔离网页 | 本机配置的 `gpt-6.1-sol` / `xhigh` 读取正确标题和正文，官方工具元数据及截图可复核；不是模型 Responses 夹具 |
+| 隔离微信接口完整消息流程 | 真正 App / Bridge 接收指令，发送网站确认，经 `/allow` 指令继续，由真实模型使用官方扩展读取本机页并返回结果；4 条接口消息，typing 开始/结束正常，待发送和待确认均清空。微信网络 API 与保存接口是夹具，**不是线上微信或数据持久化验收**；该原生检查宿主没有文件快照接口，快照如实显示不可用 |
+| 自动新建标签 | **失败**。原版扩展只查询 `normal` 窗口，WebView2 返回 `popup`；接管页面后重试仍报 `Created browser window has no id`。宿主收到新窗口事件但未形成扩展要求的普通窗口 ID。已在运行指引和连接状态明确披露；操作已有专用标签不等于修复新建标签 |
+| Google 搜索 | 真实模型在已有空白页打开 Google，输入并提交“2026年11月1日 AI 热点”，随后进入 `google.com/sorry/` 人机验证；未操作验证码，**未取得搜索结果**。此轮还出现 1 次由用户全局 AGENTS.md 要求引起的无关首相搜索，因此不能判为全程仅用官方扩展通过 |
+| 独立搜索限制修复 | 官方运行配置新增 `web_search="disabled"`。实际安装版 Codex 的 `config/read` 已确认生效；修复后的隔离微信真实模型检查中独立搜索和命令抓取均为 0。没有修改用户全局 AGENTS.md |
+| 确认界面 | CUA 实测字段填写、密码掩码、刷新/切会话保留草稿、空值和超范围拒绝、拒绝清理、简单站点同意后恢复发送。1280×720 时卡片高约 374px，内容在卡片内滚动；0 未处理前端错误。确认传输是夹具 |
+| 回归与编译 | 当前 119 项既有回归、10 项许可/任务/微信预算/启动失败清理检查通过。Windows 开发 EXE 已在项目外编译；仍是 .32 manifest，**未安装、未发布，不算正式 EXE GUI 验收** |
+
+本次还修复了浏览器许可服务启动失败时本地 Provider 转接服务未清理的问题，覆盖“启动失败关闭监听端口→再次连接成功”的检查。
+
+证据根目录：`C:/Users/admin/AppData/Local/Temp/qqclaw-host-contract-20261101/`。各子目录的 `verification.json`、`result.json` 与请求/事件记录注明了检查层级：
+
+- `product-component-5779c1b6b4be4257a186aaa6c9b6d459`：真实模型首次读取本机页。
+- `window-component-41dad7ef6fea45b28922a81eaa28d5ec`：接管后新建标签失败、原有页面访问成功。
+- `window-component-5c0c399e25304f059642852f3c7380db`：Google 验证码及无关独立搜索失败记录。
+- `window-component-c1621324a04e43d69567af820c30575f`：限制修复后的真实模型、隔离微信 `/allow` 与官方扩展消息流程，含 `official-page.jpg`。
+- `approval-ui`：确认表单的 CUA 审计、尺寸和截图；`search-config/verification.json`：实际 CLI 配置确认。
+- `development-build/build.json`：未发布 Windows 编译，718336 字节，SHA-256 `DA643F144038DE5D6E8863B464DE09F6016C8AB5C07F7E5EBAB8993B1FFBB03A`。
+
+证据限制：旧回归脚本把上一份结果覆盖到 `regression-first-expanded.tap`，故该文件已不能代表最早那次 5 项历史夹具失败的原始输出。已修正脚本，情况记于项目外 `regression-evidence-note.md`。新增微信检查的第一次夹具有字符串引号语法错误，未进入任务，修复并通过预检后才运行成功；配置检查第一次因空 CODEX_HOME 目录未创建而失败，建好独立目录后通过。均不计作通过项。
+
+**仍未完成：** 自动新建标签的内核兼容；真实线上微信与正式 EXE 完整验收；Google 成功返回结果；仅安装 CLI 的全新电脑获取官方运行组件；过长自定义数据目录兼容；macOS 原版扩展内核接入。当前 macOS 使用 WKWebView，不能将已有 DMG 构建成功或手动预览称为官方自动浏览已实现。没有把 CEF/CefSharp 文档中“支持部分扩展”的描述当成替代内核已验证，也未据此更换产品内核。
 
 ## 用户目标与不可替换的要求
 
@@ -1118,3 +1147,20 @@ Mac 更新前已在项目外 replacement-v0332 备份加密数据与两端旧包
 复查发现旧交付脚本以 WindowStyle Hidden 启动交互式主程序，本轮改为 Normal，避免继续使用隐藏窗口参数；不据此推导当前窗口是否可见。新脚本会核对五个实际解压资源、新后台进程路径及保存数据；PowerShell 语法已检查，尚未走到复制/启动分支，不能声称该分支已实机验收。所有本轮检查标签、服务器和独立子进程已关闭，用户 taste-skill 标签保留；Git 副本无关许可证指纹保持不变且未提交。
 
 最新综合摘要见项目外 delivery.json。官方 ChatGPT 扩展自动调用和完整主页复刻仍未完成，原始 goal 保持 active。
+
+### 0.3.32 Windows 正式替换完成（2026-11-01 09:41）
+
+用户再次确认已经关闭主窗口后，替换脚本实际核对旧进程已退出，再备份并原子替换唯一同名 EXE。正式 release/QQClaw.exe 现为 **0.3.32**，696832 bytes，SHA-256 `AEBFAC2BCBEF57EF5225B6E36D16BE88C3CCE9A723AFB3209B84459D1ACEE875`；已使用 Normal 参数启动，PID **95560**，资源目录 `C:\Users\admin\AppData\Local\QQClaw\app\6C87004412749884`。
+
+五个解压资源均与候选摘要一致，新 node 后台确实来自该资源目录；backend.log 的 2026-11-01T01:41:50.643Z 行记录“后端已启动”。启动后加密保存的数据仍为 1 个账户、1 条保留身份、3 个会话/134 条消息，原绑定、threadId、每条正文/时间及 Provider URL/Key 比较全 true。证据在项目外 windows-install-status.json、replacement-v0332/replacement.json、before.json、after.json；旧包和加密备份均在项目外。前面“仍待退出”的记录仅是此前现场。
+
+这证明正式替换、新资源/后台启动及保存数据保留；本轮原生桌面控制仍被禁用，未把它扩大为完整独立 EXE GUI、真实微信或官方扩展自动浏览验收。Mac 唯一 DMG 已是同代码 head 的 0.3.32。官方扩展接入和完整主页目标继续 active。
+## 2026-11-01 官方扩展接入开发检查点（源码未发布）
+
+正式 Windows/Mac 成品继续为已交付的 0.3.32。源码新增 `browser-access.mjs`、`official-browser.mjs`、`codex-approvals.mjs`、`approval-forms.mjs`、`OfficialBrowser.cs` 并接入 Codex/App/微信/原生浏览器；这些不在 .32 成品里。没有重新要求退出，没有停止正式 QQClaw PID 95560 或原 Chrome native host。
+
+产品浏览器组件链路已通过一项实际页面检查：真实独立 Codex 0.157.1、官方签名 Node REPL 和未修改 browser runtime，连接经过发布者和应用归属校验的官方 native host，在 QQClaw WebView2 加载原版 ChatGPT 扩展。CUA 在检查页点击网站确认后，扩展打开独立本机测试页，实际 DOM 含 `Official extension integration fixture` 及说明，官方返回截图与正文一致。**Responses 为本机协议夹具，不是真实 AI 决策、线上微信、完整正式 EXE GUI 或 Google 热点搜索验收。** 所有实现和失败索引见专项文档最新章节。
+
+证据目录：`C:/Users/admin/AppData/Local/Temp/qqclaw-host-contract-20261101/product-component-fbe0e40549c64c9994c7e280a525e112/`。`official-extension-page.jpg` 是官方工具实际返回截图；`consent-result-ui.png` 是 CUA 检查页证据，不是产品主页图。`result.json` 与 `requests-and-events.json` 保存真实工具状态、回合、确认与页面结果。另有 9 项新增确认/生命周期/微信额度检查通过，开发中的既有 119 项回归通过。未把首次脚本策略失败、原生输出错误、过长目录 LevelDB 故障、首次 UI 夹具路由崩溃或历史测试失败隐藏成成功，具体路径见专项文档。
+
+当前剩余工作包括真实模型、Google、完整 UI 与微信闭环、安装依赖入口和 Mac 扩展适配。网站确认不能变成自动同意全部，不能借用开发聊天/IAB/其他应用的授权，不能用自建远控替代。原始 goal 仍为 active，不作整体完成交付。

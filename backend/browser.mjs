@@ -10,8 +10,8 @@ export function browserUrl(value) {
   return url.href;
 }
 
-// Official Desktop plugins depend on a signed access service owned by Desktop.
-// Do not inherit another worker's bridge and do not replace it with our own MCP.
+// Never inherit a parent worker's browser services. A prepared QQClaw-owned
+// official runtime may explicitly override node_repl after these arguments.
 export function browserIsolationArguments() {
   return ["browser", "unified-computer-use", "chrome", "computer-use"]
     .flatMap((name) => ["-c", `plugins.${name}@openai-bundled.enabled=false`])
@@ -65,7 +65,7 @@ export async function officialBrowserStatus({ platform = process.platform, env =
     browsers.push({ name, installed, detection: installed ? "installed" : unknown ? "unknown" : "absent" });
   }
   return { connected: false, available: false, browsers,
-    reason: "QQClaw 尚未接入官方扩展的授权宿主；检测到安装也不代表能够调用。",
+    reason: "当前会话尚未检测官方扩展连接；安装检测不代表启用或连接成功。",
     documentation: "https://developers.openai.com/codex/chrome-extension",
     store: "https://chromewebstore.google.com/detail/chatgpt/hehggadaopoacecdllhhajmbjkdcmajg" };
 }

@@ -65,7 +65,8 @@ internal static class Program {
     internal static bool RestartRequested;
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool SetDllDirectory(string path);
     [STAThread]
-    static void Main() {
+    static void Main(string[] commandLine) {
+        if (commandLine.Length > 0 && commandLine[0] == "--official-browser-pipes") { Environment.ExitCode = OfficialBrowserMetadata.Run(commandLine); return; }
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         try {
@@ -383,6 +384,7 @@ internal sealed class DesktopWindow : Form {
             CreateNoWindow = true, WorkingDirectory = Program.DataDirectory, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
         info.EnvironmentVariables["PATH"] = FullPathEnvironment(); info.EnvironmentVariables["QQCLAW_DATA_DIR"] = Program.DataDirectory;
+        info.EnvironmentVariables["QQCLAW_RUNTIME_DIR"] = Program.RuntimeDirectory;
         var child = new Process { StartInfo = info, EnableRaisingEvents = true }; backend = child;
         child.OutputDataReceived += delegate(object sender, DataReceivedEventArgs args) { if (args.Data != null) OnBackendLine(child, args.Data); };
         // Never forward backend stderr: it may include model prompts or credentials from a failed dependency.

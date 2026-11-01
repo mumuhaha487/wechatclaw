@@ -237,6 +237,7 @@ const references = [
   "System.Drawing.dll",
   "System.Windows.Forms.dll",
   "System.Security.dll",
+  "System.Management.dll",
   "System.Web.Extensions.dll",
   "System.IO.Compression.dll",
   "System.IO.Compression.FileSystem.dll",
@@ -258,6 +259,7 @@ const args = [
   ...references.map((r) => `/reference:${r}`),
   path.join(root, "native", "Program.cs"),
   path.join(root, "native", "BrowserHost.cs"),
+  path.join(root, "native", "OfficialBrowser.cs"),
   buildInfo,
 ];
 try {

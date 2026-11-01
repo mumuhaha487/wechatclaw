@@ -101,6 +101,32 @@ internal sealed class BrowserHost {
             session = new BrowserSession(owner, profile); sessions[owner] = session;
         }
         if (session.Disposed) throw new Exception("浏览器会话已关闭。");
+        if (action == "prepareOfficial") {
+            if (Value(p, "extensionId") != "hehggadaopoacecdllhhajmbjkdcmajg") throw new Exception("只允许官方 ChatGPT 扩展。");
+            string extensionPath = Path.GetFullPath(Value(p, "extensionPath"));
+            if (!File.Exists(Path.Combine(extensionPath, "manifest.json"))) throw new Exception("未找到官方 ChatGPT 扩展文件。");
+            string automationProfile = Value(p, "profile");
+            if (!System.Text.RegularExpressions.Regex.IsMatch(automationProfile, "^[0-9a-f]{32}$")) throw new Exception("浏览器用户目录无效。");
+            if (session.OfficialEnvironment == null) {
+                var options = new CoreWebView2EnvironmentOptions(); options.AreBrowserExtensionsEnabled = true;
+                session.OfficialEnvironment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(Program.DataDirectory, "browsers", "official-" + automationProfile), options);
+                session.OfficialProfile = "official-" + automationProfile;
+            }
+            if (session.Disposed) throw new Exception("浏览器会话已关闭。");
+            var tab = session.Tabs.Find(t => t.IsOfficial);
+            if (tab == null) tab = NewTab(session);
+            await tab.EnsureReady(session.OfficialEnvironment);
+            if (session.Disposed || !session.Tabs.Contains(tab)) throw new Exception("浏览器标签页已关闭。");
+            var installed = await tab.Web.CoreWebView2.Profile.GetBrowserExtensionsAsync();
+            var extension = installed.FirstOrDefault(item => item.Id == "hehggadaopoacecdllhhajmbjkdcmajg");
+            if (extension == null || session.OfficialExtensionPath != extensionPath) extension = await tab.Web.CoreWebView2.Profile.AddBrowserExtensionAsync(extensionPath);
+            if (extension.Id != "hehggadaopoacecdllhhajmbjkdcmajg" || !extension.IsEnabled) throw new Exception("官方 ChatGPT 扩展未启用，已停止连接。");
+            if (session.Disposed || !session.Tabs.Contains(tab)) throw new Exception("浏览器标签页已关闭。");
+            session.OfficialExtensionPath = extensionPath;
+            Publish(session, false);
+            return new { applicationPath = Application.ExecutablePath, applicationProcessId = Process.GetCurrentProcess().Id, browserProcessId = (int)tab.Web.CoreWebView2.BrowserProcessId,
+                extensionId = extension.Id, tabId = tab.Id };
+        }
         if (action == "restoreTab") {
             string url = Value(p, "url");
             if (url != "" && !Allowed(url)) throw new Exception("浏览器仅支持 HTTP/HTTPS 网页。");
@@ -138,8 +164,8 @@ internal sealed class BrowserHost {
     }
     private BrowserTab NewTab(BrowserSession session) {
         if (session.Tabs.Count >= 12) throw new Exception("最多打开 12 个标签页，请先关闭不用的页面。");
-        var tab = new BrowserTab(parent, session.Profile, () => Publish(session, false), Downloads, session.Owner, History,
-            opener => OpenWindow(session, opener), page => CloseTab(session, page), (page, command) => Shortcut(session, page, command));
+        var tab = new BrowserTab(parent, session.OfficialProfile ?? session.Profile, () => Publish(session, false), Downloads, session.Owner, History,
+            opener => OpenWindow(session, opener), page => CloseTab(session, page), (page, command) => Shortcut(session, page, command), session.OfficialEnvironment);
         session.Tabs.Add(tab); session.Active = tab;
         return tab;
     }
@@ -269,6 +295,8 @@ internal sealed class BrowserSession {
     internal long Revision;
     internal bool Disposed;
     internal string Owner, Profile;
+    internal string OfficialProfile, OfficialExtensionPath;
+    internal CoreWebView2Environment OfficialEnvironment;
     internal readonly List<BrowserTab> Tabs = new List<BrowserTab>();
     internal BrowserTab Active;
     internal BrowserSession(string owner, string profile) { Owner = owner; Profile = profile; }
@@ -292,6 +320,8 @@ internal sealed class BrowserTab {
     private readonly Action changed;
     private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = 8 * 1024 * 1024, RecursionLimit = 100 };
     private readonly string profile;
+    private readonly CoreWebView2Environment defaultEnvironment;
+    internal bool IsOfficial { get { return defaultEnvironment != null; } }
     private Task ready;
     private bool stopping;
     private bool closed;
@@ -310,8 +340,9 @@ internal sealed class BrowserTab {
     private readonly Func<BrowserTab, Task<BrowserTab>> openWindow;
     private readonly Action<BrowserTab> closeWindow;
     internal BrowserTab(Form parent, string profile, Action changed, BrowserDownloads downloads, string owner, BrowserHistory history,
-        Func<BrowserTab, Task<BrowserTab>> openWindow, Action<BrowserTab> closeWindow, Action<BrowserTab, string> shortcut) {
+        Func<BrowserTab, Task<BrowserTab>> openWindow, Action<BrowserTab> closeWindow, Action<BrowserTab, string> shortcut, CoreWebView2Environment defaultEnvironment = null) {
         this.profile = profile; this.changed = changed;
+        this.defaultEnvironment = defaultEnvironment;
         this.downloads = downloads; this.owner = owner; this.history = history;
         this.openWindow = openWindow; this.closeWindow = closeWindow;
         Web.KeyDown += delegate(object sender, KeyEventArgs e) {
@@ -340,7 +371,7 @@ internal sealed class BrowserTab {
     }
     internal async Task EnsureReady(CoreWebView2Environment environment = null) {
         if (closed) throw new Exception("浏览器标签页已关闭。");
-        ready = ready ?? Initialize(environment);
+        ready = ready ?? Initialize(environment ?? defaultEnvironment);
         if (!await AwaitCompletion(ready, closedSignal.Task)) throw new Exception("浏览器标签页已关闭。");
         if (closed || Web.IsDisposed) throw new Exception("浏览器标签页已关闭。");
     }

@@ -40,6 +40,7 @@ export class WeChatBridge {
     this.busy = new Set();
     this.typing = new Map();
     this.pollErrors = new Map();
+    this.confirmations = new Map();
     this.login = null;
     this.buffers = new PromptBuffer({ maxItems: 50, ttlMs: 10 * 60 * 1000 });
   }
@@ -449,6 +450,41 @@ export class WeChatBridge {
     await this.store.save();
     await this.flushProgress(account, item);
   }
+  async requestApproval(sessionId, taskKey, request, respond) {
+    const account = this.store.state.accounts.find(value => value.pending.some(item => item.key === taskKey && item.sessionId === sessionId && item.running));
+    const item = account?.pending.find(value => value.key === taskKey && value.sessionId === sessionId && value.running);
+    if (!account || !item || !this.running || this.confirmations.has(`${sessionId}:${request.requestId}`)) return;
+    const code = randomUUID().replaceAll("-", "").slice(0, 8);
+    const record = { sessionId, requestId: request.requestId, accountId: account.id, senderId: item.message.from_user_id,
+      code, consent: request.consent ?? null, kind: request.kind, respond,
+      summary: [request.params.reason, request.params.command].filter(Boolean).join("\n").slice(0, 1000) };
+    this.confirmations.set(`${sessionId}:${request.requestId}`, record);
+    const simple = request.kind !== "form" || record.consent !== null;
+    const notice = ["【需要确认】", String(request.params.reason || "Codex 请求确认操作。").slice(0, 900),
+      request.params.command ? String(request.params.command).slice(0, 500) : "",
+      simple ? `允许本次：/allow ${code}\n拒绝：/deny ${code}` : `此确认需要填写表单，请在 QQClaw 中填写。\n拒绝：/deny ${code}`].filter(Boolean).join("\n");
+    // A consent request is a real reply, too. Preserve two result slots and
+    // bundle the final answer/files when needed. /status can show the pending
+    // consent using a fresh user-message context if the old context is full.
+    if (this.replySlots(account, item.message) <= 2) return;
+    await this.sendReply(account, item, `qc-a-${item.key.slice(0, 16)}-${code}`, notice);
+    await this.store.save();
+  }
+  dismissApproval(sessionId, requestId) {
+    this.confirmations.delete(`${sessionId}:${requestId}`);
+  }
+  pendingApprovals(accountId, senderId) {
+    return [...this.confirmations.values()].filter(value => value.accountId === accountId && value.senderId === senderId);
+  }
+  async respondApproval(account, senderId, code, allow) {
+    const record = this.pendingApprovals(account.id, senderId).find(value => value.code === String(code).toLowerCase());
+    if (!record) return "确认编号无效或已结束，请发送 /status 查看当前状态。";
+    if (allow && record.kind === "form" && record.consent === null) return "这项确认需要填写内容，请在 QQClaw 中完成；微信可以使用 /deny 拒绝。";
+    try { await record.respond(allow, allow ? record.consent ?? undefined : undefined); }
+    catch (error) { this.confirmations.delete(`${record.sessionId}:${record.requestId}`); throw error; }
+    this.confirmations.delete(`${record.sessionId}:${record.requestId}`);
+    return allow ? "已允许本次操作，任务将继续。" : "已拒绝本次操作。";
+  }
   async flushProgress(account, item) {
     const session = this.store.state.sessions.find((s) => s.id === item.sessionId);
     if (session?.streamReplies === false) return;
@@ -538,7 +574,7 @@ export class WeChatBridge {
         if (!item.sent && !(item.media || []).some((media) => media.sent || media.receipt)) {
           const plan = await planWeChatResult({ root: this.store.directory, accountId: account.id,
             taskKey: item.key, chunks: item.chunks, media: item.media || [],
-            slots: Math.max(3, this.replySlots(account, item.message)) });
+            slots: Math.max(1, this.replySlots(account, item.message)) });
           Object.assign(item, plan);
         }
         item.resultPrepared = true;
@@ -689,6 +725,7 @@ export class WeChatBridge {
   close() {
     this.running = false;
     this.login = null;
+    this.confirmations.clear();
     return Promise.all([...this.typing.values()].map((stop) => stop()));
   }
 }

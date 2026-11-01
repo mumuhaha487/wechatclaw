@@ -1,5 +1,49 @@
 # 官方 ChatGPT 扩展接入调查
 
+## 最新进展：真实模型与隔离微信消息流程已通过，完整目标仍未完成
+
+正式成品保持 0.3.32。以下实现仍属于未发布源码，不能把旧版 EXE/DMG 当成已包含本次接入。
+
+真实配置模型 `gpt-6.1-sol/xhigh` 已经使用原版官方扩展读回本机网页标题与正文；进一步通过产品 App、WeChatBridge、CodexClient、原生 BrowserHost 和官方组件，完成隔离微信 API 的接收、网站确认、`/allow`、继续浏览、返回结果。此轮 5 次官方浏览器工具调用、1 次网站确认，微信接口记录 4 条消息，typing 开始/结束正常，待确认与待发送均为 0。模型请求不是 Responses 夹具，微信网络与保存接口是夹具；检查宿主只有浏览器/解密接口，文件快照显示不可用，不能把它称为线上微信、持久化或完整 EXE GUI 验收。
+
+自动新建标签**未修复**。静态审查与组件实测均表明，原版扩展调用 `chrome.windows.getAll({windowTypes:["normal"]})`，WebView2 只有 `popup`；接管现有标签后，`browser.tabs.new()` 仍报 `Created browser window has no id`。原生宿主记录到了新窗口事件，但扩展未得到可用普通窗口 ID。源码现明确返回 `tabCreation:false`，模型指引与连接原因披露限制；操作已有专用标签不能算新建标签已实现。
+
+Google 实测已用官方扩展在已有空白页打开主页、输入并提交“2026年11月1日 AI 热点”，随后进入 Google 的验证码页；未解验证码或绕过，未取得搜索结果。该次还受用户全局 AGENTS.md 影响，发生一次与任务无关的首相 `webSearch`，所以**不能判全程仅用官方扩展通过**。已按实际读取的[官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)加入 `web_search="disabled"`，实际安装版 `config/read` 确认生效；修复后的隔离微信真实模型检查独立搜索和命令抓取均为 0。全局 AGENTS.md 未改动。
+
+当前 119 项既有回归及 10 项许可/消息预算/失败清理检查通过。新增失败清理覆盖浏览器许可服务启动异常时关闭本地 Provider 转接监听端口，再次连接可成功。CUA 已检查填写、密码掩码、刷新/切会话保留、空值/超范围拒绝、拒绝与同意恢复；1280×720 时确认卡高约 374px、内容内部滚动，0 未处理前端错误。未发布 Windows 编译成功，仍为 .32 manifest，未替换正式程序。
+
+证据根 `C:/Users/admin/AppData/Local/Temp/qqclaw-host-contract-20261101/`：真实模型首次本机页为 `product-component-5779c1b6b4be4257a186aaa6c9b6d459`；新建窗口负例为 `window-component-41dad7ef6fea45b28922a81eaa28d5ec`；Google 失败为 `window-component-5c0c399e25304f059642852f3c7380db`；修复后真实模型与隔离微信为 `window-component-c1621324a04e43d69567af820c30575f`，含 `verification.json`、实际请求/事件、接口消息及 `official-page.jpg`。配置确认见 `search-config/verification.json`；表单见 `approval-ui`；编译见 `development-build/build.json`。
+
+仍需解决新建标签内核兼容、Google 结果、真实微信及正式 GUI、全新电脑官方资源安装、过长数据目录和 macOS。运行组件仍从官方安装位置发现，未提供仅装 CLI 的全新电脑完整路径；WKWebView 尚未接通原版 Chrome 扩展。CEF/CefSharp 文档已作初步阅读，但未验证官方 nativeMessaging 和新窗口能力，未更换产品内核。
+
+证据完整性说明：旧运行器覆盖了最早的 `regression-first-expanded.tap`，故不再将其称作完整原始失败输出；已修复运行器并记录于 `regression-evidence-note.md`。本轮两个测试准备错误（夹具引号、未创建独立 CODEX_HOME）均保留为失败，不计通过项。更多过程记录和正式成品状态见 [result.md](../result.md) 首节。
+
+## 首次接入组件记录（历史开发步骤，未发布）
+
+2026-11-01，源码新增接入实现。正式 Windows/Mac 成品仍为 0.3.32；下述功能未构建进正式包，不得用旧版成品的源码一致性检查覆盖这些新增文件。本文下方“尚未找到连接实现”等段落保留为历史调查，不再表示最新组件能力。
+
+实际链路是：QQClaw `CodexClient` → 真实独立 Codex 0.157.1 回合 → 未修改且签名有效的官方 Node REPL → 原安装位置的官方 browser-client/browser-service → QQClaw 自己按真实活动 thread/turn 签署的本机任务许可 → 经过签名和所属进程验证的官方 native host → QQClaw WebView2 内加载的原版 ChatGPT 扩展。扩展 ID 为 `hehggadaopoacecdllhhajmbjkdcmajg`，版本 1.26.1020.11845。没有把 vendor 文件复制进项目，没有借用开发聊天、Desktop/IAB 的管道、令牌或站点许可，没有移除官方校验或改用自建网页驱动。
+
+原生元数据检测要求 helper 与应用使用同一个 EXE，调用 helper 的 Node 必须是该应用的子进程；目标 WebView2 必须属于同一个应用，官方 native host 只能是这个 WebView2 的子进程。验证 OpenAI/Microsoft 发布者及数字签名后，仅查询该 native host 的管道句柄名称，拒绝不唯一或已变化的进程。这个检测不读取网页、浏览器登录数据或其他聊天。
+
+已实际完成一次完整**组件**检查：在 CUA 检查页点击本次站点确认后，官方扩展打开独立本机测试页，返回匹配的 DOM 正文及真实截图。使用的是产品 `CodexClient`、`prepareOfficialBrowser`、`BrowserHost.cs`、`OfficialBrowser.cs`，模型 Responses 为 localhost 协议夹具；不是实际 AI 决策、正式 EXE GUI 或真实微信验收。关键证据在项目外 `C:/Users/admin/AppData/Local/Temp/qqclaw-host-contract-20261101/product-component-fbe0e40549c64c9994c7e280a525e112/`：`result.json`、`requests-and-events.json`、`native-helper.json`、`official-extension-page.jpg`、`consent-result-ui.png`。
+
+| 新增/修改索引 | 职责 |
+| --- | --- |
+| `backend/browser-access.mjs` | 内存 Ed25519 密钥、本机长度帧协议、严格活动任务许可、重放拒绝与关闭；只代表 QQClaw 自己的任务授权，不能称为 OpenAI 签发的身份 |
+| `backend/official-browser.mjs` | 读取官方安装路径和扩展 manifest，核对官方 ID；原生所属进程检测；独立 MCP 配置与运行指引 |
+| `native/OfficialBrowser.cs` | WinVerifyTrust、发布者/父子进程校验、限定 PID 的只读管道元数据查询；以原程序 helper 模式运行，不依赖 PowerShell 脚本策略 |
+| `native/BrowserHost.cs` | 每个会话独立官方扩展环境，引用安装目录的原版扩展，与应用 UI 的 WebView 隔离 |
+| `backend/codex.mjs` | 原生回合的许可生命周期，官方 MCP 配置、表单确认、过期拒绝/清理；已结束任务与未知子代理不授权 |
+| `backend/codex-approvals.mjs`、`ui/approval-forms.mjs` | 保留受支持表单的字段和校验，敏感输入只在当前 UI 内存；未知 schema 拒绝；表单与源请求绑定 |
+| `backend/bridge.mjs`、`backend/wechat-commands.mjs` | 微信确认编号绑定账户/发送人/任务；`/allow`、`/deny` 可在任务运行中处理；桌面任务不转发微信 |
+
+新增 9 项任务/确认/微信额度检查通过；既有 119 项回归在接入开发中通过，后续改变需继续按影响验证。站点确认也计入 10 条推送额度：晚到的确认最多占用剩余一条，保留两条用于最终摘要和结果包；额度不足时 `/status` 使用用户新消息上下文展示具体待确认动作。六条过程上限保持；多个/超大结果包可能仍需用户新消息才能续传，不能保证无限附件在固定十条内全部投递。
+
+实际失败及修复记录：首次原生通道检测用 PowerShell 文件，被当前系统执行策略拒绝，已改为程序内 helper，未修改系统策略；C# JSON 数组类型和无控制台 UTF-8 输出有两次失败，均已修正。深层测试数据目录下官方扩展 LevelDB 报 `MANIFEST-000001 ... Unable to create writable file`，导致官方列表为空；改用较短、独立的测试数据路径后成功。对过长自定义数据目录仍需兼容性处理，不能掩盖成“未安装扩展”。禁用 DevTools 的对照复测没有解决空列表，产品没有因此开放 DevTools。普通 `approvalPolicy=never` 会在 app-server 内直接拒绝站点询问，现对已配置官方浏览器的自动模式使用 granular：仅允许 MCP 确认到达用户，沙箱/规则/权限升级不因此获得允许；ask 模式仍走原确认政策。首次检查页漏处理 favicon 导致夹具服务器退出，修复路由后重新检查才走通。首次新增测试缺 senderId，修正合法微信消息夹具后通过；一次旧回归被不兼容的 client stub 挂住，修正可选 client entry 后重新通过。扩大运行历史废弃测试曾有 5 项失败，原始输出保留为 `regression-first-expanded.tap`，不能隐去或算入当前基线通过数。
+
+仍需完成：真实配置模型驱动的浏览、Google 搜索、完整正式界面表单/关闭/多会话/取消/重启回归、微信完整闭环、干净机器官方运行组件安装入口和 macOS 扩展内核接入。目前运行组件发现仍依赖已经安装的官方资源；这不满足仅装 CLI 的全新电脑条件。WKWebView 尚不具备此条实现，不把外部 Chrome 或旧手动预览当作 Mac 已实现。原始 goal 保持 active。
+
 更新：2026-11-01。初始静态调查快照对应 **0.3.26**；最新独立实例复查见0.3.29补充。产品构建和导航修复见result.md，本文件不代表官方自动浏览验收通过。
 
 0.3.27 补充：本版新增的是用户手动关闭标签后的恢复，没有新增官方扩展授权或模型自动浏览；本调查快照继续保留。
