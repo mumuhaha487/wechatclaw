@@ -44,9 +44,20 @@ try {
     await json("download.json", { url: response.url, bytes, sha256: hash.digest("hex"), etag: response.headers.get("etag") });
     phase = "mount";
     await fs.mkdir(mount, { recursive: true });
-    await execute("/usr/bin/hdiutil", ["attach", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mount, file]);
+    const attach = await execute("/usr/bin/hdiutil", ["attach", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mount, file]);
     mounted = true;
-    app = path.join(mount, "Codex.app");
+    const rootEntries = await fs.readdir(mount, { withFileTypes: true }), candidates = [];
+    async function findApps(directory, depth = 0) {
+      for (const item of await fs.readdir(directory, { withFileTypes: true })) if (item.isDirectory()) {
+        const file = path.join(directory, item.name);
+        if (item.name.endsWith(".app")) candidates.push(file);
+        else if (depth < 1 && !item.name.startsWith(".")) await findApps(file, depth + 1);
+      }
+    }
+    await findApps(mount);
+    await json("disk-contents.json", { attach: attach.stdout, entries: rootEntries.map(item => item.name), applications: candidates.map(file => path.relative(mount, file)) });
+    if (candidates.length !== 1) throw new Error("The official disk image has an unexpected application layout; see disk-contents.json");
+    app = candidates[0];
   }
   phase = "signature";
   await execute("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
