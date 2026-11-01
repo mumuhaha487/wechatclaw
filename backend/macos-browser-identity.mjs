@@ -67,7 +67,7 @@ export async function inspectMacBrowserIdentity({ installation, transport, ident
     };
     const clientUrl = pathToFileURL(paths.browserClientPath).href;
     await call(`var {setupBrowserRuntime}=await import(${JSON.stringify(clientUrl)}); var agent=await setupBrowserRuntime()`);
-    await call('var owned=await agent.browsers.list(); if(owned.length!==1 || owned[0].type!=="extension") throw Error("Exactly one bound official extension browser is required"); var browser=await agent.browsers.get(owned[0].id); nodeRepl.write(await browser.documentation())');
+    await call('var owned=[]; for(var attempt=0;attempt<12;attempt++){owned=await agent.browsers.list();if(owned.length) break; await new Promise(resolve=>setTimeout(resolve,250));} if(owned.length!==1 || owned[0].type!=="extension") throw Error("Exactly one bound official extension browser is required: "+JSON.stringify(owned)); var browser=await agent.browsers.get(owned[0].id); nodeRepl.write(await browser.documentation())');
     const result = await call('await browser.nameSession("🔎 QQClaw 连接检测"); var candidates=await browser.user.openTabs(); nodeRepl.write("QQCLAW_PROFILE_IDENTITY="+JSON.stringify({matches:candidates.filter(tab=>tab.url===' + JSON.stringify(identityUrl) + ').length}))');
     const observations = (result.content || []).filter(item => item.type === "text").flatMap(item => item.text.split(/\r?\n/)).filter(line => line.startsWith("QQCLAW_PROFILE_IDENTITY="));
     if (observations.length !== 1) throw new Error("官方接口未返回可核验的会话标记。");

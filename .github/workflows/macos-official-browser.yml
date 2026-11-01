@@ -134,7 +134,7 @@ jobs:
                         guard let tiff=image.tiffRepresentation,let bitmap=NSBitmapImageRep(data:tiff),let png=bitmap.representation(using:.png,properties:[:]) else { throw failure("The product frontend screenshot failed") }
                         try png.write(to:URL(fileURLWithPath:ProcessInfo.processInfo.environment["QQCLAW_HOST_IMAGE"]!))
                         print("HOST_REQUEST_SAVED_QUIT");host.requestCefQuit()
-                      } catch { errorText=error.localizedDescription;host.backend?.killGroup();runtime.close() }
+                      } catch { errorText=error.localizedDescription;print("HOST_FAILURE " + errorText);host.backend?.killGroup();runtime.close() }
                     }
                   }
                 }

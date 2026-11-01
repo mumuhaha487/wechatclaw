@@ -244,6 +244,7 @@ final class Backend: @unchecked Sendable {
         switch value["event"] as? String {
         case "root-created":
             if web == nil { applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification)) }
+        case "root-selected": window = cef?.window
         case "close-requested": requestCefQuit()
         default: break
         }

@@ -27,6 +27,9 @@ CefRefPtr<CefWindow> root;
 CefRefPtr<CefBrowserView> browserView;
 CefRefPtr<CefBrowser> browser;
 std::map<int, CefRefPtr<CefBrowser>> pages;
+std::map<int, CefRefPtr<CefWindow>> windows;
+int windowSequence = 0;
+bool rootReported = false;
 std::map<std::string, CefRefPtr<CefRequestContext>> profiles;
 std::map<int, std::string> owners;
 std::map<int, CefRefPtr<CefBrowserView>> views;
@@ -37,7 +40,9 @@ CefRect requestedBounds;
 bool requestedVisible = false, hasBounds = false;
 std::string layoutSignature;
 void layoutBrowser();
-void selectBrowser(CefRefPtr<CefBrowser> value);
+bool selectBrowser(CefRefPtr<CefBrowser> value);
+void openBrowserWindow(CefRefPtr<CefBrowserView> view, bool activate = true);
+void activateWindow(CefRefPtr<CefWindow> window, CefRefPtr<CefBrowserView> view);
 NSString* ownerFor(CefRefPtr<CefBrowser> value) {
   for (const auto& entry : profiles) if (entry.second->IsSame(value->GetHost()->GetRequestContext()))
     return @(entry.first.c_str());
@@ -50,12 +55,13 @@ void emit(NSDictionary* value) {
     notify(text.UTF8String);
   }
 }
-NSWindow* nativeWindow() {
-  if (!root) return nil;
-  id handle = (__bridge id)(void*)root->GetWindowHandle();
+NSWindow* nativeWindowFor(CefRefPtr<CefWindow> window) {
+  if (!window) return nil;
+  id handle = (__bridge id)(void*)window->GetWindowHandle();
   if ([handle isKindOfClass:NSWindow.class]) return handle;
   return [handle isKindOfClass:NSView.class] ? [(NSView*)handle window] : nil;
 }
+NSWindow* nativeWindow() { return nativeWindowFor(root); }
 }
 
 // WebKit draws the application chrome above the Views root. Its hole reveals
@@ -117,7 +123,7 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
     owners[value->GetIdentifier()] = owner.UTF8String;
     auto view = CefBrowserView::GetForBrowser(value);
     if (view) views[value->GetIdentifier()] = view;
-    if (root && view) selectBrowser(value);
+    if (view && browserView && browserView->IsSame(view)) browser = value;
     emit(@{@"event": @"browser-created", @"tabId": @(value->GetIdentifier()), @"owner": owner});
     if (closing) value->GetHost()->CloseBrowser(true);
   }
@@ -132,7 +138,9 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
     }
     emit(@{@"event": @"browser-closed", @"tabId": @(value->GetIdentifier()), @"owner": owner});
     if (closing && pages.empty()) {
-      if (root) root->Close(); else CefQuitMessageLoop();
+      const auto pendingWindows = windows;
+      for (const auto& entry : pendingWindows) entry.second->Close();
+      if (windows.empty()) CefQuitMessageLoop();
     }
   }
   void OnLoadEnd(CefRefPtr<CefBrowser> value, CefRefPtr<CefFrame> frame, int status) override {
@@ -164,7 +172,7 @@ class BrowserViewDelegate final : public CefBrowserViewDelegate {
     auto value = popup->GetBrowser();
     if (!value) return false;
     views[value->GetIdentifier()] = popup;
-    selectBrowser(value);
+    openBrowserWindow(popup, browserView && opener->IsSame(browserView));
     emit(@{@"event": @"popup-adopted", @"tabId": @(value->GetIdentifier()), @"owner": ownerFor(value)});
     return true;
   }
@@ -173,53 +181,74 @@ class BrowserViewDelegate final : public CefBrowserViewDelegate {
 };
 class RootDelegate final : public CefWindowDelegate {
  public:
+  RootDelegate(CefRefPtr<CefBrowserView> view, bool activate) : view_(view), activate_(activate) {}
   void OnWindowCreated(CefRefPtr<CefWindow> window) override {
-    root = window;
-    window->AddChildView(browserView);
-    window->Show();
-    emit(@{@"event": @"root-created", @"sameProcess": @YES});
+    window->SetID(++windowSequence); windows[window->GetID()] = window;
+    window->AddChildView(view_);
+    if (activate_) activateWindow(window, view_); else window->Hide();
+    if (!rootReported) { rootReported = true; emit(@{@"event": @"root-created", @"sameProcess": @YES}); }
   }
   void OnWindowDestroyed(CefRefPtr<CefWindow> window) override {
-    root = nullptr; browserView = nullptr;
-    emit(@{@"event": @"root-closed"});
-    if (pages.empty()) CefQuitMessageLoop();
+    if (root && root->IsSame(window)) { root = nullptr; browserView = nullptr; browser = nullptr; }
+    windows.erase(window->GetID()); view_ = nullptr;
+    emit(@{@"event": @"root-closed", @"windowId": @(window->GetID())});
+    if (closing && pages.empty() && windows.empty()) CefQuitMessageLoop();
   }
   void OnLayoutChanged(CefRefPtr<CefView> view, const CefRect& bounds) override {
-    layoutBrowser();
+    if (root && view->IsSame(root)) layoutBrowser();
   }
   bool CanClose(CefRefPtr<CefWindow> window) override {
-    if (!closing) {
-      auto page = browserView ? browserView->GetBrowser() : nullptr;
-      if (page && page->GetHost()->IsReadyToBeClosed()) {
-        // Closing a page is different from closing the application. Detach
-        // its public Views parent before completing the mandatory close so
-        // Chrome does not destroy the window that also owns the composer.
-        auto retiring = browserView;
-        // Defer destruction until CanClose's native callback has returned.
-        // Removing a view can itself synchronously destroy its browser.
-        dispatch_async(dispatch_get_main_queue(), ^{
-          if (!root) return;
-          const int identifier = page->GetIdentifier();
-          emit(@{@"event": @"tab-retiring", @"tabId": @(identifier), @"stage": @"before-detach", @"valid": @(page->IsValid())});
-          if (retiring->GetParentView() && retiring->GetParentView()->IsSame(root)) root->RemoveChildView(retiring);
-          if (browserView && browserView->IsSame(retiring)) {
-            browserView = nullptr; browser = nullptr;
-            shell.browserVisible = NO; [shell updateMask];
-          }
-          emit(@{@"event": @"tab-retiring", @"tabId": @(identifier), @"stage": @"after-detach", @"valid": @(page->IsValid())});
-          if (page->IsValid()) page->GetHost()->CloseBrowser(true);
-          emit(@{@"event": @"tab-close-detached", @"tabId": @(identifier), @"valid": @(page->IsValid())});
-        });
-      } else emit(@{@"event": @"close-requested"});
-      return false;
+    auto page = view_ ? view_->GetBrowser() : nullptr;
+    const bool ready = !page || !page->IsValid() || page->GetHost()->IsReadyToBeClosed();
+    // A Chrome Window's BrowserView must be destroyed before its Browser's
+    // UnownedUserDataHost. Complete mandatory window closes independently of
+    // the other windows. The existing WebKit UI can move to another window.
+    if (closing) return ready;
+    if (retiring_) return true;
+    if (ready) {
+      retiring_ = true;
+      if (root && root->IsSame(window)) {
+        CefBrowserSettings settings;
+        auto replacement = CefBrowserView::CreateBrowserView(new BrowserClient, "about:blank#qqclaw-shell", settings,
+            nullptr, nullptr, new BrowserViewDelegate);
+        requestedVisible = false;
+        openBrowserWindow(replacement);
+      }
+      return true;
     }
-    return pages.empty();
+    emit(@{@"event": @"close-requested"}); return false;
   }
   CefSize GetPreferredSize(CefRefPtr<CefView> view) override { return CefSize(1100, 760); }
   cef_runtime_style_t GetWindowRuntimeStyle() override { return CEF_RUNTIME_STYLE_CHROME; }
  private:
+  CefRefPtr<CefBrowserView> view_;
+  bool activate_, retiring_ = false;
   IMPLEMENT_REFCOUNTING(RootDelegate);
 };
+void openBrowserWindow(CefRefPtr<CefBrowserView> view, bool activate) {
+  CefWindow::CreateTopLevelWindow(new RootDelegate(view, activate));
+}
+void activateWindow(CefRefPtr<CefWindow> window, CefRefPtr<CefBrowserView> view) {
+  NSWindow* previous = nativeWindow();
+  QQClawCefShell* retainedShell = shell;
+  const bool changed = root && !root->IsSame(window);
+  CefRefPtr<CefWindow> previousRoot = root;
+  root = window; browserView = view; browser = view->GetBrowser();
+  NSWindow* next = nativeWindow();
+  if (changed && previous && next) {
+    [next setFrame:previous.frame display:NO]; next.minSize = previous.minSize;
+    next.title = previous.title; next.appearance = previous.appearance;
+    next.backgroundColor = previous.backgroundColor;
+  }
+  if (retainedShell && retainedShell.window != next) {
+    [retainedShell removeFromSuperview]; retainedShell.frame = next.contentView.bounds;
+    [next.contentView addSubview:retainedShell positioned:NSWindowAbove relativeTo:nil];
+    retainedShell.browserVisible = NO; [retainedShell updateMask];
+  }
+  if (changed) previousRoot->Hide();
+  layoutSignature.clear(); layoutBrowser(); window->Show();
+  if (changed) emit(@{@"event": @"root-selected", @"windowId": @(window->GetID())});
+}
 class BrowserApp final : public CefApp, public CefBrowserProcessHandler {
  public:
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
@@ -242,7 +271,7 @@ class BrowserApp final : public CefApp, public CefBrowserProcessHandler {
     NSString* url = options[@"url"] ?: @"about:blank";
     browserView = CefBrowserView::CreateBrowserView(new BrowserClient, url.UTF8String,
         settings, nullptr, nullptr, new BrowserViewDelegate);
-    CefWindow::CreateTopLevelWindow(new RootDelegate);
+    openBrowserWindow(browserView);
   }
  private:
   IMPLEMENT_REFCOUNTING(BrowserApp);
@@ -277,7 +306,7 @@ int QQClawCefStart(int argc, char** argv, const char* json, QQClawCefEvent event
   return 0;
 }
 void QQClawCefRun() { CefRunMessageLoop(); }
-void QQClawCefShutdown() { CefShutdown(); loader.reset(); }
+void QQClawCefShutdown() { profiles.clear(); CefShutdown(); loader.reset(); }
 void* QQClawCefWindow() { return (__bridge void*)nativeWindow(); }
 void* QQClawCefCreateShell(void* configuration) {
   NSWindow* window = nativeWindow();
@@ -296,23 +325,13 @@ void QQClawCefBrowserBounds(int x, int y, int width, int height, int visible) {
   layoutBrowser();
 }
 namespace {
-void selectBrowser(CefRefPtr<CefBrowser> value) {
-  if (!root || !value) return;
+bool selectBrowser(CefRefPtr<CefBrowser> value) {
+  if (!value) return false;
   auto found = views.find(value->GetIdentifier());
-  if (found == views.end()) return;
-  auto next = found->second;
-  auto parent = next->GetParentView();
-  CefRefPtr<CefWindow> previousWindow;
-  if (parent && !parent->IsSame(root)) {
-    auto panel = parent->AsPanel();
-    if (!panel) { emit(@{@"event": @"adoption-rejected", @"tabId": @(value->GetIdentifier())}); return; }
-    previousWindow = next->GetWindow(); panel->RemoveChildView(next);
-  }
-  if (browserView && !browserView->IsSame(next)) root->RemoveChildView(browserView);
-  browserView = next; browser = value;
-  if (!browserView->GetParentView()) root->AddChildView(browserView);
-  if (previousWindow && !previousWindow->IsSame(root) && previousWindow->GetChildViewCount() == 0) previousWindow->Close();
-  layoutSignature.clear(); layoutBrowser();
+  if (found == views.end()) return false;
+  auto target = found->second->GetWindow();
+  if (!target || !windows.count(target->GetID()) || !windows[target->GetID()]->IsSame(target)) return false;
+  activateWindow(target, found->second); return true;
 }
 void layoutBrowser() {
   if (!root || !browserView || !shell || !hasBounds) return;
@@ -369,8 +388,11 @@ void QQClawCefClose() {
   closing = true;
   const auto open = pages;
   if (!open.empty()) for (const auto& page : open) page.second->GetHost()->CloseBrowser(true);
-  else if (root) root->Close();
-  else CefQuitMessageLoop();
+  else {
+    const auto pendingWindows = windows;
+    for (const auto& entry : pendingWindows) entry.second->Close();
+    if (windows.empty()) CefQuitMessageLoop();
+  }
 }
 const char* QQClawCefControl(const char* json) {
   NSData* bytes = [NSData dataWithBytes:json length:strlen(json)];
@@ -393,9 +415,7 @@ const char* QQClawCefControl(const char* json) {
       profiles[owner.UTF8String] = context;
       CefBrowserSettings browserSettings;
       auto view = CefBrowserView::CreateBrowserView(new BrowserClient, "about:blank", browserSettings, nullptr, context, new BrowserViewDelegate);
-      if (browserView && browserView->GetParentView()) root->RemoveChildView(browserView);
-      browserView = view; root->AddChildView(view);
-      layoutSignature.clear(); layoutBrowser();
+      openBrowserWindow(view, request[@"activate"] == nil || [request[@"activate"] boolValue]);
       result = @{@"created": @YES, @"owner": owner, @"profileDirectory": directory};
     }
   } else {
@@ -419,7 +439,7 @@ const char* QQClawCefControl(const char* json) {
     } else if (!valid) result = @{@"error": @"The tab does not belong to this session"};
     else {
       auto value = found->second;
-      if ([action isEqual:@"selectTab"]) selectBrowser(value);
+      if ([action isEqual:@"selectTab"]) { if (!selectBrowser(value)) result = @{@"error": @"This tab is not embedded in an application window"}; }
       else if ([action isEqual:@"closeTab"]) value->GetHost()->CloseBrowser(false);
       else if ([action isEqual:@"open"]) {
         NSString* url = request[@"url"]; NSURL* parsed = [url isKindOfClass:NSString.class] ? [NSURL URLWithString:url] : nil;
