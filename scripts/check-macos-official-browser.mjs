@@ -99,7 +99,8 @@ async function launchOriginalRuntime(env) {
   try {
     await rpc("initialize", { clientInfo: { name: "qqclaw_mac_process_integration", version: "1" }, capabilities: { experimentalApi: true } });
     server.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }) + "\n");
-    const spawned = await rpc("process/spawn", { command: [path.join(runtime, manifest.paths.nodeReplPath)], processHandle, cwd: output, tty: false });
+    const spawned = await rpc("process/spawn", { command: [path.join(runtime, manifest.paths.nodeReplPath)], processHandle, cwd: output,
+      tty: false, streamStdin: true, streamStdoutStderr: true, outputBytesCap: 16 * 1024 * 1024 });
     await write("original-cli-process-spawn.json", { serverPid: server.pid, processHandle, result: spawned, documentation: "https://developers.openai.com/codex/app-server#process-execution" });
     const processes = (await exec("/bin/ps", ["-axo", "pid=,ppid=,comm="])).stdout.split("\n").flatMap(line => {
       const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/); return match ? [{ pid: Number(match[1]), parent: Number(match[2]), executable: match[3] }] : [];
