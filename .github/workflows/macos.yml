@@ -185,6 +185,7 @@ jobs:
           } finally { run('/usr/bin/hdiutil',['detach',mount]); }
           const app = path.join(temporary,'QQClaw.app');
           const binary = path.join(app,'Contents/MacOS/QQClaw');
+          if (run('/usr/bin/plutil',['-extract','LSMinimumSystemVersion','raw','-o','-',path.join(app,'Contents/Info.plist')]).trim() !== '13.5') throw new Error('Minimum macOS must match the bundled Node runtime');
           console.log(run('/usr/bin/lipo',[binary,'-archs']).trim());
           run('/usr/bin/codesign',['--verify','--deep','--strict',app]);
           const nodeArch = process.arch === 'arm64' ? 'arm64' : 'x64';

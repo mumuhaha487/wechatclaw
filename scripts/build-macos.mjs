@@ -10,7 +10,7 @@ import { bundleMacNode } from "./macos-node-runtime.mjs";
 
 const exec = promisify(execFile);
 const project = path.resolve(import.meta.dirname, "..");
-export const macTargets = ["arm64-apple-macosx13.3", "x86_64-apple-macosx13.3"];
+export const macTargets = ["arm64-apple-macosx13.5", "x86_64-apple-macosx13.5"];
 
 export async function macPayload(root, resources) {
   await fs.mkdir(path.join(resources, "ui"), { recursive: true });
@@ -77,7 +77,7 @@ export async function buildMac(root = project) {
         ? "3. 首次打开时，如系统询问是否打开，请确认。"
         : "3. 初次打开若被系统拦截，请先尝试打开一次，再到“系统设置 → 隐私与安全性”中选择“仍要打开”。当前版本尚未经过 Apple 公证。",
       "4. 已内置 Node.js 24 和 npm，无需另行安装 Node.js。首次进入软件，按照“前往配置”提示安装或选择 Codex 并登录。",
-      "", "支持 macOS 13.3 及更新版本，兼容 Apple Silicon 和 Intel。",
+      "", "支持 macOS 13.5 及更新版本，兼容 Apple Silicon 和 Intel。",
       "安装完成后可以推出此磁盘映像。删除应用不会主动删除对话数据。", ""
     ].join("\n"));
     const archive = path.join(temporary, "QQClaw.dmg");
@@ -96,7 +96,7 @@ export async function buildMac(root = project) {
     await run("/usr/bin/hdiutil", ["verify", archive]);
     const output = path.join(root, "release/macos/QQClaw.dmg");
     await fs.mkdir(path.dirname(output), { recursive: true }); await fs.copyFile(archive, output);
-    console.log(`已构建 ${output} · macOS 13.3+ · Apple Silicon / Intel Universal · ${identity === "-" ? "本地签名，尚未公证" : process.env.MACOS_NOTARY_PROFILE ? "Developer ID 已签名并公证" : "Developer ID 已签名，未公证"} · 已内置 Node / npm，Codex 按需安装`);
+    console.log(`已构建 ${output} · macOS 13.5+ · Apple Silicon / Intel Universal · ${identity === "-" ? "本地签名，尚未公证" : process.env.MACOS_NOTARY_PROFILE ? "Developer ID 已签名并公证" : "Developer ID 已签名，未公证"} · 已内置 Node / npm，Codex 按需安装`);
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
 }
 
