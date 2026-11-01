@@ -80,6 +80,7 @@ jobs:
           const code=await new Promise(resolve=>child.on('exit',resolve));if(code!==0)throw Error('Official browser component check failed');
           NODE
       - name: Run the product Swift Host with the packaged frontend and real empty backend
+        if: ${{ !cancelled() }}
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs/promises';import path from 'node:path';import {execFile} from 'node:child_process';import {promisify} from 'node:util';

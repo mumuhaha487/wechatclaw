@@ -195,10 +195,21 @@ class RootDelegate final : public CefWindowDelegate {
         // its public Views parent before completing the mandatory close so
         // Chrome does not destroy the window that also owns the composer.
         auto retiring = browserView;
-        window->RemoveChildView(retiring); browserView = nullptr; browser = nullptr;
-        shell.browserVisible = NO; [shell updateMask];
-        page->GetHost()->CloseBrowser(true);
-        emit(@{@"event": @"tab-close-detached", @"tabId": @(page->GetIdentifier())});
+        // Defer destruction until CanClose's native callback has returned.
+        // Removing a view can itself synchronously destroy its browser.
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if (!root) return;
+          const int identifier = page->GetIdentifier();
+          emit(@{@"event": @"tab-retiring", @"tabId": @(identifier), @"stage": @"before-detach", @"valid": @(page->IsValid())});
+          if (retiring->GetParentView() && retiring->GetParentView()->IsSame(root)) root->RemoveChildView(retiring);
+          if (browserView && browserView->IsSame(retiring)) {
+            browserView = nullptr; browser = nullptr;
+            shell.browserVisible = NO; [shell updateMask];
+          }
+          emit(@{@"event": @"tab-retiring", @"tabId": @(identifier), @"stage": @"after-detach", @"valid": @(page->IsValid())});
+          if (page->IsValid()) page->GetHost()->CloseBrowser(true);
+          emit(@{@"event": @"tab-close-detached", @"tabId": @(identifier), @"valid": @(page->IsValid())});
+        });
       } else emit(@{@"event": @"close-requested"});
       return false;
     }
