@@ -1,6 +1,32 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-11-01。正式 Windows EXE 与 Mac 唯一安装包为 **0.3.32**；Windows 已替换并启动，原有账户/会话/配置核对保留。工作区另有**未发布的官方扩展接入开发**，不能再将源码与 .32 成品视为完全一致。真实模型及隔离微信接口的官方浏览器流程已走通，但自动新建标签、Google 搜索结果、全新电脑安装与 macOS 接入尚未通过，主页全部 1:1 仍未完成，整体目标保持 active。以下旧版本章节属于当时现场。
+更新时间：2026-11-01。正式 Windows EXE 与 Mac 唯一安装包为 **0.3.32**；Windows 已替换并启动，原有账户/会话/配置核对保留。工作区另有**未发布的官方扩展接入开发**，不能再将源码与 .32 成品视为完全一致。真实模型及隔离微信接口的官方浏览器流程已走通；最新 CEF 沙箱组件还通过原版官方扩展的新建/读取/关闭标签检查，但**尚未接入产品内核**。Google 成功结果、全新电脑安装、macOS 及主页全部 1:1 仍未完成，整体目标保持 active。以下旧版本章节属于当时现场。
+
+## 最新组件进展：CEF 普通窗口与 Windows 沙箱（未发布、未替换产品内核）
+
+原 WebView2 的自动新建标签负例仍然成立。为解决原版扩展只寻找普通窗口的问题，本轮在项目外实现 CEF C API 原型：提供 `GetDefaultClient()`，管理扩展创建的普通窗口，按稳定 browser ID 维护生命周期。只将本实验进程自身创建的 HWND 归入自己的父窗口；并非接管系统 Chrome 或开发聊天浏览器。
+
+随后依照 [CEF 官方沙箱说明](https://chromiumembedded.github.io/cef/sandbox_setup.html)，使用匹配版本的官方 bootstrap EXE 加载自编客户端 DLL，向 `cef_execute_process` / `cef_initialize` 传入真实 sandbox_info。必须匹配 CEF API hash 和 sandbox compatibility hash；没有指针时直接退出，没有无沙箱回退。USER32/SHELL32 使用延迟导入，未跳过 API 校验。CEF 固定为 `154.0.34+g14c5a08+chromium-154.0.8037.98`，源码提交 `14c5a089e8452874cb1a556dc3fde26ed2d87723`，API `15400`。
+
+| 检查 | 实际结果与限制 |
+| --- | --- |
+| 原版扩展、无沙箱原型 | `browser.tabs.new()` 得到标签 ID `1215031647`，打开受控 localhost，读回实际正文和官方截图。仅用于受控组件；不能分发或访问外站。旧夹具误写 WebView2，原文件保留并在 verification.json 明确纠正 |
+| 原版扩展、官方 bootstrap 沙箱 | 协议 Responses 夹具创建 ID `522342409`、读取匹配正文；CUA 真实点击本次站点确认。OS 元数据检查 6 个 renderer 均 restricted、integrity RID=0、inJob=true，未带 --no-sandbox。不是只看配置字段 |
+| **真实配置模型、官方扩展、CEF 沙箱** | `gpt-6.1-sol/xhigh` 实际调用 10 次官方 Node REPL 工具，创建 ID `1279560557`、打开 localhost、读回标题及说明，关闭该标签，再查询得到空列表并返回 `removed: true`。无 Responses 夹具请求、无独立搜索、无 shell 调用；1 次站点确认。这里仅确认本次新建的标签被移除，不能据此声称产品关闭最后一个标签的全部逻辑已覆盖 |
+| 关闭清理 | 三轮官方组件均从 CUA 点击“结束检查”正常退出：backend exit=0、worker exited=true、cleanShutdown=true、remainingBrowsers=0。按确切 PID 及父子关系复核没有这些实验进程遗留；没有重启正式程序 |
+| 上下文真实数据复核 | 从前轮真实模型事件重读 10 个 tokenUsage 样本，直接使用产品 `shared/context-usage.mjs`：12604/258400=4.9%，最终 25410/258400=9.8%；最终累计 total=199577。计算使用 last，未把累计费用用量当上下文。这是旧真实事件的复核，不冒充本轮新模型 UI 验收 |
+
+证据根为项目外 `C:/Users/admin/AppData/Local/Temp/qqclaw-cef-contract-20261101/`。无沙箱原型：`official-probe-4fd70d1303604dafb5a462bb035d7f3d`；沙箱协议：`sandbox-official-probe-34e1f1669d654af29ccc88b421b74439`；真实模型：`real-model-sandbox-official-probe-1113015a71f4411c85c0e75c05d22875`。各目录保留 `verification.json`、原始 `result.json`、请求/事件、官方 `official-page.jpg`、CUA `qa-result.png`（无沙箱轮为 qa-ended.png）和退出结果；两次沙箱检查另有 `sandbox-token-audit.json`。版本、脚本及二进制摘要见 `provenance.json`，真实上下文见 `real-context-evidence.json`，失败及更正见 `failure-notes.md`。
+
+原版扩展仍从安装位置读取，manifest/background SHA-256 与前轮相同；未修改或重新分发。实验 helper 只对自己的 CEF 子进程改用固定 EXE、客户端 DLL、libcef.dll 摘要检查，继续验证官方 Node REPL/native host 的 OpenAI 签名及父子链；**主项目 OfficialBrowser.cs 没改成放行任意 CEF 进程**。组件注入配置把 tabCreation 设为 true，以测试新内核；产品仍为 WebView2、tabCreation=false。没有把该组件配置改写成产品已支持新标签。
+
+当前 NuGet libcef.dll 与 minimal 包 bootstrap.exe 的 Authenticode 为 NotSigned。官方 HTTPS 来源及发布索引摘要已核对，但这不等于签名有效，生产签名/安装和完整性流程还需实现。渲染进程的沙箱证据也不等于所有 Chromium 服务受同样限制：本次 network utility 默认 service-sandbox-type=none、令牌未受限。导航白名单只限制页面导航，不是完整网络隔离或全面安全审计。本轮没有在 CEF 上访问 Google。
+
+此前原型失败并未隐藏：App struct 引用所有权错误导致初始化崩溃，保存 debugger.log 后修复；按 C API wrapper 指针移除造成退出挂起，保存 shutdown-debugger.log 后改稳定 ID；首次沙箱编译后 objdump 超默认缓冲失败，扩容后通过；另有 C# 旧编译器与两次 Python UTF-8 检查准备错误。所有细节和原失败路径留在上述项目外记录。
+
+本轮**只更新项目报告和交接文档**，没有把 CEF 实验源码、测试或依赖放进项目，也没有更新 EXE/DMG。正式 EXE 摘要仍 `AEBFAC2BCBEF57EF5225B6E36D16BE88C3CCE9A723AFB3209B84459D1ACEE875`，DMG 仍 `F693941A3CC0A57AD271075F0565D010EB28BF6534C7D89331FBA7B6EC4CBB75`，PID 95560 仍在。此前 119/10 项回归是旧开发基线，本轮不冒称重新运行。
+
+**下一步与剩余缺口：** 将有沙箱的 CEF worker 接入实际面板和标签状态，覆盖可调宽度、焦点、关闭/取消、下载/查找和每会话独立进程/profile；实现可信依赖安装与签名；复核真实模型/隔离微信到新内核的整条链路，再检查真实微信、Google 成功结果和 Mac。此处正常退出的是检查组件，不能代替正式软件 GUI、跨会话、长期任务和用户 Mac 的验收。整体 goal 保持 active。
 
 ## 未发布开发：官方扩展实际调用与当前阻碍
 

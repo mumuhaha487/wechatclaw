@@ -1,5 +1,31 @@
 # 官方 ChatGPT 扩展接入调查
 
+## 最新：CEF 沙箱组件的新标签/读取/关闭已由真实模型验证，尚未接入产品
+
+正式两端包继续为 0.3.32，主项目原生内核仍为 WebView2/WKWebView。本轮只更新报告，以下 CEF 实现和依赖都保存在项目外；不能将组件结果用于宣布产品已修复自动新建标签或已具备 Mac 官方扩展自动化。
+
+在匹配源码提交 `14c5a089e8452874cb1a556dc3fde26ed2d87723` 的 CEF `154.0.34+g14c5a08+chromium-154.0.8037.98` 中，C API App 实现 GetDefaultClient，收到原版扩展创建普通窗口后的 OnAfterCreated。按 HWND 所属 PID 只管理自身窗口，按 browser ID 处理创建/关闭；官方 browser.tabs.new 不再报窗口无 ID。最初 CefSharp 调查只证明窗口 API 有返回，未管理这些新窗口；不能与后来的官方扩展结果混算。
+
+[CEF 官方沙箱文档](https://chromiumembedded.github.io/cef/sandbox_setup.html)说明 M138 以后 Windows 使用预编译 bootstrap 加载客户端 DLL。实际采用匹配版本 minimal 包的原版 bootstrap.exe，客户端导出 RunWinMain、转交真实 sandbox_info，API hash=`726dc73763db22edb289e41af2421a232617f7f4`、sandbox compatibility hash=`265fca9293e6b6ef` 必须匹配，缺失则退出。USER32/SHELL32 延迟导入，不依赖动态 winpthread，也没有关闭沙箱的回退。没有为此安装 MSVC、改系统沙箱设置或跳过 API hash。
+
+实际 OS 检查确认本轮两次 sandbox 组件各有 6 个 renderer：restricted=true、integrity RID=0、inJob=true，无 --no-sandbox。GPU 低完整性；network utility 默认不受相同令牌限制（service-sandbox-type=none）。这些是渲染进程隔离证据，不是全面安全审计；不要写成每个服务都已经沙箱化。导航白名单仅允许空白页、受控 localhost 和官方扩展自身页面，不构成完整网络隔离。
+
+| 组件证据目录（均在 qqclaw-cef-contract-20261101 下） | 本轮实际证明 |
+| --- | --- |
+| official-probe-4fd70d1303604dafb5a462bb035d7f3d | 原版官方扩展新建标签 1215031647、打开 localhost、读 DOM/实际截图。无沙箱原型；旧 QA/result 沿用 WebView2 标签，verification.json 留有明确更正 |
+| sandbox-official-probe-34e1f1669d654af29ccc88b421b74439 | 开启官方 bootstrap sandbox 后，Responses 协议夹具调用原版扩展，新建标签 522342409、读取正确页面；真实站点确认与正常退出 |
+| real-model-sandbox-official-probe-1113015a71f4411c85c0e75c05d22875 | 精确使用 QQClaw 已配置 gpt-6.1-sol/xhigh，10 次官方 Node REPL 工具调用；新建 1279560557、读取原文、关闭后再查为空，removed=true。0 Responses 夹具请求、0 独立搜索、0 shell 调用，1 次站点确认；正式界面、真实微信与 Google 均未验收 |
+
+三轮官方组件均由 CUA 确认本站访问、保存可见结果，并点击“结束检查”。backend exit=0、worker exited=true、cleanShutdown=true、remainingBrowsers=0，已按各自确切 PID/父子关系核实无遗留。未停止正式 QQClaw PID 95560。真实模型的 `verification.json`、`official-page.jpg`、`qa-result.png`、原始事件/结果和 `sandbox-token-audit.json` 可复核，检查页是组件 QA，不是产品主页。
+
+实验原生 helper 保留同一应用/Node/worker/native-host 的父子链、官方 Node REPL/native host 签名校验；CEF 分支仅核对固定 EXE、客户端 DLL、libcef.dll 摘要。主项目 helper 没有放宽，产品 tabCreation 仍 false；测试通过组件注入配置标 true，不是发布代码支持 CEF。原版扩展 manifest/background 摘要与前轮一致，未复制或修改。当前 NuGet libcef.dll 和 minimal bootstrap.exe 为 NotSigned，官方来源/摘要不能被描述成有效数字签名；生产安装/签名仍需实现。另下载的 signed runtime 档不含 bootstrap，不能把它的命名用于声称当前 bootstrap 已签名。
+
+复现索引均在项目外 `C:/Users/admin/AppData/Local/Temp/qqclaw-cef-contract-20261101/`：`owned-worker.cpp`、`sandbox-worker.cpp`、`build-sandbox-probe.mjs`、`prepare-official-probe.mjs`、`CefProductComponent.cs`、`audit-sandbox.ps1`、两个 verify 脚本；`provenance.json` 保存源码/运行库/文档摘要。失败说明 `failure-notes.md` 包括原始初始化崩溃、wrapper 指针造成退出挂起、C# 编译准备错误、objdump 输出缓冲和 UTF-8 检查错误，未隐藏为全部首次通过。无沙箱原型不是可发布候选。
+
+另从前轮真实模型事件复核 10 份上下文数据，产品 contextSnapshot 得出 4.9%→9.8%，last 最后 25410、窗口 258400、累计 total 199577；保存为 real-context-evidence.json。没有发起额外模型请求，也不是本轮完整 UI 验收。
+
+仍需把这个有沙箱的 CEF worker 接入产品实际标签/面板，保持每会话隔离、焦点、尺寸、关闭/取消、下载/查找及应用退出；完成可分发依赖和官方资源安装、真实模型/微信整链路、Google 成功结果、Mac 原版扩展内核。CEF 源码能力不能推导实际 Chrome 标签与产品标签映射、普通窗口样式/工具栏或正式 GUI 已符合参考图。原先 WebView2 新标签失败记录继续有效，以下章节为该阶段历史。整体 goal 继续 active。
+
 ## 最新进展：真实模型与隔离微信消息流程已通过，完整目标仍未完成
 
 正式成品保持 0.3.32。以下实现仍属于未发布源码，不能把旧版 EXE/DMG 当成已包含本次接入。
