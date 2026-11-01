@@ -367,17 +367,12 @@ function syncModels(providerId) {
       control.value = selected;
     }
   }
-  const active = session();
-  const config = active || {
-    providerId: state.settings.defaultProvider,
-    model: state.settings.defaultModel,
-    effort: state.settings.defaultEffort,
-  };
-  if ($("effort-select") && config.providerId === providerId)
+  const composerSelection = composerModelMenu.selection();
+  if ($("effort-select") && composerSelection.providerId === providerId)
     $("effort-select").innerHTML = effortOptions(
       providerId,
-      config.model,
-      config.effort,
+      composerSelection.model,
+      composerSelection.effort,
     );
   if ($("default-effort") && $("default-provider")?.value === providerId)
     $("default-effort").innerHTML = effortOptions(
@@ -432,24 +427,18 @@ const composerModelMenu = new ComposerModelMenu({
   context: () => {
     const config = composerConfig();
     return { owner: draftKey(), origin: session()?.id || null, config,
-      providers: state.providers.map(provider => [provider.id, provider.name]),
-      status: catalog.status.get(config.providerId),
+      providers: state.providers.map(provider => [provider.id, provider.name, provider.type]),
+      status: providerId => catalog.status.get(providerId),
       available: environmentReady() && !ui.page && !ui.overlay,
       busy: Boolean(session()?.busy || session()?.queued),
       label: composerModelLabel(config), title: `${profile(config.providerId).name} · ${config.model || "默认模型"} · ${effortLabel(config.effort)}`,
-      fields: saving => {
+      fields: (saving, selection = config) => {
         const disabled = saving ? "disabled" : "";
-        return `<label class="field"><span class="field-label">模型服务</span><select id="provider-select" aria-label="模型服务" ${disabled}>${providerOptions(config.providerId)}</select></label><label class="field"><span class="field-label">模型</span><select id="model-select" data-model-provider="${esc(config.providerId)}" aria-label="模型" ${disabled}>${modelOptions(config.providerId, config.model)}</select></label><label class="field"><span class="field-label">思考等级</span><select id="effort-select" aria-label="思考等级" ${disabled}>${effortOptions(config.providerId, config.model, config.effort)}</select></label>`;
+        return `<label class="field"><span class="field-label">模型服务</span><select id="provider-select" aria-label="模型服务" ${disabled}>${providerOptions(selection.providerId)}</select></label><label class="field"><span class="field-label">模型</span><select id="model-select" data-model-provider="${esc(selection.providerId)}" aria-label="模型" ${disabled}>${modelOptions(selection.providerId, selection.model)}</select></label><label class="field"><span class="field-label">思考等级</span><select id="effort-select" aria-label="思考等级" ${disabled}>${effortOptions(selection.providerId, selection.model, selection.effort)}</select></label>`;
       },
     };
   },
-  change: (change, origin) => {
-    if (change.providerId) {
-      const provider = profile(change.providerId);
-      change = { ...change, model: provider.type === "local" ? "" : ui.models.get(provider.id)?.[0]?.model || provider.models[0] || "", effort: "" };
-    }
-    return updateComposer(change, origin);
-  },
+  change: (change, origin) => updateComposer(change, origin),
   refresh: (providerId, force) => catalog.refresh(providerId, force),
   error: error => toast(error.message),
 });
