@@ -66,6 +66,8 @@ internal static class Program {
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool SetDllDirectory(string path);
     [STAThread]
     static void Main(string[] commandLine) {
+        AppContext.SetSwitch("Switch.System.IO.UseLegacyPathHandling", false);
+        AppContext.SetSwitch("Switch.System.IO.BlockLongPaths", false);
         if (commandLine.Length > 0 && commandLine[0] == "--official-browser-pipes") { Environment.ExitCode = OfficialBrowserMetadata.Run(commandLine); return; }
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
@@ -94,16 +96,29 @@ internal static class Program {
             RuntimeDirectory = Path.Combine(DataDirectory, "app", hash);
             if (!File.Exists(Path.Combine(RuntimeDirectory, ".complete"))) {
                 Directory.CreateDirectory(RuntimeDirectory);
+                using (var preparation = new Form { Text = "QQClaw", ClientSize = new Size(440, 100), StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, BackColor = Color.White })
+                using (var progress = new Label { Text = "首次启动，正在准备内置运行环境…", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.FromArgb(24, 24, 24) }) {
+                preparation.Controls.Add(progress); preparation.Show(); preparation.Update();
                 using (var zip = new ZipArchive(new MemoryStream(archive), ZipArchiveMode.Read)) {
+                    int extracted = 0;
                     foreach (var entry in zip.Entries) {
+                        if (preparation.IsDisposed) throw new OperationCanceledException();
                         var target = Path.GetFullPath(Path.Combine(RuntimeDirectory, entry.FullName));
                         if (!target.StartsWith(RuntimeDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new Exception("应用资源路径无效。");
+                        // Explicit extended paths also work when Windows' optional
+                        // global long-path policy has not been enabled.
+                        if (target.Length >= 240) target = target.StartsWith("\\\\", StringComparison.Ordinal) ? "\\\\?\\UNC\\" + target.Substring(2) : "\\\\?\\" + target;
                         if (String.IsNullOrEmpty(entry.Name)) { Directory.CreateDirectory(target); continue; }
                         Directory.CreateDirectory(Path.GetDirectoryName(target));
                         using (var source = entry.Open()) using (var destination = File.Create(target)) source.CopyTo(destination);
+                        if (++extracted % 32 == 0) {
+                            progress.Text = "首次启动，正在准备内置运行环境… " + (extracted * 100 / Math.Max(1, zip.Entries.Count)) + "%";
+                            Application.DoEvents();
+                        }
                     }
                 }
                 File.WriteAllText(Path.Combine(RuntimeDirectory, ".complete"), BuildInfo.Version);
+                }
             }
             CleanupOldRuntimes(hash);
             SetDllDirectory(RuntimeDirectory);
@@ -112,7 +127,8 @@ internal static class Program {
                 return File.Exists(file) ? Assembly.LoadFrom(file) : null;
             };
             Run();
-        } catch (Exception error) { MessageBox.Show(error.Message, "QQClaw 启动失败", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        } catch (OperationCanceledException) { }
+        catch (Exception error) { LogNativeFailure(error); MessageBox.Show(error.Message, "QQClaw 启动失败", MessageBoxButtons.OK, MessageBoxIcon.Error); }
         finally { if (mutex != null) { if (ownsMutex) mutex.ReleaseMutex(); mutex.Dispose(); } }
         if (RestartRequested) Process.Start(new ProcessStartInfo(Application.ExecutablePath) { UseShellExecute = false, CreateNoWindow = true });
     }

@@ -1,6 +1,22 @@
 # 官方 ChatGPT 扩展接入调查
 
-## 当前外部阻塞：官方原包下载要求交互认证
+## 当前进展：0.3.34 内置运行环境（2026-11-02）
+
+用户已授权内置运行库，原先等待官方离线下载的阻塞已解除，目标保持 active。Windows 项目内 runtime/windows 已备齐原版官方 ChatGPT 扩展、Node REPL、Node/npm、CEF 和编译客户端；完整 EXE 会包含这些资源，不需要另装 Codex Desktop 或借用开发聊天的浏览器。Codex CLI 仍按需安装，登录及第三方 API 配置由用户在软件中完成。
+
+真实模型已通过隔离的实际产品 BrowserHost/CEF/helper 和内置官方组件，完成 A/B 中文输入、官方下载 wait→click→download.path、45 字节内容核验、关闭 B 后实际移除、返回 A 读回。宿主签名/进程归属与唯一管道核验通过，检查进程正常退出 0。没有启动原微信账户、使用替代驱动或复制登录身份。证据位于项目外 C:/Users/admin/AppData/Local/Temp/qqclaw-bundled-034-2yx9Jh/official-verification.json 及 official-probe/。
+
+Mac 新增内置官方 Node.js 24.22.1/npm 的 arm64 与 x64 发行包，按固定官方 SHA256 校验，按应用运行架构选用，安装 Codex 写入用户目录。Mac 官方扩展自动浏览尚未接通，不把普通 WKWebView 或 Windows 的结果算成 Mac 自动浏览通过。
+
+独立 Windows EXE 已实际通过：全新空数据目录、仅含 Windows 系统目录的 PATH，后台确实由包内 Node.js v24.22.1 启动，已取得“后端已启动”日志；测试进程随后关闭。起初两次检查未通过：首次受旧长路径限制，第二次仅切换 .NET 选项仍不够，现以扩展路径修复；原始失败日志保留。首次解压进度窗口尚未做原生视觉截图验收。
+
+Mac 云构建 [41332129049](https://github.com/mumuhaha487/wechatclaw/actions/runs/41332129049) 成功，45 条实际 PASS，包含包内 Node/npm 在仅含系统目录的 PATH 下运行、两种 Node 架构签名检查，以及既有安装/原生/持久化检查。已下载并核对 GitHub 档案摘要和 DMG 格式。Mac 编译代码为 c372953a4bf545813e45b862b76ea4a1b0c63405；其后代码仅更改 Windows 启动器，不影响该 Mac 构建。
+
+本轮成品：Windows 307437568 字节，SHA256 25359812fb756e73e583c2acbf4f7d18b0f8883288c28efb33a47d6bc7f512d3；Mac 129551676 字节，SHA256 a28ec24bc56deae63c4a2240982f27c46e7e86831a9a82c85a809c505c47f008。成品暂存项目外 C:\Users\admin\AppData\Local\Temp\qqclaw-bundled-034-2yx9Jh，Mac 子目录 mac-verified。正式程序未停止，项目内未增加第二个 EXE。
+
+完整目标仍有待验证项：独立软件完整 GUI/焦点/中文输入法/DPI、微信线上浏览闭环、Google 搜索结果、Mac 官方扩展自动浏览及 Blob 官方下载。正式 0.3.32 程序未停止、账户与数据未清理。后面的记录属于历史阶段。
+
+## 历史阻塞：官方原包下载要求交互认证
 
 第三轮接续实际调用WinGet，从官方桌面页给出的Microsoft Store产品9PLM9XGG6VKS下载原始x64安装包，未安装程序。第一次因未接受包协议取消；第二次接受包协议并跳过离线许可证/依赖获取后，仍返回`0x8A150076 / APPINSTALLER_CLI_ERROR_AUTHENTICATION_INTERACTIVE_REQUIRED`。WinGet明确说明此下载通道要求Microsoft Entra身份及相应管理角色。本轮没有启动交互登录，没有取得安装包。
 
