@@ -1,5 +1,11 @@
 # 官方 ChatGPT 扩展接入调查
 
+## 纯CLI新电脑安装入口核对（2026-11-02）
+
+读取当前官方浏览器安装说明、插件说明及真实Codex 0.157.1的plugin帮助。官方浏览器页面描述桌面端Settings > Computer Use配置流程；通用插件页面说明CLI可用/plugins，但这不能推出Chrome运行库可独立安装。本机实际执行plugin list --available --json得到11个已安装、52个可用条目；chrome@openai-bundled来自Desktop生成的本地市场路径，当前可用列表未发现独立Chrome安装源。因此没有新增未经验证的安装命令；纯CLI新电脑自动准备官方运行库仍未完成，也不据此断言所有账户或未来版本都不支持。
+
+证据在项目外qqclaw-cli-browser-setup-C6DhbR/catalog.json、findings.json和official-browser-setup.txt。参考：[官方浏览器设置](https://learn.chatgpt.com/docs/chrome-extension#set-up-your-browser)、[官方插件说明](https://learn.chatgpt.com/docs/plugins#overview)。本轮没有修改产品代码、安装插件或重建候选；正式程序和原微信账号未操作。下一步需要能独立获取官方运行库与插件的实际来源，不能用Desktop本地市场路径冒充新电脑下载入口。
+
 ## 交付补查：面板关闭优先于迟到访问事件
 
 ui/app.mjs已修复browser-automation重新展开显式关闭/收起面板的问题，并实际复现与复测。两端0.3.33草稿已重建；原版官方扩展、内核与许可机制未改，界面事件夹具检查不代表真实微信或完整原生GUI通过。最新安装包和证据见[交付说明](../交付说明.md)及[result.md](../result.md)首节。

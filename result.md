@@ -2,6 +2,12 @@
 
 更新时间：2026-11-02。**0.3.33 Windows/Mac 阶段候选已编译并上传指定仓库的草稿发布，完整目标尚未验收通过。** 本地正式 Windows EXE 与 Mac 唯一安装包仍为 **0.3.32**，正式程序保持运行。源码已将 CEF 接到实际 BrowserHost、正式 helper 和可选打包流程，真实配置模型已通过原版官方扩展新建、读取、关闭检查页；组件检查不能当作正式 EXE 完整 GUI、微信、Google、全新电脑或 Mac 验收。原始目标保持 active；下方旧检查点中的“尚未接线”等描述只表示各阶段当时状态。
 
+## 纯CLI新电脑安装入口核对（2026-11-02）
+
+读取当前官方浏览器安装说明、插件说明及真实Codex 0.157.1的plugin帮助。官方浏览器页面描述桌面端Settings > Computer Use配置流程；通用插件页面说明CLI可用/plugins，但这不能推出Chrome运行库可独立安装。本机实际执行plugin list --available --json得到11个已安装、52个可用条目；chrome@openai-bundled来自Desktop生成的本地市场路径，当前可用列表未发现独立Chrome安装源。因此没有新增未经验证的安装命令；纯CLI新电脑自动准备官方运行库仍未完成，也不据此断言所有账户或未来版本都不支持。
+
+证据在项目外qqclaw-cli-browser-setup-C6DhbR/catalog.json、findings.json和official-browser-setup.txt。参考：[官方浏览器设置](https://learn.chatgpt.com/docs/chrome-extension#set-up-your-browser)、[官方插件说明](https://learn.chatgpt.com/docs/plugins#overview)。本轮没有修改产品代码、安装插件或重建候选；正式程序和原微信账号未操作。下一步需要能独立获取官方运行库与插件的实际来源，不能用Desktop本地市场路径冒充新电脑下载入口。
+
 ## 交付补查修订：关闭面板后被迟到访问事件重新打开
 
 2026-11-02补查复现：原0.3.33候选中，用户点击关闭后，迟到的browser-automation事件仍会展开面板；此前普通状态更新检查没有覆盖此路径。ui/app.mjs现使用已有browserHidden标记尊重本次界面运行中的显式关闭/收起，手动重新打开会解除隐藏。仅调整面板显示，不修改官方扩展、原生浏览器内核或后台任务。隔离前端实际完成原失败复现、修复后关闭/收起保持隐藏、手动恢复和草稿保留；事件和原生层为夹具，0条Codex/微信任务，不当作真实许可流程或完整EXE GUI通过。两次检查进程正常退出0，临时页已关闭。证据：项目外late-browser-access-8644248663954504a13aa1d2a081bf85/。
