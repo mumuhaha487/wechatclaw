@@ -1,0 +1,153 @@
+name: Check macOS browser component
+on:
+  workflow_dispatch:
+  push:
+    branches: [work/official-browser-integration]
+    paths:
+      - native/cef/macos/**
+      - scripts/build-macos-browser.mjs
+      - .github/workflows/macos-browser.yml
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Create native bridge entry point
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+          const main=String.raw`
+          #import <AppKit/AppKit.h>
+          #import <WebKit/WebKit.h>
+          #include <cstdio>
+          #include <cstring>
+          #include "CefBridge.h"
+          static WKWebView* shell;
+          static bool rootReady=false,browserReady=false,pageReady=false,shellReady=false,started=false;
+          static NSMutableArray* checks;
+          static bool failed=false;
+          static NSDictionary* state() {
+            const char* text=QQClawCefState();
+            return [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:text length:strlen(text)] options:0 error:nil];
+          }
+          static void check(NSString* name,BOOL passed) {
+            [checks addObject:@{@"name":name,@"passed":@(passed)}];
+            if(!passed)failed=true;
+            printf("%s: %s\n",passed?"PASS":"FAIL",name.UTF8String);fflush(stdout);
+          }
+          static void verify();
+          @interface ShellNavigation : NSObject<WKNavigationDelegate>
+          @end
+          @implementation ShellNavigation
+          - (void)webView:(WKWebView*)web didFinishNavigation:(WKNavigation*)navigation {
+            shellReady=true;verify();
+          }
+          @end
+          static ShellNavigation* navigation;
+          static void verify() {
+            if(started||!rootReady||!browserReady||!pageReady||!shellReady)return;
+            started=true;
+            QQClawCefBrowserBounds(700,80,320,540,1);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,300*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+              NSDictionary* initial=state();
+              check(@"CEF Chrome view and WebKit share the same native root window",[initial[@"browserWindowMatchesRoot"] boolValue]&&[initial[@"shellWindowMatchesRoot"] boolValue]);
+              check(@"Browser bounds match the requested pane",[initial[@"browserBounds"] isEqual:@[@700,@80,@320,@540]]);
+              check(@"Visible native browser has a shell cutout",[initial[@"browserVisible"] boolValue]&&[initial[@"hasHoleMask"] boolValue]);
+              NSArray* savedHole=initial[@"shellHole"];
+              NSRect hole=NSMakeRect([savedHole[0] doubleValue],[savedHole[1] doubleValue],[savedHole[2] doubleValue],[savedHole[3] doubleValue]);
+              NSPoint center=NSMakePoint(NSMidX(hole),NSMidY(hole));
+              NSPoint parent=[shell convertPoint:center toView:shell.superview];
+              check(@"WebKit passes hit testing through the browser cutout",[shell hitTest:parent]==nil);
+              QQClawCefBrowserBounds(700,80,320,540,0);
+              NSDictionary* hidden=state();
+              check(@"Closing the pane hides CEF and removes the cutout",![hidden[@"browserVisible"] boolValue]&&![hidden[@"hasHoleMask"] boolValue]);
+              check(@"Hidden browser area returns hit testing to WebKit",[shell hitTest:parent]!=nil);
+              NSWindow* root=(__bridge NSWindow*)QQClawCefWindow();
+              [root setContentSize:NSMakeSize(1200,800)];
+              QQClawCefBrowserBounds(780,90,280,450,1);
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW,300*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+                NSDictionary* resized=state();
+                check(@"Resizing and reopening retain browser ownership",[resized[@"browserWindowMatchesRoot"] boolValue]&&[resized[@"shellWindowMatchesRoot"] boolValue]);
+                check(@"Reopened pane receives its new bounds",[resized[@"browserBounds"] isEqual:@[@780,@90,@280,@450]]&&[resized[@"browserVisible"] boolValue]);
+                NSDictionary* result=@{@"passed":@(!failed),@"checks":checks,@"initial":initial,@"hidden":hidden,@"resized":resized,
+                  @"scope":@"Actual CEF Chrome Views/WebKit native component; no official extension, model, WeChat, full app GUI or physical input validation"};
+                NSData* bytes=[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil];
+                [bytes writeToFile:NSProcessInfo.processInfo.environment[@"QQCLAW_COMPONENT_RESULT"] atomically:YES];
+                QQClawCefClose();
+              });
+            });
+          }
+          static void event(const char* text) {
+            printf("EVENT %s\n",text);fflush(stdout);
+            NSDictionary* value=[NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:text length:strlen(text)] options:0 error:nil];
+            NSString* name=value[@"event"];
+            if([name isEqual:@"root-created"]){
+              rootReady=true;
+              WKWebViewConfiguration* configuration=[WKWebViewConfiguration new];
+              configuration.websiteDataStore=WKWebsiteDataStore.nonPersistentDataStore;
+              shell=(__bridge_transfer WKWebView*)QQClawCefCreateShell((__bridge void*)configuration);
+              navigation=[ShellNavigation new];shell.navigationDelegate=navigation;
+              [shell loadHTMLString:@"<!doctype html><meta charset=utf-8><title>QQClaw shell</title><style>body{background:white;color:black;font:16px system-ui}textarea{width:400px;height:100px}</style><h1>QQClaw shell</h1><textarea aria-label='Composer'>Local UI only</textarea>" baseURL:nil];
+            }
+            if([name isEqual:@"browser-created"])browserReady=true;
+            if([name isEqual:@"load-end"]&&[value[@"status"] intValue]==200)pageReady=true;
+            verify();
+          }
+          int main(int argc,char** argv){@autoreleasepool{
+            checks=[NSMutableArray new];
+            NSDictionary* options=@{@"profile":NSProcessInfo.processInfo.environment[@"QQCLAW_COMPONENT_PROFILE"],@"url":NSProcessInfo.processInfo.environment[@"QQCLAW_COMPONENT_URL"]};
+            NSData* data=[NSJSONSerialization dataWithJSONObject:options options:0 error:nil];
+            NSString* text=[[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding];
+            int status=QQClawCefStart(argc,argv,text.UTF8String,event);if(status){fprintf(stderr,"Bridge start failed: %d\n",status);return status;}
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,45*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(!started){failed=true;fprintf(stderr,"Component verification timed out\n");QQClawCefClose();}});
+            QQClawCefRun();QQClawCefShutdown();
+            return failed||!started?1:0;
+          }}
+          `;
+          await fs.writeFile(path.join(process.env.RUNNER_TEMP,'QQClawMacEntry.mm'),main);
+          NODE
+      - name: Build native CEF Views bridge with sandbox
+        run: node scripts/build-macos-browser.mjs --entry "$RUNNER_TEMP/QQClawMacEntry.mm" --output "$RUNNER_TEMP/qqclaw-mac-browser"
+      - name: Verify native window, pane and shutdown
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+          import http from 'node:http';
+          import {spawn} from 'node:child_process';
+          const directory=path.join(process.env.RUNNER_TEMP,'qqclaw-mac-browser');
+          const manifest=JSON.parse(await fs.readFile(path.join(directory,'mac-browser-build.json'),'utf8'));
+          const server=http.createServer((request,response)=>{response.setHeader('Content-Type','text/html; charset=utf-8');response.end('<title>QQClaw CEF fixture</title><p>Local native browser fixture</p>')});
+          await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+          const profile=path.join(directory,'profile');await fs.mkdir(profile);
+          const resultFile=path.join(directory,'verification.json');
+          const child=spawn(manifest.executable,[],{detached:true,env:{...process.env,QQCLAW_COMPONENT_PROFILE:profile,QQCLAW_COMPONENT_URL:'http://127.0.0.1:'+server.address().port+'/',QQCLAW_COMPONENT_RESULT:resultFile},stdio:['ignore','pipe','pipe']});
+          let log='';for(const stream of [child.stdout,child.stderr])stream.on('data',bytes=>{log+=bytes;process.stdout.write(bytes)});
+          const timeout=setTimeout(()=>{try{process.kill(-child.pid,'SIGTERM')}catch{}},65000);
+          let code;
+          try{code=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})}finally{clearTimeout(timeout);server.closeAllConnections();server.close();await fs.writeFile(path.join(directory,'native-run.log'),log)}
+          if(code!==0)throw Error('Native component exited '+code);
+          const result=JSON.parse(await fs.readFile(resultFile,'utf8'));
+          if(!result.passed||result.checks.length!==8||!log.includes('root-closed'))throw Error('Native component checks or shutdown acknowledgement missing');
+          console.log('PASS: 8 actual native Views/WebKit component checks and orderly shutdown');
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-browser-evidence
+          path: |
+            ${{ runner.temp }}/qqclaw-mac-browser/mac-browser-build.json
+            ${{ runner.temp }}/qqclaw-mac-browser/verification.json
+            ${{ runner.temp }}/qqclaw-mac-browser/native-run.log
+            ${{ runner.temp }}/qqclaw-mac-browser/profile/cef.log
+          if-no-files-found: warn
+          retention-days: 7
