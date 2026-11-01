@@ -1,0 +1,66 @@
+name: Symbolicate the recorded Mac CEF crash
+on:
+  workflow_dispatch:
+  push:
+    branches: [work/official-browser-integration]
+    paths: [.github/workflows/macos-native-diagnostics.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: mac-official-browser-evidence
+          repository: mumuhaha487/wechatclaw
+          run-id: 41362032485
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/recorded-crash
+      - name: Resolve the existing crash against matching official CEF symbols
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';import path from 'node:path';import {createReadStream,createWriteStream} from 'node:fs';
+          import {createHash} from 'node:crypto';import {pipeline} from 'node:stream/promises';import {Readable,Transform} from 'node:stream';
+          import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+          const run=promisify(execFile),root=process.env.RUNNER_TEMP,source=path.join(root,'recorded-crash'),output=path.join(root,'symbolicated');
+          await fs.mkdir(output,{recursive:true});
+          const pin={version:'154.0.34+g14c5a08+chromium-154.0.8037.98',bytes:2098549845,sha1:'65b5c7464bd452ad8ca05fbb6d4e9203602ad482'};
+          const name='cef_binary_'+pin.version+'_macosarm64_release_symbols.tar.bz2',archive=path.join(root,name);
+          const response=await fetch('https://cef-builds.spotifycdn.com/'+encodeURIComponent(name));if(!response.ok||!response.body)throw Error('CEF symbols HTTP '+response.status);
+          let bytes=0,next=250*1024*1024;const hash=createHash('sha1');
+          await pipeline(Readable.fromWeb(response.body),new Transform({transform(chunk,encoding,done){bytes+=chunk.length;hash.update(chunk);if(bytes>=next){console.log('Received '+Math.round(bytes/1024/1024)+' MiB of matching CEF symbols');next+=250*1024*1024;}done(null,chunk);}}),createWriteStream(archive));
+          if(bytes!==pin.bytes||hash.digest('hex')!==pin.sha1)throw Error('CEF symbol archive does not match the recorded build');
+          const symbols=path.join(root,'cef-symbols');await fs.mkdir(symbols);
+          await run('/usr/bin/tar',['-xjf',archive,'-C',symbols],{timeout:600000,maxBuffer:1024*1024});
+          const files=await fs.readdir(symbols,{recursive:true});
+          const dwarf=files.filter(file=>file.endsWith('Contents/Resources/DWARF/Chromium Embedded Framework'));
+          if(dwarf.length!==1)throw Error('Exactly one framework DWARF file is required');
+          const executable=path.join(symbols,dwarf[0]),uuid=(await run('/usr/bin/dwarfdump',['--uuid',executable])).stdout;
+          const results=[];
+          for(const file of await fs.readdir(source,{recursive:true}))if(file.endsWith('.ips')){
+            const raw=await fs.readFile(path.join(source,file),'utf8'),report=JSON.parse(raw.slice(raw.indexOf('\n')+1));
+            const imageIndex=report.usedImages.findIndex(image=>image.name==='Chromium Embedded Framework');if(imageIndex<0)continue;
+            const image=report.usedImages[imageIndex];if(!uuid.toLowerCase().includes(image.uuid.toLowerCase()))throw Error('Crash and DWARF UUIDs differ');
+            const frames=report.threads.find(thread=>thread.triggered)?.frames.filter(frame=>frame.imageIndex===imageIndex)||[];
+            const addresses=frames.map(frame=>'0x'+(BigInt(image.base)+BigInt(frame.imageOffset)).toString(16));
+            const trace=(await run('/usr/bin/atos',['-o',executable,'-arch','arm64','-l','0x'+BigInt(image.base).toString(16),...addresses],{maxBuffer:1024*1024})).stdout;
+            results.push({sourceRun:41362032485,report:file,uuid:image.uuid,exception:report.exception,trace});
+          }
+          if(!results.length)throw Error('No recorded CEF crash was symbolicated');
+          await fs.writeFile(path.join(output,'symbolication.json'),JSON.stringify({pin,results},null,2));
+          await fs.writeFile(path.join(output,'symbolication.log'),results.map(value=>value.report+'\n'+value.trace).join('\n'));
+          console.log(JSON.stringify(results));
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-native-symbolication
+          path: ${{ runner.temp }}/symbolicated/*
+          if-no-files-found: warn
+          retention-days: 7
