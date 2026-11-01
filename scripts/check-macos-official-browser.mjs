@@ -29,9 +29,13 @@ await fs.writeFile(path.join(hostDirectory, "extension-host-config.json"), JSON.
 await fs.writeFile(path.join(profile, "NativeMessagingHosts/com.openai.codexextension.json"), JSON.stringify({
   name: "com.openai.codexextension", description: "QQClaw isolated original host check", type: "stdio", path: nativeHost,
   allowed_origins: ["chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/"] }));
-const observations = [];
-const server = http.createServer((request, response) => {
+const observations = [], spotlight = [];
+const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
+  if (url.pathname === "/spotlight" && request.method === "POST") {
+    let bytes = 0, parts = []; for await (const part of request) { bytes += part.length; if (bytes > 1024 * 1024) { response.writeHead(413); response.end(); return; } parts.push(part); }
+    spotlight.push(Buffer.concat(parts).toString("utf8")); response.end("ok"); return;
+  }
   if (url.pathname === "/observed") { observations.push(url.searchParams.get("value")); response.end("ok"); return; }
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.end('<!doctype html><meta charset="utf-8"><title>QQClaw official Mac check</title><h1>Official Mac browser integration</h1><label>Verification input<input aria-label="Verification input" oninput="fetch(\'/observed?value=\'+encodeURIComponent(this.value))"></label>');
@@ -70,6 +74,7 @@ try {
   await write("transport.json", transport);
   const modules = manifest.paths.nodeModuleDirs.map(name => path.join(runtime, name));
   const env = { ...process.env, ...access.environment, CODEX_HOME: path.join(output, "codex"), CODEX_CLI_PATH: cli,
+    NODE_REPL_TRACE_META: "1", SENTRY_SPOTLIGHT: url + "spotlight",
     NODE_REPL_NODE_PATH: path.join(runtime, manifest.paths.nodePath), NODE_REPL_NODE_MODULE_DIRS: modules.join(":"),
     NODE_REPL_TRUSTED_SERVICES: JSON.stringify({ browser: path.join(runtime, manifest.paths.browserServicePath) }),
     NODE_REPL_TRUSTED_CODE_PATHS: [path.join(runtime, "plugin"), ...modules].join(":"),
@@ -148,6 +153,7 @@ finally {
   const logs = await exec("/usr/bin/sqlite3", [sqlite, ".dump"], { maxBuffer: 2 * 1024 * 1024 }).catch(error => ({ stdout: error.message }));
   await fs.writeFile(path.join(output, "runtime-sqlite.log"), logs.stdout);
   await write("notifications.json", notifications); await write("socket-snapshots.json", socketSnapshots);
+  await write("spotlight.json", spotlight);
   await fs.writeFile(path.join(output, "browser.log"), browserLog); await fs.writeFile(path.join(output, "repl.log"), replLog);
   await write("result.json", { ...result, exit, observations }); console.log(JSON.stringify({ ...result, exit }));
 }
