@@ -1,5 +1,32 @@
 # 官方 ChatGPT 扩展接入调查
 
+## 当前交付状态：0.3.36（2026-11-02）
+
+两端安装文件已完成并更新到项目内唯一成品：release/QQClaw.exe 与 release/macos/QQClaw.dmg。Windows 内置 Node/npm、CEF、原版官方 ChatGPT 扩展与官方浏览运行库；Mac 内置双架构 Node/npm。原始完整目标仍为 active，不宣称全部验收通过。
+
+- Windows：307438592 字节，SHA256 b482eb04d3e44715bc206c7e9495f4f21deac133fea15d87a65e1665a3b8ec0c。空数据目录、仅系统 PATH 下已实际启动包内 Node v24.22.1 和后台。
+- Mac：129362354 字节，SHA256 3ad94470cdcf4f59a8234225bba52fdb31498f9987574da3241e683a96f90052；最低 macOS 13.5，Apple Silicon/Intel。云运行 [41339851338](https://github.com/mumuhaha487/wechatclaw/actions/runs/41339851338) 成功，下载档案摘要和 DMG 尾部已核对，46 条实际 PASS，包含钥匙串加密、原生后台重启的草稿/附件恢复。未 Apple 公证。
+- [GitHub 0.3.36 草稿](https://github.com/mumuhaha487/wechatclaw/releases/tag/untagged-900d6977fcbca3aeeb9b)：远端与本地摘要一致，只有一个 EXE、一个 DMG；保持草稿，尚未公开发布。构建代码 d9ae586b59945f312267dd6032fd9ef42602f240。
+- 已绕过文件占用对更新位置的影响：将运行中旧 EXE 移至项目外临时目录后放入新版，同名成品已核对摘要。没有停止旧 PID 95560，也没有同时启动新版访问原账户数据；现有窗口仍是旧版本，下一次启动项目内 EXE 才是新版。旧映像仅因进程占用暂存，后台清理脚本会在该进程退出后删除它。项目内没有第二个 EXE 或测试文件。
+- 真实官方扩展组件已完成 Google“AI 热点”搜索、滚动及可见结果截图，HTTP 零字节下载取得官方保存路径。Blob 下载仍被原版官方运行库明确拒绝，不伪造成功、不使用替代驱动。
+- 尚未完成：微信线上完整浏览交付、完整独立 EXE 的物理焦点/输入法/DPI、Mac 官方扩展自动浏览、Blob 自动下载、参考主页全部操作的一致性核验。真实 Google 组件结果不等同于这些项目全部通过。
+
+本节是当前状态；下方保留各阶段原始记录，其中较旧的“未编译”“尚未替换”等描述只适用于当时。文件入口与数据位置见[交付说明.md](../交付说明.md)。本轮打包、下载、安装位置更新的证据集中在 C:/Users/admin/AppData/Local/Temp/qqclaw-browser-036-LIwfus。
+
+## 0.3.36：官方插件核验、真实Google与下载边界
+
+已从Google官方更新接口取得ChatGPT扩展1.26.1020.11845的CRX3，验证签名且公钥对应官方ID hehggadaopoacecdllhhajmbjkdcmajg。核对39个运行文件：功能代码一致；4个图标PNG与商店包存在差异，manifest增加了加载解包扩展所需的key，Chrome的_metadata/verified_contents.json未随运行资源复制。没有把整个目录称为与签名档案逐字节一致；本轮没有替换或修改扩展。完整比较和签名证据在 C:/Users/admin/AppData/Local/Temp/qqclaw-official-download-capability-ka6xPW/official-extension-proof.json。
+
+真实模型通过当前产品BrowserHost/C#/CEF/helper、原版官方扩展和Node REPL完成Google“AI 热点”搜索，读取AIHOT标题及https://aihot.news，并在后续复测用官方ax.scroll滚到实际可见结果，原版工具返回的截图已人工查看。第一次搜索截图只显示页顶；没有把它当作结果已可见的证据。后续滚动首次遇到detached accessibility element，读取新状态后成功；原始错误保留。没有绕过验证码或安全拦截，没有换搜索引擎、驱动或借用开发聊天浏览器的身份。
+
+两轮真实下载核对：HTTP零字节附件均走官方等待→实际点击→官方path返回，并核对磁盘大小0、completed/available为真。Blob中文CSV与空Blob由官方downloadMedia明确返回“Blob downloads are not supported by this browser.”，首轮分别88/55ms，后续将两项合并调用共111ms，没有进入120秒等待。当前官方服务仅在blobDownloadsSupported为true时启用Blob；其Blob事件还要求tabId与来源绑定，当前扩展路径不具备这些支持，CEF自身门禁也拒绝Blob。单改CEF门禁只能落盘，无法完成官方下载协议，解释了之前的实验失败；Blob自动下载功能仍未完成。
+
+本轮代码只调整backend/official-browser.mjs的内部运行指引：对已观察到的Blob链接先由官方downloadMedia校验能力；明确不支持时报告该项未完成，保留普通HTTP先等待后点击的流程，并按完成状态核对合法零字节文件。没有加入替代下载器、伪造官方事件或修改原版插件。复测任务没有再逐项提示API用法，实际按修改后的产品指引完成上述行为。
+
+证据根 C:/Users/admin/AppData/Local/Temp/qqclaw-official-download-capability-ka6xPW：capability-verification.json、source-findings.json、google-probe/google-verification.json、guidance-probe/guidance-verification.json及原始model-events.json。三个检查宿主随后正常退出0；原微信账户未启动，原状态只读取得已配置模型，使用low思考等级进行有限检查，没有修改用户模型设置。这里验证的是实际组件链路，尚不等于独立EXE完整GUI/IME/DPI或微信线上交付。辅助核验脚本曾因C#正斜线参数、Chrome元数据/图标差异及下载调用分批而误报，已按原始数据修订，以上限制没有隐去。
+
+Windows 0.3.36 已编译并完成空数据目录/仅系统 PATH 独立启动；Mac 云构建 41339851338 成功，46 条实际 PASS。最终成品、摘要和仍未完成项见本文件首节。
+
 ## 当前进展：0.3.34 内置运行环境（2026-11-02）
 
 用户已授权内置运行库，原先等待官方离线下载的阻塞已解除，目标保持 active。Windows 项目内 runtime/windows 已备齐原版官方 ChatGPT 扩展、Node REPL、Node/npm、CEF 和编译客户端；完整 EXE 会包含这些资源，不需要另装 Codex Desktop 或借用开发聊天的浏览器。Codex CLI 仍按需安装，登录及第三方 API 配置由用户在软件中完成。
