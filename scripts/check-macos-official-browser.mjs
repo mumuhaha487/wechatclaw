@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import http from "node:http";
-import net from "node:net";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -30,13 +29,9 @@ await fs.writeFile(path.join(hostDirectory, "extension-host-config.json"), JSON.
 await fs.writeFile(path.join(profile, "NativeMessagingHosts/com.openai.codexextension.json"), JSON.stringify({
   name: "com.openai.codexextension", description: "QQClaw isolated original host check", type: "stdio", path: nativeHost,
   allowed_origins: ["chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/"] }));
-const observations = [], spotlight = [];
+const observations = [];
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
-  if (url.pathname === "/spotlight" && request.method === "POST") {
-    let bytes = 0, parts = []; for await (const part of request) { bytes += part.length; if (bytes > 1024 * 1024) { response.writeHead(413); response.end(); return; } parts.push(part); }
-    spotlight.push(Buffer.concat(parts).toString("utf8")); response.end("ok"); return;
-  }
   if (url.pathname === "/observed") { observations.push(url.searchParams.get("value")); response.end("ok"); return; }
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.end('<!doctype html><meta charset="utf-8"><title>QQClaw official Mac check</title><h1>Official Mac browser integration</h1><label>Verification input<input aria-label="Verification input" oninput="fetch(\'/observed?value=\'+encodeURIComponent(this.value))"></label>');
@@ -48,7 +43,6 @@ const browser = spawn(build.executable, [], { detached: true, env: { ...process.
   QQCLAW_CHECK_OPTIONS: path.join(output, "browser-options.json"), QQCLAW_CHECK_STOP: path.join(output, "stop") }, stdio: ["ignore", "pipe", "pipe"] });
 let browserLog = "", repl, replLog = "", result = { passed: false }, active = true;
 const notifications = [], socketSnapshots = [];
-const wire = [], recordingSockets = new Set(); let recorder, recorderPath;
 browser.stdout.on("data", b => browserLog += b); browser.stderr.on("data", b => browserLog += b);
 const browserExit = new Promise(resolve => browser.once("exit", (code, signal) => resolve({ code, signal })));
 const task = { sessionId: randomUUID(), turnId: randomUUID() }, accessEvents = [];
@@ -74,29 +68,13 @@ try {
   }
   if (!transport) throw Error("The private CEF profile did not launch one owned official host/socket");
   await write("transport.json", transport);
-  if (process.argv.includes("--record-handshake")) {
-    // Diagnostic-only byte-for-byte stream recorder between the two original
-    // components. It generates no commands, responses, approvals or identity.
-    recorderPath = path.join(output, "capture.sock"); let recorded = 0;
-    recorder = net.createServer(client => {
-      const upstream = net.createConnection(transport.paths[0]);
-      for (const [socket, direction] of [[client, "client-to-original-host"], [upstream, "original-host-to-client"]]) {
-        recordingSockets.add(socket); socket.on("close", () => recordingSockets.delete(socket));
-        socket.on("data", data => { if (recorded + data.length <= 512 * 1024) { recorded += data.length; wire.push({ direction, data: data.toString("base64") }); } });
-        socket.on("error", () => { client.destroy(); upstream.destroy(); });
-      }
-      client.pipe(upstream); upstream.pipe(client);
-    });
-    await new Promise((resolve, reject) => { recorder.once("error", reject); recorder.listen(recorderPath, resolve); });
-    await fs.chmod(recorderPath, 0o600);
-  }
   const modules = manifest.paths.nodeModuleDirs.map(name => path.join(runtime, name));
   const env = { ...process.env, ...access.environment, CODEX_HOME: path.join(output, "codex"), CODEX_CLI_PATH: cli,
-    NODE_REPL_TRACE_META: "1", SENTRY_SPOTLIGHT: url + "spotlight",
+    NODE_REPL_TRACE_META: "1",
     NODE_REPL_NODE_PATH: path.join(runtime, manifest.paths.nodePath), NODE_REPL_NODE_MODULE_DIRS: modules.join(":"),
     NODE_REPL_TRUSTED_SERVICES: JSON.stringify({ browser: path.join(runtime, manifest.paths.browserServicePath) }),
     NODE_REPL_TRUSTED_CODE_PATHS: [path.join(runtime, "plugin"), ...modules].join(":"),
-    CUA_REPL_ENABLED_SURFACES: "browser", BROWSER_USE_BACKEND_PATHS: recorderPath || transport.paths[0] };
+    CUA_REPL_ENABLED_SURFACES: "browser", BROWSER_USE_BACKEND_PATHS: transport.paths[0] };
   repl = spawn(path.join(runtime, manifest.paths.nodeReplPath), [], { detached: true, env, stdio: ["pipe", "pipe", "pipe"] });
   let next = 0, buffered = ""; const pending = new Map(), unexpectedRequests = [];
   repl.stderr.on("data", b => replLog += b);
@@ -129,8 +107,19 @@ try {
     if (value.isError) throw Error("Official runtime: " + JSON.stringify(value)); return value;
   };
   const client = pathToFileURL(path.join(runtime, manifest.paths.browserClientPath)).href;
-  await call("runtime-environment", 'nodeRepl.write({backendPaths:nodeRepl.env?.BROWSER_USE_BACKEND_PATHS,backends:nodeRepl.env?.BROWSER_USE_AVAILABLE_BACKENDS,surfaces:nodeRepl.env?.CUA_REPL_ENABLED_SURFACES})');
   await call("browser-bootstrap", `var {setupBrowserRuntime}=await import(${JSON.stringify(client)}); var agent=await setupBrowserRuntime()`);
+  const processList = (await exec("/bin/ps", ["-axo", "pid=,ppid=,comm="])).stdout.split("\n").flatMap(line => {
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/); return match ? [{ pid: Number(match[1]), parent: Number(match[2]), executable: match[3] }] : [];
+  });
+  const peerProcesses = processList.filter(value => {
+    let current = value; const seen = new Set();
+    while (current && !seen.has(current.pid)) { if (current.pid === repl.pid) return true; seen.add(current.pid); current = processList.find(p => p.pid === current.parent); } return false;
+  });
+  for (const value of peerProcesses) {
+    const signed = await exec("/usr/bin/codesign", ["-d", "--verbose=2", value.executable]).catch(error => ({ stdout: "", stderr: error.message }));
+    value.signature = (signed.stdout + signed.stderr).split(/\r?\n/).filter(line => /^(?:Identifier|Authority|TeamIdentifier|CDHash)=/.test(line));
+  }
+  await write("actual-runtime-processes.json", peerProcesses);
   let available = [];
   for (let attempt = 0; attempt < 12; attempt++) {
     const value = await call("browser-list-" + attempt, "nodeRepl.write(await agent.browsers.list())");
@@ -152,8 +141,6 @@ try {
 finally {
   active = false;
   if (repl) { repl.stdin.end(); try { process.kill(-repl.pid, "SIGTERM"); } catch {} }
-  for (const socket of recordingSockets) socket.destroy();
-  if (recorder?.listening) await new Promise(resolve => recorder.close(resolve));
   await access.close(); await fs.writeFile(path.join(output, "stop"), "stop");
   let timer; const exit = await Promise.race([browserExit, new Promise(resolve => timer = setTimeout(() => resolve(null), 8000))]); clearTimeout(timer);
   if (!exit) { try { process.kill(-browser.pid, "SIGTERM"); } catch {} }
@@ -177,8 +164,6 @@ finally {
   const logs = await exec("/usr/bin/sqlite3", [sqlite, ".dump"], { maxBuffer: 2 * 1024 * 1024 }).catch(error => ({ stdout: error.message }));
   await fs.writeFile(path.join(output, "runtime-sqlite.log"), logs.stdout);
   await write("notifications.json", notifications); await write("socket-snapshots.json", socketSnapshots);
-  await write("spotlight.json", spotlight);
-  await write("original-handshake-wire.json", wire);
   await fs.writeFile(path.join(output, "browser.log"), browserLog); await fs.writeFile(path.join(output, "repl.log"), replLog);
   await write("result.json", { ...result, exit, observations }); console.log(JSON.stringify({ ...result, exit }));
 }

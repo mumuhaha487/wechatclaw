@@ -28,10 +28,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: mac-official-runtime-inventory
-          run-id: 41350287636
+          run-id: 41353878675
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/official-runtime
-      - name: Unpack verified original runtime and install standalone CLI
+      - name: Unpack and verify the complete original runtime
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs/promises';import path from 'node:path';
@@ -39,7 +39,6 @@ jobs:
           const root=path.join(process.env.RUNNER_TEMP,'official-runtime');
           await unpackMacBrowserRuntime({cache:root,destination:path.join(root,'runtime')});
           NODE
-          npm install --prefix "$RUNNER_TEMP/official-runtime/cli" --no-audit --no-fund @openai/codex@0.166.0
       - uses: actions/cache/restore@v4
         id: cef
         with:
@@ -61,10 +60,10 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs/promises';import path from 'node:path';import {spawn} from 'node:child_process';
-          const root=path.join(process.env.RUNNER_TEMP,'official-runtime'),found=[];
-          async function visit(folder){for(const item of await fs.readdir(folder,{withFileTypes:true})){const file=path.join(folder,item.name);if(item.isDirectory())await visit(file);else if(item.isFile()&&item.name==='codex'){const data=await fs.readFile(file);if(['cffaedfe','feedfacf','cafebabe','bebafeca'].includes(data.subarray(0,4).toString('hex')))found.push(file)}}}
-          await visit(path.join(root,'cli'));if(found.length!==1)throw Error('Standalone CLI not uniquely identified');
-          const child=spawn(process.execPath,['scripts/check-macos-official-browser.mjs','--record-handshake','--output',path.join(process.env.RUNNER_TEMP,'official-browser-proof'),'--runtime',path.join(root,'runtime'),'--cli',found[0],'--build',path.join(process.env.RUNNER_TEMP,'browser-build')],{stdio:'inherit'});
+          const root=path.join(process.env.RUNNER_TEMP,'official-runtime');
+          const manifest=JSON.parse(await fs.readFile(path.join(root,'runtime/runtime.json'),'utf8'));
+          const cli=path.join(root,'runtime',manifest.paths.codexCliPath);
+          const child=spawn(process.execPath,['scripts/check-macos-official-browser.mjs','--output',path.join(process.env.RUNNER_TEMP,'official-browser-proof'),'--runtime',path.join(root,'runtime'),'--cli',cli,'--build',path.join(process.env.RUNNER_TEMP,'browser-build')],{stdio:'inherit'});
           const code=await new Promise(resolve=>child.on('exit',resolve));if(code!==0)throw Error('Official browser component check failed');
           NODE
       - uses: actions/upload-artifact@v4
