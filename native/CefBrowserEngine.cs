@@ -42,6 +42,7 @@ internal sealed class CefInputWriter {
 // The packager must provide these hashes from its verified build inputs. A
 // manifest beside a downloaded executable is not itself a trust anchor.
 internal sealed class CefEngineFiles {
+    internal bool Bundled;
     internal string Directory, LeaseFile, BootstrapSha256, ClientSha256, ElfSha256, LibrarySha256;
     internal FileStream AcquireLease(bool exclusive) {
         if (String.IsNullOrEmpty(LeaseFile)) return null;
@@ -103,14 +104,14 @@ internal sealed class CefBrowserEngine {
         this.nativeNotify = nativeNotify ?? delegate { };
     }
     static string Quote(string value) { return "\"" + value.Replace("\"", "\\\"") + "\""; }
-    internal Task Start(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins = null, string downloadRoot = null) {
-        return startup ?? (startup = StartGuarded(profilePath, extensionPath, configurationPath, logPath, allowedOrigins, downloadRoot));
+    internal Task Start(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins = null, string downloadRoot = null, string nativeHostManifest = null, string nativeLocalAppData = null, string nativeCodexHome = null) {
+        return startup ?? (startup = StartGuarded(profilePath, extensionPath, configurationPath, logPath, allowedOrigins, downloadRoot, nativeHostManifest, nativeLocalAppData, nativeCodexHome));
     }
-    private async Task StartGuarded(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins, string downloadRoot) {
-        try { await StartCore(profilePath, extensionPath, configurationPath, logPath, allowedOrigins, downloadRoot); }
+    private async Task StartGuarded(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins, string downloadRoot, string nativeHostManifest, string nativeLocalAppData, string nativeCodexHome) {
+        try { await StartCore(profilePath, extensionPath, configurationPath, logPath, allowedOrigins, downloadRoot, nativeHostManifest, nativeLocalAppData, nativeCodexHome); }
         catch (Exception error) { CloseInput(); if (!started) ReleaseLease(); Fail(error); throw; }
     }
-    private async Task StartCore(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins, string downloadRoot) {
+    private async Task StartCore(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins, string downloadRoot, string nativeHostManifest, string nativeLocalAppData, string nativeCodexHome) {
         await Task.Run(delegate { lease = files.AcquireLease(false); files.Verify(); });
         Directory.CreateDirectory(profilePath);
         Directory.CreateDirectory(Path.GetDirectoryName(configurationPath));
@@ -121,6 +122,14 @@ internal sealed class CefBrowserEngine {
         };
         if (allowedOrigins != null) configuration["allowedOrigins"] = allowedOrigins;
         if (!String.IsNullOrEmpty(downloadRoot)) configuration["downloadRoot"] = Path.GetFullPath(downloadRoot);
+        if (!String.IsNullOrEmpty(nativeHostManifest)) {
+            string registry;
+            using (var sha = SHA256.Create()) registry = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(Path.GetFullPath(nativeHostManifest)))).Replace("-", "").Substring(0, 24);
+            registry = @"Software\QQClaw\BrowserRuntime\" + registry;
+            foreach (string browser in new [] { @"Google\Chrome", "Chromium", @"Microsoft\Edge" })
+                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(registry + @"\Software\" + browser + @"\NativeMessagingHosts\com.openai.codexextension")) key.SetValue("", Path.GetFullPath(nativeHostManifest));
+            configuration["nativeHostRegistryKey"] = registry;
+        }
         File.WriteAllText(configurationPath, json.Serialize(configuration), new UTF8Encoding(false));
         var start = new ProcessStartInfo(Path.Combine(files.Directory, "QQClawBrowser.exe"), Quote(Path.GetFullPath(configurationPath))) {
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
@@ -131,6 +140,8 @@ internal sealed class CefBrowserEngine {
         foreach (var key in new [] {"SystemRoot", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "ProgramFiles", "ProgramFiles(x86)"}) {
             var value = Environment.GetEnvironmentVariable(key); if (value != null) start.EnvironmentVariables[key] = value;
         }
+        if (!String.IsNullOrEmpty(nativeLocalAppData)) start.EnvironmentVariables["LOCALAPPDATA"] = Path.GetFullPath(nativeLocalAppData);
+        if (!String.IsNullOrEmpty(nativeCodexHome)) start.EnvironmentVariables["CODEX_HOME"] = Path.GetFullPath(nativeCodexHome);
         process.StartInfo = start;
         process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs line) {
             if (line.Data == null) { outputEnded = true; CompleteExit(); return; }

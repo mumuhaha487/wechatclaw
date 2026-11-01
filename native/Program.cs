@@ -336,11 +336,12 @@ internal sealed class DesktopWindow : Form {
         Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
     }
     private string FullPathEnvironment() {
-        return Environment.GetEnvironmentVariable("PATH") + ";" + Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) + ";" + Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine);
+        return Environment.GetEnvironmentVariable("PATH") + ";" + Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) + ";" + Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) + ";" + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm");
     }
     private string FindNode() {
         var candidates = new List<string>();
         var configured = Path.Combine(Program.DataDirectory, "node-path.txt"); if (File.Exists(configured)) candidates.Add(File.ReadAllText(configured).Trim());
+        candidates.Add(Path.Combine(Program.RuntimeDirectory, "official-browser", "node", "bin", "node.exe"));
         foreach (var directory in FullPathEnvironment().Split(';')) { try { if (!String.IsNullOrWhiteSpace(directory)) candidates.Add(Path.Combine(directory.Trim('"'), "node.exe")); } catch { } }
         candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "node.exe"));
         foreach (var candidate in candidates) if (File.Exists(candidate)) return candidate;
@@ -391,7 +392,7 @@ internal sealed class DesktopWindow : Form {
             UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
             CreateNoWindow = true, WorkingDirectory = Program.DataDirectory, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
-        info.EnvironmentVariables["PATH"] = FullPathEnvironment(); info.EnvironmentVariables["QQCLAW_DATA_DIR"] = Program.DataDirectory;
+        info.EnvironmentVariables["PATH"] = Path.GetDirectoryName(node) + ";" + FullPathEnvironment(); info.EnvironmentVariables["QQCLAW_DATA_DIR"] = Program.DataDirectory;
         info.EnvironmentVariables["QQCLAW_RUNTIME_DIR"] = Program.RuntimeDirectory;
         var child = new Process { StartInfo = info, EnableRaisingEvents = true }; backend = child;
         child.OutputDataReceived += delegate(object sender, DataReceivedEventArgs args) { if (args.Data != null) OnBackendLine(child, args.Data); };
@@ -512,7 +513,7 @@ internal sealed class DesktopWindow : Form {
         Post(new { kind = "event", @event = "install", data = "正在安装 Codex CLI…" });
         var process = new Process { StartInfo = new ProcessStartInfo(node, Quote(npm) + " install -g @openai/codex") {
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true } };
-        process.StartInfo.EnvironmentVariables["PATH"] = FullPathEnvironment();
+        process.StartInfo.EnvironmentVariables["PATH"] = Path.GetDirectoryName(node) + ";" + FullPathEnvironment();
         process.StartInfo.WorkingDirectory = Program.DataDirectory;
         process.Start(); if (job != IntPtr.Zero) AssignProcessToJobObject(job, process.Handle);
         var output = process.StandardOutput.ReadToEndAsync(); var errors = process.StandardError.ReadToEndAsync();

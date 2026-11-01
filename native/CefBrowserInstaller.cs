@@ -56,7 +56,7 @@ internal static class CefBrowserInstaller {
             lock (gate) {
                 if (operationState == "running") return new { packaged = true, installed = false, needsRepair = false, reason = "浏览器组件安装正在进行。", operation = Snapshot() };
             }
-            try { using (files.AcquireLease(false)) { VerifyRuntime(files); } return new { packaged = true, installed = true, needsRepair = false, reason = "浏览器组件已安装并通过校验。官方扩展需要另外安装和连接。", operation = OperationStatus() }; }
+            try { using (files.AcquireLease(false)) { VerifyRuntime(files); } return new { packaged = true, installed = true, needsRepair = false, reason = files.Bundled ? "浏览器组件已内置，无需另行下载安装。" : "浏览器组件已安装并通过校验。官方扩展需要另外安装和连接。", operation = OperationStatus() }; }
             catch { bool exists = Directory.Exists(files.Directory); return new { packaged = true, installed = false, needsRepair = exists, reason = exists ? "浏览器组件未通过校验，请修复后重试。" : "尚未安装浏览器组件，下载约 132 MiB。", operation = OperationStatus() }; }
         });
     }

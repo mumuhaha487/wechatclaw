@@ -125,7 +125,13 @@ enum Runtime {
     }
     static func node(_ data: URL) -> String? {
         let configured = (try? String(contentsOf: data.appendingPathComponent("node-path.txt"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return ([configured].compactMap { $0 } + directories().map { $0 + "/node" }).first { FileManager.default.isExecutableFile(atPath: $0) }
+        #if arch(arm64)
+        let arch = "arm64"
+        #else
+        let arch = "x64"
+        #endif
+        let bundled = Bundle.main.resourceURL?.appendingPathComponent("node/\(arch)/bin/node").path
+        return ([configured, bundled].compactMap { $0 } + directories().map { $0 + "/node" }).first { FileManager.default.isExecutableFile(atPath: $0) }
     }
     static func version(_ node: String) async throws -> String {
         let output = try await command(node, ["--version"], env: environment(node: node))

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
+import { bundledBrowser, bundledNativeHost } from "./bundled-browser.mjs";
 
 const exec = promisify(execFile);
 export const officialExtensionId = "hehggadaopoacecdllhhajmbjkdcmajg";
@@ -15,8 +16,10 @@ const extensionId = key => createHash("sha256").update(Buffer.from(key, "base64"
 // Read installation paths, never Desktop credentials, live workers or their
 // authorization settings. The official binaries and modules stay installed at
 // their original location; they are not copied into QQClaw's distribution.
-export async function discoverOfficialBrowser({ platform = process.platform, env = process.env, home = os.homedir() } = {}) {
+export async function discoverOfficialBrowser({ platform = process.platform, env = process.env, home = os.homedir(), runtimeDirectory = env.QQCLAW_RUNTIME_DIR } = {}) {
   if (platform !== "win32") return { available: false, reason: "当前 macOS 网页内核尚未接通官方 ChatGPT 扩展。" };
+  try { const bundled = await bundledBrowser(runtimeDirectory); if (bundled) return { ...bundled, home }; }
+  catch (error) { return { available: false, reason: error.message }; }
   const local = env.LOCALAPPDATA;
   if (!local) return { available: false, reason: "未找到官方浏览器运行组件的安装目录。" };
   let registry;
@@ -57,9 +60,15 @@ export async function prepareOfficialBrowser({ session, executable, directory, n
   const installation = await discovery();
   if (!installation.available) return installation;
   const { paths, extension } = installation;
+  const own = path.join(directory, "browser-runtime", session.id);
+  const isolated = { CODEX_HOME: path.join(own, "codex"), LOCALAPPDATA: path.join(own, "local"), APPDATA: path.join(own, "roaming"),
+    TEMP: path.join(own, "temp"), TMP: path.join(own, "temp") };
+  await Promise.all(Object.values(isolated).map(file => fs.mkdir(file, { recursive: true })));
+  const nativeHostManifest = installation.bundled ? await bundledNativeHost(installation, executable, own) : "";
   const profile = createHash("sha256").update(`qqclaw-official:${session.id}`).digest("hex").slice(0, 32);
   const page = await native("browser.control", { action: "prepareOfficial", owner: session.id, profile,
-    extensionPath: extension.path, extensionId: extension.id });
+    extensionPath: extension.path, extensionId: extension.id,
+    ...(nativeHostManifest ? { nativeHostManifest, nativeLocalAppData: isolated.LOCALAPPDATA, nativeCodexHome: isolated.CODEX_HOME } : {}) });
   const browserFamily = page?.engine === "cef" ? "chrome" : page?.engine === "webview2" ? "edge" : null;
   if (!browserFamily || page.browserFamily !== browserFamily || typeof page.tabCreation !== "boolean" ||
     page?.extensionId !== officialExtensionId || !Number.isSafeInteger(page.browserProcessId) || page.browserProcessId <= 0 ||
@@ -70,7 +79,7 @@ export async function prepareOfficialBrowser({ session, executable, directory, n
   if (typeof page.applicationPath !== "string" || !path.isAbsolute(page.applicationPath) || !/\.exe$/i.test(page.applicationPath)) throw new Error("浏览器所属的原生程序路径无效。");
   let stdout;
   try {
-    ({ stdout } = await execImpl(page.applicationPath, ["--official-browser-pipes", String(page.browserProcessId), String(page.applicationProcessId), paths.nodeReplPath],
+    ({ stdout } = await execImpl(page.applicationPath, ["--official-browser-pipes", String(page.browserProcessId), String(page.applicationProcessId), paths.nodeReplPath, ...(nativeHostManifest ? [nativeHostManifest] : [])],
       { windowsHide: true, timeout: 15000, maxBuffer: 65536, encoding: "utf8" }));
   } catch (error) {
     let report; try { report = JSON.parse(error.stdout); } catch {}
@@ -80,10 +89,6 @@ export async function prepareOfficialBrowser({ session, executable, directory, n
   if (!transport.verified || transport.engine !== page.engine || transport.browserPid !== page.browserProcessId || transport.applicationPid !== page.applicationProcessId ||
     transport.paths?.length !== 1 || !/^\\\\\.\\pipe\\codex-browser-use\\[a-f0-9-]{36}$/i.test(transport.paths[0]))
     throw new Error("无法唯一确认本会话的官方扩展通道，已拒绝连接其他浏览器。");
-  const own = path.join(directory, "browser-runtime", session.id);
-  const isolated = { CODEX_HOME: path.join(own, "codex"), LOCALAPPDATA: path.join(own, "local"), APPDATA: path.join(own, "roaming"),
-    TEMP: path.join(own, "temp"), TMP: path.join(own, "temp") };
-  await Promise.all(Object.values(isolated).map(file => fs.mkdir(file, { recursive: true })));
   const env = {
     ...isolated,
     CODEX_CLI_PATH: executable,

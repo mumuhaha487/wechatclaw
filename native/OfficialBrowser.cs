@@ -91,7 +91,7 @@ internal static class OfficialBrowserMetadata {
         Console.SetOut(new StreamWriter(Console.OpenStandardOutput(), new System.Text.UTF8Encoding(false)) { AutoFlush = true });
         var json = new JavaScriptSerializer();
         try {
-            if (args.Length != 4) throw new Exception("官方浏览器检测参数无效。");
+            if (args.Length != 4 && args.Length != 5) throw new Exception("官方浏览器检测参数无效。");
             int browserId, applicationId;
             if (!Int32.TryParse(args[1], out browserId) || !Int32.TryParse(args[2], out applicationId) || browserId <= 0 || applicationId <= 0) throw new Exception("所属进程编号无效。");
             Publisher(args[3], "OpenAI OpCo, LLC");
@@ -104,7 +104,13 @@ internal static class OfficialBrowserMetadata {
             string engine;
             if (Path.GetFileName(browser.Path) == "msedgewebview2.exe") { Publisher(browser.Path, "Microsoft Corporation"); engine = "webview2"; }
             else { CefBrowserRuntime.VerifyOwnedWorker(browser.Path); engine = "cef"; }
-            var manifest = json.Deserialize<Dictionary<string, object>>(File.ReadAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenAI", "extension", "com.openai.codexextension.json")));
+            string manifestPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenAI", "extension", "com.openai.codexextension.json");
+            if (args.Length == 5) {
+                string data = Environment.GetEnvironmentVariable("QQCLAW_DATA_DIR");
+                if (String.IsNullOrEmpty(data) || !Path.GetFullPath(args[4]).StartsWith(Path.GetFullPath(Path.Combine(data, "browser-runtime")) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new Exception("原生宿主配置不属于当前应用。");
+                manifestPath = args[4];
+            }
+            var manifest = json.Deserialize<Dictionary<string, object>>(File.ReadAllText(manifestPath));
             if (Convert.ToString(manifest["name"]) != "com.openai.codexextension" || Convert.ToString(manifest["type"]) != "stdio") throw new Exception("官方原生宿主注册无效。");
             bool origin = false; foreach (var value in (System.Collections.IEnumerable)manifest["allowed_origins"]) if (Convert.ToString(value) == "chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/") origin = true;
             if (!origin) throw new Exception("官方扩展标识不匹配。");

@@ -4,3 +4,5 @@ release/*
 *.log
 .env*
 coverage/
+runtime/windows/
+runtime/macos/

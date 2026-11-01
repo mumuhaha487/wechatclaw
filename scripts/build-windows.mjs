@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { importBrowserEngine } from "./browser-engine-artifact.mjs";
+import { importOfficialRuntime } from "./official-runtime-artifact.mjs";
 
 const exec = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,7 +23,9 @@ if (path.extname(output).toLowerCase() !== ".exe") throw new Error("Windows outp
 const relative = path.relative(root, output);
 if (relative !== path.join("release", "QQClaw.exe") && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative))
   throw new Error("Place development candidates outside the project. The release folder has only one QQClaw.exe.");
-const browserSource = option("--browser-engine");
+const browserSource = option("--browser-engine") || path.join(root, "runtime/windows/engine");
+const officialSource = option("--official-runtime") || path.join(root, "runtime/windows/official-browser");
+const cefRuntimeSource = option("--cef-runtime") || path.join(root, "runtime/windows/cef");
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "qqclaw-build-"));
 const manifest = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
 if (!/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(manifest.version)) throw new Error("无效的构建版本。");
@@ -30,6 +33,15 @@ const buildInfo = path.join(temporary, "BuildInfo.cs");
 await fs.writeFile(buildInfo, `internal static class BuildInfo { internal const string Version = ${JSON.stringify(manifest.version)}; }\n`);
 const staging = path.join(temporary, "payload");
 const browserArtifact = browserSource ? await importBrowserEngine(browserSource, staging, root) : null;
+await importOfficialRuntime(officialSource, staging);
+if (browserArtifact) {
+  const release = path.join(staging, "browser-engine/Release");
+  await fs.cp(cefRuntimeSource, release, { recursive: true });
+  for (const file of ["QQClawBrowser.exe", "QQClawBrowser.dll", "chrome_elf.dll"])
+    await fs.copyFile(path.join(browserSource, file), path.join(release, file));
+  if (createHash("sha256").update(await fs.readFile(path.join(release, "libcef.dll"))).digest("hex") !== browserArtifact.manifest.runtime.librarySha256)
+    throw new Error("Bundled CEF runtime does not match the pinned library.");
+}
 const sdkVersion = "1.0.4314.35";
 const sdkSha512 = "cOaiVqP3BmQHMnxGpZzANM22tUXgycrisyJHjIGNzIaMsm8iXj7Kx+ceYg+RbYwJtzT009qfcFTocvVLY+ekMw==";
 const sdkCache = path.join(
@@ -300,5 +312,5 @@ try {
 const bytes = await fs.readFile(output);
 await fs.rm(temporary, { recursive: true, force: true });
 console.log(
-  `已构建 ${output} · ${(bytes.length / 1024 / 1024).toFixed(2)} MB · Windows x64 · 不内置 Node / Codex / WebView2 / CEF Runtime${browserArtifact ? " · 已嵌入浏览器组件清单和客户端，运行库需单独安装" : " · 未包含官方扩展浏览器组件"}`,
+  `已构建 ${output} · ${(bytes.length / 1024 / 1024).toFixed(2)} MB · Windows x64 · 已内置 Node、npm、CEF 和原版官方 ChatGPT 浏览组件；Codex 提供安装入口`,
 );

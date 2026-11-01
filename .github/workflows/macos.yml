@@ -179,7 +179,7 @@ jobs:
           run('/usr/bin/hdiutil',['attach','-readonly','-nobrowse','-mountpoint',mount,image]);
           try {
             if (await fs.readlink(path.join(mount,'Applications')) !== '/Applications') throw new Error('Applications installation shortcut missing');
-            if (!(await fs.readFile(path.join(mount,'安装说明.txt'),'utf8')).includes('Node.js 22.13+')) throw new Error('Installation instructions missing');
+            if (!(await fs.readFile(path.join(mount,'安装说明.txt'),'utf8')).includes('已内置 Node.js')) throw new Error('Installation instructions missing');
             run('/usr/bin/ditto',[path.join(mount,'QQClaw.app'),path.join(temporary,'QQClaw.app')]);
             console.log('PASS: DMG checksum, read-only mount and application installation copy');
           } finally { run('/usr/bin/hdiutil',['detach',mount]); }
@@ -187,6 +187,13 @@ jobs:
           const binary = path.join(app,'Contents/MacOS/QQClaw');
           console.log(run('/usr/bin/lipo',[binary,'-archs']).trim());
           run('/usr/bin/codesign',['--verify','--deep','--strict',app]);
+          const nodeArch = process.arch === 'arm64' ? 'arm64' : 'x64';
+          const bundledNode = path.join(app,'Contents/Resources/node',nodeArch,'bin/node');
+          const bundledNpm = path.join(app,'Contents/Resources/node',nodeArch,'lib/node_modules/npm/bin/npm-cli.js');
+          if (run(bundledNode,['--version'],{env:{PATH:'/usr/bin:/bin'}}).trim() !== 'v24.22.1') throw new Error('Bundled Node failed');
+          if (!/^\d+\.\d+\.\d+$/.test(run(bundledNode,[bundledNpm,'--version'],{env:{PATH:'/usr/bin:/bin'}}).trim())) throw new Error('Bundled npm failed');
+          for (const arch of ['arm64','x64']) run('/usr/bin/codesign',['--verify','--strict',path.join(app,'Contents/Resources/node',arch,'bin/node')]);
+          console.log('PASS: packaged Node and npm run with system-only PATH, both architecture signatures verified');
           const libraries = run('/usr/bin/otool',['-L',binary]);
           if (/\/opt\/homebrew\/|\/usr\/local\//.test(libraries)) throw new Error('Non-system runtime dependency found');
           const source = await fs.readFile(path.join(root,'native/macos/QQClaw.swift'),'utf8');

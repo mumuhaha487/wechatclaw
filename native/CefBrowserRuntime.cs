@@ -43,6 +43,12 @@ internal static class CefBrowserRuntime {
         string bootHash = HashValue((Dictionary<string, object>)value["bootstrap"], "sha256"), clientHash = HashValue((Dictionary<string, object>)value["client"], "sha256"), bundle;
         using (var sha = SHA256.Create()) bundle = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(bootHash + clientHash + ElfSha256 + LibrarySha256))).Replace("-", "").ToLowerInvariant().Substring(0, 32);
         string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QQClaw", "components", "browser");
+        string payload = Program.RuntimeDirectory ?? Environment.GetEnvironmentVariable("QQCLAW_RUNTIME_DIR");
+        if (!String.IsNullOrEmpty(payload)) {
+            string embedded = Path.Combine(payload, "browser-engine", "Release");
+            if (File.Exists(Path.Combine(embedded, "libcef.dll")))
+                return new CefEngineFiles { Bundled = true, Directory = embedded, LeaseFile = Path.Combine(payload, "browser-engine", ".lease"), BootstrapSha256 = bootHash, ClientSha256 = clientHash, ElfSha256 = ElfSha256, LibrarySha256 = LibrarySha256 };
+        }
         return new CefEngineFiles { Directory = Path.Combine(root, bundle, "Release"), LeaseFile = Path.Combine(root, bundle + ".lease"), BootstrapSha256 = bootHash, ClientSha256 = clientHash, ElfSha256 = ElfSha256, LibrarySha256 = LibrarySha256 };
     }
     internal static void VerifyOwnedWorker(string path) {

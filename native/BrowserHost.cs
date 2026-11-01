@@ -147,7 +147,7 @@ internal sealed class BrowserHost {
                 session.Cef = null; session.CefPreparing = null;
             }
             if (session.Cef != null && session.OfficialExtensionPath != extensionPath) throw new Exception("官方扩展已更新，请结束当前浏览器会话后重新连接。");
-            if (session.CefPreparing == null && session.Cef == null) session.CefPreparing = PrepareCef(session, extensionPath);
+            if (session.CefPreparing == null && session.Cef == null) session.CefPreparing = PrepareCef(session, extensionPath, Value(p, "nativeHostManifest"), Value(p, "nativeLocalAppData"), Value(p, "nativeCodexHome"));
             if (session.CefPreparing != null) await session.CefPreparing;
             if (session.Disposed || session.Cef == null) throw new Exception("浏览器会话已关闭。");
             Publish(session, false);
@@ -290,7 +290,7 @@ internal sealed class BrowserHost {
             try { lock (cefLogGate) { var directory=Path.Combine(Program.DataDirectory,"logs"); Directory.CreateDirectory(directory);File.AppendAllText(Path.Combine(directory,"browser-native.log"),failure+Environment.NewLine,Encoding.UTF8); } } catch { }
         }
     }
-    private async Task PrepareCef(BrowserSession session, string extensionPath) {
+    private async Task PrepareCef(BrowserSession session, string extensionPath, string nativeHostManifest = null, string nativeLocalAppData = null, string nativeCodexHome = null) {
         CefBrowserEngine engine = null;
         engine = new CefBrowserEngine(parent, session.Owner, cefFiles(), state => CefChanged(session, state), message => {
             try { lock (cefLogGate) { var directory = Path.Combine(Program.DataDirectory, "logs"); Directory.CreateDirectory(directory); File.AppendAllText(Path.Combine(directory, "browser-native.log"), message + Environment.NewLine, Encoding.UTF8); } } catch { }
@@ -300,7 +300,7 @@ internal sealed class BrowserHost {
         using (var sha = SHA256.Create()) profile = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(Program.DataDirectory.ToLowerInvariant() + ":" + session.Owner))).Replace("-", "").ToLowerInvariant().Substring(0, 32);
         string data = Path.Combine(Program.DataDirectory, "browser-runtime", session.Owner);
         Exception failure = null;
-        try { await engine.Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QQClaw", "browser-profiles", profile), extensionPath, Path.Combine(data, "engine.json"), Path.Combine(data, "cef.log"), downloadRoot: BrowserDownloads.DirectoryRoot()); }
+        try { await engine.Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QQClaw", "browser-profiles", profile), extensionPath, Path.Combine(data, "engine.json"), Path.Combine(data, "cef.log"), downloadRoot: BrowserDownloads.DirectoryRoot(), nativeHostManifest: nativeHostManifest, nativeLocalAppData: nativeLocalAppData, nativeCodexHome: nativeCodexHome); }
         catch (Exception error) { failure = error; }
         if (failure != null || session.Disposed) {
             try { await engine.Close(); } catch { }

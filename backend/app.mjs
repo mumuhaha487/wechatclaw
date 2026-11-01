@@ -676,7 +676,7 @@ export class App {
       case "browser.officialStatus": {
         const installed = await officialBrowserStatus();
         const client = this.clients.get(p.sessionId)?.client;
-        return { ...installed, ...(client?.browserStatus ? client.browserStatus() : {}) };
+        return { ...installed, ...(client?.browserConfiguration && client?.browserStatus ? client.browserStatus() : {}) };
       }
       case "attachment.import":
         return this.desktopAttachments.import(p);

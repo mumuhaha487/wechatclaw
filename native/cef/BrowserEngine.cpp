@@ -686,6 +686,27 @@ LRESULT CALLBACK windowProc(HWND window,UINT message,WPARAM w,LPARAM l) {
 }
 } // namespace
 
+// Native messaging is registered only in this browser process's private HKCU
+// view. Existing Chrome/Desktop registration and credentials remain separate.
+class NativeHostRegistry {
+  HMODULE module=nullptr; HKEY key=nullptr;
+  using Override=LSTATUS (WINAPI*)(HKEY,HKEY);
+  using Close=LSTATUS (WINAPI*)(HKEY);
+  Override replace=nullptr; Close close=nullptr;
+ public:
+  void use(const std::wstring& name) {
+    if(name.empty())return;
+    if(name.rfind(L"Software\\QQClaw\\BrowserRuntime\\",0)!=0)throw std::runtime_error("Invalid native messaging registry");
+    module=LoadLibraryExW(L"advapi32.dll",nullptr,LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if(!module)throw std::runtime_error("Native messaging registry unavailable");
+    auto open=reinterpret_cast<LSTATUS (WINAPI*)(HKEY,LPCWSTR,DWORD,REGSAM,PHKEY)>(GetProcAddress(module,"RegOpenKeyExW"));
+    replace=reinterpret_cast<Override>(GetProcAddress(module,"RegOverridePredefKey"));
+    close=reinterpret_cast<Close>(GetProcAddress(module,"RegCloseKey"));
+    if(!open||!replace||!close||open(HKEY_CURRENT_USER,name.c_str(),0,KEY_READ,&key)!=ERROR_SUCCESS||replace(HKEY_CURRENT_USER,key)!=ERROR_SUCCESS)
+      throw std::runtime_error("Could not activate bundled native messaging host");
+  }
+  ~NativeHostRegistry(){if(key){if(replace)replace(HKEY_CURRENT_USER,nullptr);if(close)close(key);}if(module)FreeLibrary(module);}
+};
 extern "C" __declspec(dllexport) int RunWinMain(HINSTANCE instance,LPWSTR,int,void* sandboxInfo,cef_version_info_t* bootstrap) {
   if(!sandboxInfo||!bootstrap) return 20;
   wchar_t file[32768];if(!GetModuleFileNameW(nullptr,file,32768))return 10;
@@ -718,6 +739,7 @@ extern "C" __declspec(dllexport) int RunWinMain(HINSTANCE instance,LPWSTR,int,vo
     if(snapshot!=INVALID_HANDLE_VALUE){if(Process32FirstW(snapshot,&entry))do{if(entry.th32ProcessID==GetCurrentProcessId()){creator=entry.th32ParentProcessID;break;}}while(Process32NextW(snapshot,&entry));CloseHandle(snapshot);}
     if(!creator || creator!=config.at("parentProcessId").get<DWORD>())throw std::runtime_error("The browser configuration does not belong to its creator");
     if(parent) {GetWindowThreadProcessId(parent,&parentPid);if(parentPid!=creator)throw std::runtime_error("The browser surface belongs to another process");}
+    NativeHostRegistry nativeRegistry;nativeRegistry.use(wide(config.value("nativeHostRegistryKey",std::string())));
     WNDCLASSW type{};type.hInstance=instance;type.lpfnWndProc=windowProc;type.lpszClassName=L"QQClawCefSurface";RegisterClassW(&type);
     surface=CreateWindowExW(0,type.lpszClassName,L"QQClaw browser",(parent?WS_CHILD:WS_OVERLAPPEDWINDOW)|WS_CLIPCHILDREN|WS_CLIPSIBLINGS,0,0,width,height,parent,nullptr,instance,nullptr);
     if(!surface)throw std::runtime_error("Could not create the browser surface");SetTimer(surface,1,200,nullptr);

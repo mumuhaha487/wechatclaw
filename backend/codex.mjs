@@ -229,7 +229,7 @@ export class CodexClient extends EventEmitter {
     });
     try {
       await this.request("initialize", {
-        clientInfo: { name: "qqclaw_desktop", title: "QQClaw", version: "0.3.32" },
+        clientInfo: { name: "qqclaw_desktop", title: "QQClaw", version: "0.3.34" },
         capabilities: { experimentalApi: true },
       }, this.initializeTimeoutMs);
       this.send({ method: "initialized", params: {} });

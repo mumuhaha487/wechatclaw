@@ -1362,7 +1362,7 @@ function officialBrowserSettings() {
     <h2>官方浏览器扩展</h2>${browserComponentSettings({ status: browserComponent.status, installing: browserComponent.installing, progress: browserComponent.progress, operation: browserComponent.operation, isMac }, button)}<div class="settings-card"><p class="setting-title">${title}</p><p class="setting-description">${esc(status?.reason || "尚未检测当前会话的连接状态。")}</p>
     ${(status?.browsers || []).map(b => `<div class="setting-row"><span class="grow">${esc(b.name)}</span><span class="muted">${b.installed ? "检测到官方扩展文件" : b.detection === "unknown" ? "安装情况未知" : "未检测到官方扩展文件"}</span></div>`).join("")}
     <p class="setting-description">浏览任务会为当前会话独立检测官方组件与扩展。网站确认会显示在任务来源的微信或 QQClaw 中；安装检测不代表连接成功。</p>
-    <div class="row">${button("official-browser-store", "官方扩展安装入口", "external", "outline")}${button("official-browser-docs", "查看官方说明", "external", "outline")}</div></div>`;
+    <div class="row">${status?.bundled ? "" : button("official-browser-store", "官方扩展安装入口", "external", "outline")}${button("official-browser-docs", "查看官方说明", "external", "outline")}</div></div>`;
 }
 function runtimeSettings() {
   const e = ui.environment;

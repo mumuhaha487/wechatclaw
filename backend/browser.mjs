@@ -2,6 +2,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { bundledBrowser } from "./bundled-browser.mjs";
 
 export function browserUrl(value) {
   const url = new URL(String(value || ""));
@@ -34,6 +35,14 @@ export class BrowserViewer {
 // Installation is not authorization or connectivity. Check only official store
 // IDs, and report all three states separately. No host identity/token is read.
 export async function officialBrowserStatus({ platform = process.platform, env = process.env, home = os.homedir(), fsImpl = fs } = {}) {
+  if (platform === "win32" && env.QQCLAW_RUNTIME_DIR) {
+    try {
+      const bundled = await bundledBrowser(env.QQCLAW_RUNTIME_DIR);
+      if (bundled) return { bundled: true, available: true, connected: false, browsers: [],
+        reason: "官方浏览运行库和原版 ChatGPT 扩展已内置，发送浏览任务后自动连接。",
+        documentation: "https://learn.chatgpt.com/docs/chrome-extension" };
+    } catch (error) { return { bundled: true, available: false, connected: false, browsers: [], reason: error.message }; }
+  }
   const ids = ["hehggadaopoacecdllhhajmbjkdcmajg", "odlomjlbamekndcpllcnffbgeohgkmjh"];
   const roots = platform === "win32" ? [
     ["Google Chrome", path.join(env.LOCALAPPDATA || home, "Google/Chrome/User Data")],
