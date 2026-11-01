@@ -2927,7 +2927,9 @@ function onEvent(event, data) {
   } else if (event === "browser-state") {
     updateBrowserState(data);
   } else if (event === "browser-automation") {
-    if (data.sessionId !== session()?.id) return;
+    // Access approval can arrive after the user closes the panel. Background
+    // browser work must not undo that explicit choice; reopening is a UI action.
+    if (data.sessionId !== session()?.id || ui.browserHidden.has(data.sessionId)) return;
     const browser = browserStates.get(data.sessionId);
     if (!browser?.activeTab) return;
     ui.panelIntent++; invalidatePanel();
