@@ -29,6 +29,8 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Typecheck the production Swift runtime adapter
+        run: xcrun swiftc -swift-version 5 -parse-as-library -typecheck native/macos/QQClaw.swift native/macos/BrowserHost.swift native/macos/CefRuntime.swift
       - name: Package the product MCP entry
         run: |
           node --input-type=module <<'NODE'

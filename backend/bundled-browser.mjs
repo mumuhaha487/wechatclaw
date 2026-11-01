@@ -53,6 +53,7 @@ export async function bundledNativeHost(installation, executable, own) {
   }));
   const manifest = path.join(directory, "com.openai.codexextension.json");
   await fs.writeFile(manifest, JSON.stringify({ name: "com.openai.codexextension", type: "stdio",
+    ...(mac ? { supports_native_initiated_connections: true } : {}),
     description: "QQClaw bundled official ChatGPT host", path: host,
     allowed_origins: ["chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/"] }));
   return manifest;

@@ -126,9 +126,7 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
     NSString* owner = @(owners[value->GetIdentifier()].c_str());
     views.erase(value->GetIdentifier()); owners.erase(value->GetIdentifier());
     titles.erase(value->GetIdentifier());
-    if (browserView && browserView->GetBrowser() && browserView->GetBrowser()->IsSame(value)) {
-      if (root && browserView->GetParentView()) root->RemoveChildView(browserView);
-      browserView = nullptr;
+    if (!closing && browserView && browserView->GetBrowser() && browserView->GetBrowser()->IsSame(value)) {
       shell.browserVisible = NO; [shell updateMask];
     }
     emit(@{@"event": @"browser-closed", @"tabId": @(value->GetIdentifier()), @"owner": owner});
@@ -376,8 +374,12 @@ const char* QQClawCefControl(const char* json) {
       NSMutableArray* tabs = [NSMutableArray new];
       for (const auto& page : pages) if (owners[page.first] == (owner ? owner.UTF8String : "")) {
         auto frame = page.second->GetMainFrame();
+        auto view = CefBrowserView::GetForBrowser(page.second);
+        id handle = (__bridge id)(void*)page.second->GetHost()->GetWindowHandle();
+        NSWindow* window = [handle isKindOfClass:NSWindow.class] ? handle : ([handle isKindOfClass:NSView.class] ? [handle window] : nil);
         [tabs addObject:@{@"id": @(page.first), @"url": frame ? @(frame->GetURL().ToString().c_str()) : @"", @"title": titles[page.first] ?: @"",
           @"loading": @(page.second->IsLoading()), @"canGoBack": @(page.second->CanGoBack()), @"canGoForward": @(page.second->CanGoForward()),
+          @"nativeHandleClass": NSStringFromClass([handle class]) ?: @"", @"hasCefView": @(view != nullptr), @"nativeRoot": @(window == nativeWindow()),
           @"attached": @(views.count(page.first) && views[page.first]->GetParentView() && views[page.first]->GetParentView()->IsSame(root))}];
       }
       result = @{@"tabs": tabs};

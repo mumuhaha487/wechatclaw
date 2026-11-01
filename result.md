@@ -1,32 +1,26 @@
 # QQClaw 本轮需求、实现与验收记录
 
-## Mac 官方运行库已内置；扩展连接继续核验（2026-11-02）
+## Mac 官方浏览连接已跑通；生产窗口集成进行中（2026-11-02）
 
-当前：完整原版运行库及CLI包已放入项目，原生退出缺陷已修复；Mac官方浏览握手仍未通过，生产Host未启用，完整目标保持active。
+正式成品仍为0.3.37，`release/QQClaw.exe`与`release/macos/QQClaw.dmg`各一份。本轮新代码尚未编入正式DMG；完整目标保持active，不能称整体验收完成。
 
-连接检查41352117470、41352662638及41353070217中，原版客户端连接socket成功，但getInfo握手失败；12次读取期间宿主PID/socket始终不变，不能归为启动慢或宿主重启。官方Node REPL的原始trace已保留。41353280389额外尝试原样记录传输，只有请求而无响应；该记录器改变了socket的直接对端，因此不能将其结果当作正式直连通过，现已删除记录器代码。原宿主包含Mac原生对端签名校验逻辑；后续保留原包完整的CodexCLI.app，原签名、配置描述文件和包结构不变，不伪造OpenAI包装、不启动Desktop。
+已下载并核对[41357576090](https://github.com/mumuhaha487/wechatclaw/actions/runs/41357576090)的真实Mac结果（源码597865e）：原版官方扩展新建标签、导航自建loopback页、读取AX树、中文输入`QQClaw Mac 输入验证`、实际网页input事件回传、截图、关闭及再次查询移除均通过；原生进程退出0。原先紧接关闭后在同一次工具调用中查询，约9ms仍看见标签；拆为前后两次原版工具调用后确认实际移除，未放宽“必须真的关闭”的断言。这是官方组件检查，不含模型、微信或完整产品GUI。
 
-最新直连[41354200593](https://github.com/mumuhaha487/wechatclaw/actions/runs/41354200593)（源码ebc535854885a6570be65d48ee2bde208ed57506）仍未通过：统一打包入口的摘要/深层签名验证成功；实际进程树中node_repl、codex、node均为OpenAI原签名，但getInfo仍在handshake阶段失败，浏览器列表为空。浏览进程正常退出0。此结果排除了“只换完整CLI就能解决握手”的假设；对端校验的具体失败条件尚未确认，不能断言已定位最终原因，更不能伪造身份或改官方组件绕过。没有进入网页操作、模型或微信验收。
+[41358091737](https://github.com/mumuhaha487/wechatclaw/actions/runs/41358091737)（源码3508214）使用产品共用的`backend/macos-official-runtime.mjs`重复上述真实操作并成功退出0，artifact SHA256 `9a9d89745a4a06e765f7ea8c1ebab1be77a608ebd03b3ffd4b5cc1e9c1acf5b0`。完整原版CodexCLI.app通过官方app-server `process/spawn`启动原版Node REPL；Rust Node REPL的真实父进程为原签名CLI。这满足官方Mac宿主对socket真实对端及一层父进程的签名要求，没有改签或假冒身份。
 
-另已实际修复一个Mac原生退出缺陷：CEF默认客户端此前没有接管扩展自行创建的页面。新增GetDefaultClient和全部页面的生命周期追踪，关闭所有页面之后才退出消息循环。41353280389实际记录初始页1及官方扩展安装页2，二者都收到browser-closed、随后root-closed，浏览器进程退出0（此前相同场景8秒内未退出）。这证明原生关闭修复，不能视为官方网页任务或完整软件通过。新桥仍未接入正式Swift Host。
+此前Mac握手失败的原因已纠正：`nativePipe`实际从Rust Node REPL主进程连接，直接从检查JS启动时父进程不符合官方宿主要求；只替换环境变量中的CLI路径无效。41355980053已有成功握手trace，但检查把`nodeRepl.write(object)`的格式化JS文本误当JSON导致假阴性；随后改为带标记的`JSON.stringify`单行解析。41356308107确认发现及文档，41356951384确认建页/截图，41357218657确认真实中文input事件。原始失败记录保留在项目外证据目录，不把解析错误称为网络故障。
 
-同源码的原生布局回归[41353280390](https://github.com/mumuhaha487/wechatclaw/actions/runs/41353280390)也成功，原8项窗口归属、指定尺寸、遮罩/命中、隐藏/恢复和改尺寸断言全部通过。artifact摘要 `13740731654cd19eb7a504cf48d3e99f3c211e0b6b57e53b17f78744a5584f7e` 已核对，证据在 `qqclaw-mac-official-link-20261102/native-regression/run-41353280390-artifact`。这是加载本机检查壳的原生组件回归，未验收完整前端、物理输入或微信。
+新增产品入口`scripts/macos-official-mcp.mjs`与打包函数`bundleMacOfficialMcp`：只转发原版MCP字节流，不实现浏览器替代工具。官方`process/spawn`显式`timeoutMs:null, outputBytesCap:null`，依原版CLI生成的类型禁用进程超时和输出截断，不设置任务寿命。EOF/信号先结束原版REPL，再清理所拥有的app-server。`backend/macos-browser-transport.mjs`只选择精确宿主路径、实际所属进程树与该宿主唯一Unix socket。
 
-项目内唯一的 `runtime/macos/official-browser/runtime-darwin-arm64.tar.gz` 已更新为完整原版资源（226,931,853字节，SHA256 `8f1df2ce75043880693128467d16f5224344cf1d043638bf5281d735fab6fc52`），另附来源、原始签名、CLI包元数据和实际运行记录。复制项目会包含这些资源；二进制缓存不提交Git。旧119,968,392字节归档仅保留在项目外证据目录。正式0.3.37未重建，不能据此称正式Mac包已支持官方自动浏览。
+源码0a93688正在验证**编译后的产品MCP入口**及“官方新标签必须嵌入当前浏览面板”的新断言。前一轮41358444450因把`GetRequestContext()`调用在CefBrowser而非CefBrowserHost上编译失败，已修正；未进入网页操作，不能当通过。CEF新增UI专用profile/tab控制与popup接入尝试；这些尚不构成多账号隔离或生产Swift Host完成。
 
-官方来源为 `https://persistent.oaistatic.com/codex-app-prod/Codex.dmg`，本次实际包名ChatGPT.app、bundle ID com.openai.codex、版本26.1027.51404。整个App的OpenAI/Apple签名链通过；原版Node、Node REPL和Mac宿主逐字节复制，原签名与TeamIdentifier `2DC432GLL2`保留。官方扩展ID `hehggadaopoacecdllhhajmbjkdcmajg`、版本1.26.1020.11845；CRX3签名、公钥派生ID和ZIP内容核对通过，仅向解包manifest补充保持原ID的公开key。没有携带登录、账户或Desktop进程。插件独立签名文件保留，但未把其独立验签写成通过。
+项目内唯一Apple Silicon原版资源为`runtime/macos/official-browser/runtime-darwin-arm64.tar.gz`，226931853字节，SHA256 `8f1df2ce75043880693128467d16f5224344cf1d043638bf5281d735fab6fc52`。含原Node v24.22.1、Node REPL、官方扩展/宿主和完整CodexCLI.app，复制项目会带走资源。来源是官方`https://persistent.oaistatic.com/codex-app-prod/Codex.dmg`，实际外层ChatGPT.app，bundle `com.openai.codex`，26.1027.51404。原生签名Team `2DC432GLL2`保持不变；官方扩展ID `hehggadaopoacecdllhhajmbjkdcmajg`、版本1.26.1020.11845，CRX3签名与ID已核对，未修改功能代码。插件附带独立签名文件未另行验签，不能写为通过。
 
-真实云检查 [41350287636](https://github.com/mumuhaha487/wechatclaw/actions/runs/41350287636)（源码2d437918ad2cbf89e43d5d2a5a8ada90c55564b7）在卸载原App镜像后，使用npm正式安装的 `codex-cli 0.166.0`，通过原版Node v24.22.1启动原版Node REPL，实际执行6×7得到42，导入browser-client得到function，随后正常退出0。此检查没有操作网页、模型或微信。
+`backend/bundled-browser.mjs`已新增Mac清单/架构/路径识别与原宿主配置，`official-browser.mjs`新增Mac传输及MCP参数分支。Mac生产原生宿主仍未启用，发现入口保留`QQCLAW_MAC_BROWSER_READY`能力门槛；没有在原生接口尚未接通时向模型宣称可用。原Swift BrowserHost仍为手动WebKit。
 
-最新完整包云运行 [41353878675](https://github.com/mumuhaha487/wechatclaw/actions/runs/41353878675)（源码fca000eb873ae5c6f52cec1a17508aaeefcbce86）通过：原 `CodexCLI.app` 深层签名验证通过，bundle ID `com.openai.codex.cli`，实际版本 `codex-cli 0.166.0-alpha.5.1`；卸载原App镜像后，用复制出的完整CLI包启动原版Node REPL，42及browser-client导入检查通过、正常退出0。CLI可执行文件SHA256 `58a91f6ea19bea477ae3a2ec48d619f0039afe75d3476260747e11d201fa7cea`，同样逐字节及Team校验通过。新增scripts/macos-browser-runtime.mjs统一解包、摘要及原签名检查，云端已执行该打包入口；不是复制松散CLI或改签。完整包检查仍没有操作网页、模型或微信。
+剩余：接通生产Swift窗口/菜单/退出保存、多会话/标签归属并实测，再编译同名DMG。Intel官方primary办公运行库已下载但缺少浏览宿主与REPL，不能冒充Intel浏览组件；其他官方资源还需查证。完整原生GUI/IME/DPI、微信浏览闭环、Blob官方下载和参考主页全部操作一致性仍未完成。自建检查页的精确origin授权是夹具自己的策略，记录为`isolated-fixture-owner`，不是人类确认；生产确认流程未改。原微信账户未启动或发消息，旧正式进程未停止，用户数据未清理。
 
-失败原始记录保留：41347485586错误假设镜像内名为Codex.app，已修正为实际bundle发现；41348968496/41349666382的REPL内核被SIGKILL，系统诊断明确拒绝从原包抽出的松散qa/codex（restricted entitlements / Unsatisfied Entitlements）。原Node能正常运行，不是缺JIT权限。随后独立npm CLI只证明REPL执行和导入成功，未通过原生浏览握手；最新改为保留原包中现成的完整CodexCLI.app后，受限签名CLI已能合法独立运行，未改原件签名或身份。
-
-证据在项目外 `C:/Users/admin/AppData/Local/Temp/qqclaw-mac-runtime-ed81b05` 和 `qqclaw-mac-official-link-20261102`，各次artifact摘要已核对。连接首轮41351208447列表为空、退出超时的失败保留。排队中的41351691019已取消；改用macOS14的41351967785被GitHub退役brownout取消，annotation原文说明2026-11-02退役；后续使用官方支持的macOS26。未把排队、取消或原生编译成功算作浏览器通过。
-
-检查使用本应用私有NativeMessagingHosts目录和本应用拥有的宿主/socket，不写全局Chrome配置、不借用Desktop通道，不把浏览器发现当整体验收。Intel官方primary-runtime档案已实际下载并核对SHA256 `4f2efac5fc3d200d2a4ef319edc00e95dcc5a2ef04ef38fc726e3fefcb6ab2a1`，364,087,420字节。完整tar索引有Node但没有Node REPL、browser-client或扩展宿主；该办公依赖包不能当作Intel浏览运行库，未放入项目或增加成品体积。
-
-生产Swift Host、会话/标签归属和退出保存链尚未接入CEF，backend对Mac仍保留未接通提示。下一步以实际连接及页面操作结果推进生产集成。完整目标继续active；微信闭环、完整原生GUI/IME/DPI和Blob官方能力缺口保留。
+证据根：`C:/Users/admin/AppData/Local/Temp/qqclaw-mac-official-link-20261102`。下方为历史记录，其“握手未通过/未内置”等旧描述不覆盖本节。
 
 ## Mac后续源码：CEF Views与WebKit同窗验证（未集成正式软件）
 

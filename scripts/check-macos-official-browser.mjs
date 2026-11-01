@@ -14,6 +14,8 @@ const option = name => { const i = process.argv.indexOf(name); return i >= 0 ? p
 const output = path.resolve(option("--output"));
 const runtime = path.resolve(option("--runtime"));
 const cli = path.resolve(option("--cli"));
+const fixtureOwner = process.argv.includes("--profile-isolation") ? randomUUID() : "";
+const fixtureProfile = "68ee7e2f79164e3b914697018ee61b44";
 const build = JSON.parse(await fs.readFile(path.join(path.resolve(option("--build")), "mac-browser-build.json"), "utf8"));
 const manifest = JSON.parse(await fs.readFile(path.join(runtime, "runtime.json"), "utf8"));
 const exec = promisify(execFile), delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -31,7 +33,7 @@ await fs.writeFile(path.join(hostDirectory, "extension-host-config.json"), JSON.
   nodeReplPath: path.join(runtime, manifest.paths.nodeReplPath), browserClientPath: path.join(runtime, manifest.paths.browserClientPath), proxyHost: "127.0.0.1", proxyPort: 0 }));
 await fs.writeFile(path.join(profile, "NativeMessagingHosts/com.openai.codexextension.json"), JSON.stringify({
   name: "com.openai.codexextension", description: "QQClaw isolated original host check", type: "stdio", path: nativeHost,
-  allowed_origins: ["chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/"] }));
+  supports_native_initiated_connections: true, allowed_origins: ["chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/"] }));
 const observations = [];
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
@@ -41,7 +43,8 @@ const server = http.createServer(async (request, response) => {
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const url = "http://127.0.0.1:" + server.address().port + "/";
-await write("browser-options.json", { profile, extensionPath: path.join(runtime, "extension"), url, diagnostics: true });
+const createdUrl = url + "?official-created=" + randomUUID();
+await write("browser-options.json", { profile, extensionPath: path.join(runtime, "extension"), url, diagnostics: true, ...(fixtureOwner ? { fixtureOwner, fixtureProfile } : {}) });
 const browser = spawn(build.executable, [], { detached: true, env: { ...process.env, RUST_LOG: "debug", CODEX_HOME: path.join(output, "codex"),
   QQCLAW_CHECK_OPTIONS: path.join(output, "browser-options.json"), QQCLAW_CHECK_NATIVE_TABS: path.join(output, "native-tabs.json"), QQCLAW_CHECK_STOP: path.join(output, "stop") }, stdio: ["ignore", "pipe", "pipe"] });
 let browserLog = "", repl, replLog = "", result = { passed: false }, active = true;
@@ -54,7 +57,7 @@ const access = await new BrowserAccessHost({ authorize: request => active && req
   observe: value => accessEvents.push(value) }).start();
 
 try {
-  const transport = await macOfficialTransport({ browserPid: browser.pid, applicationPid: browser.pid, nativeHost });
+  const transport = await macOfficialTransport({ browserPid: browser.pid, applicationPid: browser.pid, nativeHost, profileDirectory: path.join(profile, fixtureOwner ? fixtureProfile : "Default") });
   await write("transport.json", transport);
   const modules = manifest.paths.nodeModuleDirs.map(name => path.join(runtime, name));
   const env = { ...process.env, ...access.environment, CODEX_HOME: path.join(output, "codex"), CODEX_CLI_PATH: cli,
@@ -157,7 +160,7 @@ try {
   const connected = available.filter(value => value.type === "extension");
   if (connected.length !== 1) throw Error("Official discovery did not return exactly one owned extension browser: " + JSON.stringify(available));
   await call("browser-documentation", `var browser=await agent.browsers.get(${JSON.stringify(connected[0].id)}); nodeRepl.write(await browser.documentation())`);
-  await call("tab-open", 'await browser.nameSession("🔎 Mac 浏览验证"); var tab=await browser.tabs.new(); await tab.goto(' + JSON.stringify(url) + '); nodeRepl.write("QQCLAW_AX_AVAILABLE="+!!tab.ax); if(tab.ax) await tab.ax.write(); else nodeRepl.write(await tab.playwright.domSnapshot()); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
+  await call("tab-open", 'await browser.nameSession("🔎 Mac 浏览验证"); var tab=await browser.tabs.new(); await tab.goto(' + JSON.stringify(createdUrl) + '); nodeRepl.write("QQCLAW_AX_AVAILABLE="+!!tab.ax); if(tab.ax) await tab.ax.write(); else nodeRepl.write(await tab.playwright.domSnapshot()); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
   const entered = "QQClaw Mac 输入验证";
   await call("tab-input", 'var axState=await tab.ax.get("state",{disableDiffing:true}); nodeRepl.write(axState); var inputMatch=axState.match(/^\\s*(\\d+)\\s+text field \\(settable\\) Verification input\\b/m); if(!inputMatch) throw Error("The actual AX state did not expose the fixture input"); await tab.ax.typeText(Number(inputMatch[1]),' + JSON.stringify(entered) + '); await tab.ax.write(); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
   for (let retry = 0; retry < 20 && !observations.includes(entered); retry++) await delay(100);
@@ -165,10 +168,10 @@ try {
   let nativeTabs;
   for (let retry = 0; retry < 20; retry++) {
     nativeTabs = JSON.parse(await fs.readFile(path.join(output, "native-tabs.json"), "utf8"));
-    if (nativeTabs.tabs.some(tab => tab.url === url && tab.attached)) break;
+    if (nativeTabs.tabs.some(tab => tab.url === createdUrl && tab.attached)) break;
     await delay(100);
   }
-  if (!nativeTabs.tabs.some(tab => tab.url === url && tab.attached)) throw Error("The official new tab is not embedded in the product browser pane: " + JSON.stringify(nativeTabs));
+  if (!nativeTabs.tabs.some(tab => tab.url === createdUrl && tab.attached)) throw Error("The official new tab is not embedded in the product browser pane: " + JSON.stringify(nativeTabs));
   await call("tab-close", 'var closedTabId=tab.id; await tab.close(); nodeRepl.write("Close requested for "+closedTabId)');
   await call("tab-closed-state", 'var remainingTabs=await browser.tabs.list(); if(remainingTabs.some(item=>item.id===closedTabId)) throw Error("The original extension still lists the closed tab after its close request completed"); nodeRepl.write("QQCLAW_CLOSED="+JSON.stringify({closedTabId,remainingTabs}))');
   const schemaFolder = path.join(output, "api-types");
@@ -179,7 +182,7 @@ try {
       schema.push({ file, text: await fs.readFile(path.join(schemaFolder, file), "utf8") });
     await write("original-process-api.json", schema);
   } catch (error) { await write("original-process-api.json", { error: error.message }); }
-  result = { passed: true, connected: true, tabOpened: true, inputObserved: entered, tabClosed: true, embedded: true, nativeTabs, transport, task, accessEvents, unexpectedRequests,
+  result = { passed: true, connected: true, tabOpened: true, inputObserved: entered, tabClosed: true, embedded: true, nativeTabs, fixtureOwner, transport, task, accessEvents, unexpectedRequests,
     scope: "Actual original official extension on Mac CEF: create tab, navigate, read AX, type Chinese, observe real input event, screenshot and close. Owned local fixture only; no model, WeChat or full product GUI." };
 } catch (error) { result = { ...result, error: error.stack, accessEvents }; process.exitCode = 1; }
 finally {
