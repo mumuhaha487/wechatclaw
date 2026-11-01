@@ -1,7 +1,7 @@
 import { workspaceKey } from "../shared/workspace.mjs";
 
 export function validDraftKey(key, state) {
-  return typeof key === "string" && (state.sessions.some(s => s.id === key) ||
+  return typeof key === "string" && (key === "new:" || state.sessions.some(s => s.id === key) ||
     key.startsWith("new:") && [...state.projects, ...state.sessions].some(p => `new:${workspaceKey(p.workspace)}` === key));
 }
 
