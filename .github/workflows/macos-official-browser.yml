@@ -38,8 +38,23 @@ jobs:
           NODE
           tar -xzf "$RUNNER_TEMP/official-runtime/runtime-darwin-arm64.tar.gz" -C "$RUNNER_TEMP/official-runtime/runtime"
           npm install --prefix "$RUNNER_TEMP/official-runtime/cli" --no-audit --no-fund @openai/codex@0.166.0
+      - uses: actions/cache/restore@v4
+        id: cef
+        with:
+          path: |
+            ${{ runner.temp }}/browser-build/build/qqclaw-macos/Release/QQClawBrowser.app
+            ${{ runner.temp }}/browser-build/mac-browser-build.json
+          key: mac-cef-arm64-${{ hashFiles('native/cef/macos/**', 'scripts/build-macos-browser.mjs') }}
       - name: Compile sandboxed CEF Chrome Views component
+        if: steps.cef.outputs.cache-hit != 'true'
         run: node scripts/build-macos-browser.mjs --entry native/cef/macos/OfficialCheck.mm --output "$RUNNER_TEMP/browser-build"
+      - uses: actions/cache/save@v4
+        if: steps.cef.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ${{ runner.temp }}/browser-build/build/qqclaw-macos/Release/QQClawBrowser.app
+            ${{ runner.temp }}/browser-build/mac-browser-build.json
+          key: ${{ steps.cef.outputs.cache-primary-key }}
       - name: Connect original extension through its owned native host
         run: |
           node --input-type=module <<'NODE'

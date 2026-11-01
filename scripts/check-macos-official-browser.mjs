@@ -101,8 +101,17 @@ try {
     await write(name + ".json", value); if (value.isError) throw Error("Official runtime: " + JSON.stringify(value)); return value;
   };
   const client = pathToFileURL(path.join(runtime, manifest.paths.browserClientPath)).href;
-  await call("browser-list", `var {setupBrowserRuntime}=await import(${JSON.stringify(client)}); var agent=await setupBrowserRuntime(); nodeRepl.write(await agent.browsers.list())`);
-  await call("browser-documentation", 'var browser=await agent.browsers.get("extension"); nodeRepl.write(await browser.documentation())');
+  await call("browser-bootstrap", `var {setupBrowserRuntime}=await import(${JSON.stringify(client)}); var agent=await setupBrowserRuntime()`);
+  let available = [];
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const value = await call("browser-list-" + attempt, "nodeRepl.write(await agent.browsers.list())");
+    for (const item of value.content || []) if (item.type === "text") { try { const data = JSON.parse(item.text); if (Array.isArray(data)) available = data; } catch {} }
+    if (available.length) break;
+    await delay(1000);
+  }
+  const connected = available.filter(value => value.type === "extension");
+  if (connected.length !== 1) throw Error("Official discovery did not return exactly one owned extension browser: " + JSON.stringify(available));
+  await call("browser-documentation", `var browser=await agent.browsers.get(${JSON.stringify(connected[0].id)}); nodeRepl.write(await browser.documentation())`);
   // Subsequent checks are deliberately added only after reading the actual
   // returned documentation. Discovery alone never marks this check passed.
   result = { passed: false, connected: true, transport, task, accessEvents, unexpectedRequests,
@@ -116,6 +125,20 @@ finally {
   let timer; const exit = await Promise.race([browserExit, new Promise(resolve => timer = setTimeout(() => resolve(null), 8000))]); clearTimeout(timer);
   if (!exit) { try { process.kill(-browser.pid, "SIGTERM"); } catch {} }
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+  const diagnostics = [];
+  async function collect(directory, depth = 0) {
+    if (depth > 5) return;
+    for (const item of await fs.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const file = path.join(directory, item.name);
+      if (item.isDirectory()) await collect(file, depth + 1);
+      else if (item.isFile()) {
+        const stat = await fs.stat(file);
+        diagnostics.push({ path: path.relative(output, file), bytes: stat.size,
+          ...(/\.log(?:\.\d+)?$|\.jsonl$/.test(item.name) && stat.size < 2 * 1024 * 1024 ? { text: await fs.readFile(file, "utf8") } : {}) });
+      }
+    }
+  }
+  await collect(path.join(output, "codex")); await write("runtime-diagnostics.json", diagnostics);
   await fs.writeFile(path.join(output, "browser.log"), browserLog); await fs.writeFile(path.join(output, "repl.log"), replLog);
   await write("result.json", { ...result, exit, observations }); console.log(JSON.stringify({ ...result, exit }));
 }
