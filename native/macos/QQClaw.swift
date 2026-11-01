@@ -582,7 +582,6 @@ final class Backend: @unchecked Sendable {
                 host.cef = runtime; runtime.onEvent = { [weak host] value in host?.cefEvent(value) }
                 try runtime.start(options: ["profile": host.data.appendingPathComponent("browser-profiles").path,
                     "helperPath": Bundle.main.privateFrameworksURL!.appendingPathComponent("QQClawBrowser Helper.app/Contents/MacOS/QQClawBrowser Helper").path])
-                NSApplication.shared.delegate = host
                 withExtendedLifetime(host) { runtime.run() }
                 host.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
                 return

@@ -4,6 +4,7 @@ on:
   push:
     branches: [work/official-browser-integration]
     paths:
+      - backend/macos-browser-identity.mjs
       - backend/macos-browser-transport.mjs
       - backend/macos-official-runtime.mjs
       - scripts/macos-official-mcp.mjs
@@ -89,6 +90,7 @@ jobs:
           const proof=path.join(process.env.RUNNER_TEMP,'official-browser-proof');await fs.mkdir(base,{recursive:true});
           const built=JSON.parse(await fs.readFile(path.join(process.env.RUNNER_TEMP,'browser-build/mac-browser-build.json'),'utf8'));
           const app=path.join(base,'QQClaw.app');await run('/usr/bin/ditto',[built.app,app]);
+          await fs.unlink(path.join(app,'Contents/MacOS/QQClawBrowser'));
           const resources=path.join(app,'Contents/Resources'),binary=path.join(app,'Contents/MacOS/QQClaw');
           await macPayload(root,resources);
           const original=path.join(process.env.RUNNER_TEMP,'official-runtime/runtime');
@@ -101,25 +103,25 @@ jobs:
           const main=String.raw`
           @main struct HostPreview {
             @MainActor static func main() {
-              launchBackendIfRequested(); signal(SIGPIPE,SIG_IGN)
+              launchBackendIfRequested(); signal(SIGPIPE,SIG_IGN); setbuf(stdout,nil);print("HOST_BEGIN")
               let host=Host(); var errorText="",checking=false
               do {
                 try host.prepareEnvironment()
                 let runtime=try MacCefRuntime(frameworks:Bundle.main.privateFrameworksURL!)
                 host.cef=runtime
                 runtime.onEvent={ value in
-                  host.cefEvent(value)
+                  print("HOST_EVENT " + (value["event"] as? String ?? "unknown"));host.cefEvent(value)
                   if value["event"] as? String == "root-created", !checking {
                     checking=true
                     Task { @MainActor in
                       do {
-                        var ready=false
+                        print("HOST_WAIT_FRONTEND");var ready=false
                         for _ in 0..<300 {
                           if let web=host.web, (try? await web.evaluateJavaScript("document.readyState==='complete' && document.querySelector('#app').children.length>0")) as? Bool == true { ready=true;break }
                           try await Task.sleep(nanoseconds:100_000_000)
                         }
                         guard ready,host.window === runtime.window,host.web.window === runtime.window else { throw failure("The product frontend did not load in the CEF root") }
-                        let backend=try await host.startBackend()
+                        print("HOST_FRONTEND_READY");let backend=try await host.startBackend()
                         let snapshot=try await host.call(backend,"snapshot") as! [String:Any]
                         guard let accounts=snapshot["accounts"] as? [Any],accounts.isEmpty else { throw failure("The isolated Host did not have an empty account store") }
                         _=try await host.call(backend,"settings.save",params:["fontSize":15])
@@ -131,15 +133,14 @@ jobs:
                         }
                         guard let tiff=image.tiffRepresentation,let bitmap=NSBitmapImageRep(data:tiff),let png=bitmap.representation(using:.png,properties:[:]) else { throw failure("The product frontend screenshot failed") }
                         try png.write(to:URL(fileURLWithPath:ProcessInfo.processInfo.environment["QQCLAW_HOST_IMAGE"]!))
-                        host.requestCefQuit()
+                        print("HOST_REQUEST_SAVED_QUIT");host.requestCefQuit()
                       } catch { errorText=error.localizedDescription;host.backend?.killGroup();runtime.close() }
                     }
                   }
                 }
                 try runtime.start(options:["profile":host.data.appendingPathComponent("browser-profiles").path,"helperPath":Bundle.main.privateFrameworksURL!.appendingPathComponent("QQClawBrowser Helper.app/Contents/MacOS/QQClawBrowser Helper").path])
-                NSApp.delegate=host
                 DispatchQueue.main.asyncAfter(deadline:.now()+45) { if !host.allowQuit { errorText="Product Host verification timed out";host.backend?.killGroup();runtime.close() } }
-                runtime.run()
+                print("HOST_RUN");runtime.run();print("HOST_LOOP_ENDED")
                 if errorText.isEmpty {
                   guard host.allowQuit else { throw failure("The product quit path did not acknowledge saved data") }
                   let disk=try JSONSerialization.jsonObject(with:Data(contentsOf:host.data.appendingPathComponent("state.json"))) as! [String:Any]
@@ -158,6 +159,7 @@ jobs:
           const verifier=path.join(base,'HostPreview.swift');await fs.writeFile(verifier,source.slice(0,offset)+main);
           await run('/usr/bin/xcrun',['swiftc','-swift-version','5','-parse-as-library','-O','-framework','AppKit','-framework','WebKit','-framework','Security','-framework','CryptoKit',verifier,path.join(root,'native/macos/BrowserHost.swift'),path.join(root,'native/macos/CefRuntime.swift'),'-o',binary],{maxBuffer:4*1024*1024});
           await run('/usr/bin/codesign',['--force','--sign','-',app]);
+          await run('/usr/bin/codesign',['--verify','--deep','--strict',app]);
           try {const result=await run(binary,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(base,'data'),CODEX_HOME:path.join(base,'codex'),QQCLAW_HOST_IMAGE:path.join(proof,'host-preview.png'),QQCLAW_HOST_RESULT:path.join(proof,'host-preview.json')},timeout:60000,maxBuffer:2*1024*1024});await fs.writeFile(path.join(proof,'host-preview.log'),result.stdout+result.stderr);}
           catch(error){await fs.writeFile(path.join(proof,'host-preview.log'),(error.stdout||'')+(error.stderr||'')+'\n'+error.message);throw error;}
           NODE

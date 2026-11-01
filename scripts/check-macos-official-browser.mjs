@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { macOfficialTransport } from "../backend/macos-browser-transport.mjs";
+import { inspectMacBrowserIdentity } from "../backend/macos-browser-identity.mjs";
 import { BrowserAccessHost } from "../backend/browser-access.mjs";
 import { elicitationForm, simpleConsent, validateForm } from "../backend/codex-approvals.mjs";
 
@@ -64,6 +65,12 @@ try {
   // host. Multiple-profile checks additionally require profile association.
   const transport = await macOfficialTransport({ browserPid: browser.pid, applicationPid: browser.pid, nativeHost, profileDirectory: fixtureOwner ? path.join(profile, fixtureProfile) : undefined, onProbe: value => { if (!hostProbes.some(old => JSON.stringify(old) === JSON.stringify(value))) hostProbes.push(value); } });
   await write("transport.json", transport);
+  const installation = { paths: Object.fromEntries(Object.entries(manifest.paths).map(([key, value]) =>
+    [key, Array.isArray(value) ? value.map(item => path.join(runtime, item)) : path.join(runtime, value)])) };
+  const identity = await inspectMacBrowserIdentity({ installation, transport, identityUrl: url, sessionId: task.sessionId, directory: output });
+  const otherIdentity = await inspectMacBrowserIdentity({ installation, transport, identityUrl: url + "?wrong-profile=" + randomUUID(), sessionId: task.sessionId, directory: output });
+  await write("profile-identity-proof.json", { identity, otherIdentity, scope: "Actual official user.openTabs response: own native fixture marker accepted, absent marker rejected; single profile only." });
+  if (!identity.matched || otherIdentity.matched) throw Error("The original browser API did not distinguish the actual native marker from an absent marker");
   const modules = manifest.paths.nodeModuleDirs.map(name => path.join(runtime, name));
   const env = { ...process.env, ...access.environment, CODEX_HOME: path.join(output, "codex"), CODEX_CLI_PATH: cli,
     NODE_REPL_TRACE_META: "1",
