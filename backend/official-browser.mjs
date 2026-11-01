@@ -82,8 +82,10 @@ export async function prepareOfficialBrowser({ session, executable, directory, n
   let stdout;
   let transport;
   if (mac) {
+    const expectedProfile = path.join(directory, "browser-profiles", profile);
+    if (page.nativeProfileDirectory !== expectedProfile) throw new Error("Mac 官方浏览器未确认本会话的独立配置目录。");
     const manifest = JSON.parse(await fs.readFile(nativeHostManifest, "utf8"));
-    transport = await macOfficialTransport({ browserPid: page.browserProcessId, applicationPid: page.applicationProcessId, nativeHost: manifest.path });
+    transport = await macOfficialTransport({ browserPid: page.browserProcessId, applicationPid: page.applicationProcessId, nativeHost: manifest.path, profileDirectory: expectedProfile });
   } else {
   try {
     ({ stdout } = await execImpl(page.applicationPath, ["--official-browser-pipes", String(page.browserProcessId), String(page.applicationProcessId), paths.nodeReplPath, ...(nativeHostManifest ? [nativeHostManifest] : [])],

@@ -226,19 +226,45 @@ final class Backend: @unchecked Sendable {
     var quitting = false, allowQuit = false, restarting = false, installing = false
     var requestSequence = 0
     var browserHost: BrowserHost?
+    var cef: MacCefRuntime?
     var menuAvailable = false, menuReady = false, menuSidebar = true, menuPanel = false, menuHasSession = false
     var menuFont = 14
     var menuBrowser = false, menuTabNavigation = false, menuWorkspaceAvailable = false, menuCanReopen = false
     var menuCanFind = false, menuFindOpen = false, menuCanStepFind = false
+    func prepareEnvironment() throws {
+        let env = ProcessInfo.processInfo.environment
+        data = URL(fileURLWithPath: env["QQCLAW_DATA_DIR"] ?? Runtime.home.appendingPathComponent("Library/Application Support/QQClaw").path).standardizedFileURL
+        try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        data = data.resolvingSymlinksInPath()
+        lockFD = open(data.appendingPathComponent("instance.lock").path, O_CREAT | O_RDWR, 0o600)
+        guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw failure("此数据目录的 QQClaw 已运行，请打开现有窗口。") }
+        resources = Bundle.main.resourceURL!; vault = Vault(directory: data)
+    }
+    func cefEvent(_ value: [String: Any]) {
+        switch value["event"] as? String {
+        case "root-created":
+            if web == nil { applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification)) }
+        case "close-requested": requestCefQuit()
+        default: break
+        }
+    }
+    func requestCefQuit() {
+        guard !quitting else { return }; quitting = true
+        Task { @MainActor in
+            do { try await shutdown() }
+            catch {
+                let alert = NSAlert(); alert.messageText = "未能确认对话已保存"; alert.informativeText = error.localizedDescription
+                alert.addButton(withTitle: "取消退出"); alert.addButton(withTitle: "仍然退出")
+                if alert.runModal() == .alertFirstButtonReturn { quitting = false; restarting = false; return }
+                backend?.killGroup()
+            }
+            allowQuit = true; cef?.close()
+        }
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard web == nil, cef == nil || cef?.window != nil else { return }
         do {
-            let env = ProcessInfo.processInfo.environment
-            data = URL(fileURLWithPath: env["QQCLAW_DATA_DIR"] ?? Runtime.home.appendingPathComponent("Library/Application Support/QQClaw").path).standardizedFileURL
-            try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            data = data.resolvingSymlinksInPath()
-            lockFD = open(data.appendingPathComponent("instance.lock").path, O_CREAT | O_RDWR, 0o600)
-            guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw failure("此数据目录的 QQClaw 已运行，请打开现有窗口。") }
-            resources = Bundle.main.resourceURL!; vault = Vault(directory: data)
+            if data == nil { try prepareEnvironment() }
             makeMenu()
             let config = WKWebViewConfiguration()
             config.websiteDataStore = WKWebsiteDataStore.nonPersistent()
@@ -251,17 +277,17 @@ final class Backend: @unchecked Sendable {
             }}; window.__qqclawReceive = data => listeners.forEach(callback => callback({data})); })();
             """
             config.userContentController.addUserScript(WKUserScript(source: bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-            web = WKWebView(frame: .zero, configuration: config); web.navigationDelegate = self
+            web = try cef?.shell(configuration: config) ?? WKWebView(frame: .zero, configuration: config); web.navigationDelegate = self
             web.appearance = NSAppearance(named: .aqua)
             web.underPageBackgroundColor = .white
-            window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1320, height: 850), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            window = cef?.window ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1320, height: 850), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "QQClaw"; window.minSize = NSSize(width: 1000, height: 680)
             window.appearance = NSAppearance(named: .aqua)
             window.backgroundColor = .white
-            window.setFrameAutosaveName("QQClawMain"); window.contentView = web; window.delegate = self
+            window.setFrameAutosaveName("QQClawMain"); if cef == nil { window.contentView = web; window.delegate = self }
             window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
             web.load(URLRequest(url: URL(string: "qqclaw://app/index.html")!))
-        } catch { alert(error.localizedDescription); NSApp.terminate(nil) }
+        } catch { alert(error.localizedDescription); if let cef { cef.close() } else { NSApp.terminate(nil) } }
     }
     func makeMenu() {
         let menu = NSMenu(), app = NSMenu(), file = NSMenu(), edit = NSMenu(), view = NSMenu(), windows = NSMenu(), help = NSMenu()
@@ -515,6 +541,7 @@ final class Backend: @unchecked Sendable {
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { NSApp.terminate(nil); return false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if cef != nil { requestCefQuit(); return .terminateCancel }
         if allowQuit || window == nil { return .terminateNow }
         if quitting { return .terminateCancel }; quitting = true
         Task { @MainActor in
@@ -545,7 +572,23 @@ final class Backend: @unchecked Sendable {
     @MainActor static func main() {
         launchBackendIfRequested()
         signal(SIGPIPE, SIG_IGN)
-        let application = NSApplication.shared, host = Host()
+        let host = Host()
+        // The CEF integration stays opt-in until native tabs, ownership and
+        // product checks pass. It does not advertise browser automation.
+        if ProcessInfo.processInfo.environment["QQCLAW_MAC_CEF_PREVIEW"] == "1" {
+            do {
+                try host.prepareEnvironment()
+                let runtime = try MacCefRuntime(frameworks: Bundle.main.privateFrameworksURL!)
+                host.cef = runtime; runtime.onEvent = { [weak host] value in host?.cefEvent(value) }
+                try runtime.start(options: ["profile": host.data.appendingPathComponent("browser-profiles").path,
+                    "helperPath": Bundle.main.privateFrameworksURL!.appendingPathComponent("QQClawBrowser Helper.app/Contents/MacOS/QQClawBrowser Helper").path])
+                NSApplication.shared.delegate = host
+                withExtendedLifetime(host) { runtime.run() }
+                host.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+                return
+            } catch { fputs("QQClaw Chromium: \(error.localizedDescription)\n", stderr); exit(1) }
+        }
+        let application = NSApplication.shared
         application.setActivationPolicy(.regular); application.delegate = host
         withExtendedLifetime(host) { application.run() }
     }

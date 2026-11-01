@@ -36,7 +36,7 @@ await fs.writeFile(path.join(hostDirectory, "extension-host-config.json"), JSON.
   nodeReplPath: path.join(runtime, manifest.paths.nodeReplPath), browserClientPath: path.join(runtime, manifest.paths.browserClientPath), proxyHost: "127.0.0.1", proxyPort: 0 }));
 await fs.writeFile(path.join(profile, "NativeMessagingHosts/com.openai.codexextension.json"), JSON.stringify({
   name: "com.openai.codexextension", description: "QQClaw isolated original host check", type: "stdio", path: nativeHost,
-  supports_native_initiated_connections: true, allowed_origins: ["chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/"] }));
+  allowed_origins: ["chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/"] }));
 const observations = [];
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
@@ -48,7 +48,7 @@ await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const url = "http://127.0.0.1:" + server.address().port + "/";
 const createdUrl = url + "?official-created=" + randomUUID();
 await write("browser-options.json", { profile, extensionPath: path.join(runtime, "extension"), url, diagnostics: true, ...(fixtureOwner ? { fixtureOwner, fixtureProfile } : {}) });
-const browser = spawn(build.executable, ["--enable-features=OnConnectNative"], { detached: true, env: { ...process.env, RUST_LOG: "debug", CODEX_HOME: path.join(output, "codex"),
+const browser = spawn(build.executable, [], { detached: true, env: { ...process.env, RUST_LOG: "debug", CODEX_HOME: path.join(output, "codex"),
   QQCLAW_CHECK_OPTIONS: path.join(output, "browser-options.json"), QQCLAW_CHECK_NATIVE_TABS: path.join(output, "native-tabs.json"), QQCLAW_CHECK_STOP: path.join(output, "stop") }, stdio: ["ignore", "pipe", "pipe"] });
 let browserLog = "", repl, replLog = "", result = { passed: false }, active = true;
 const notifications = [], socketSnapshots = [], hostRequests = [], fixtureDecisions = [];
@@ -60,7 +60,9 @@ const access = await new BrowserAccessHost({ authorize: request => active && req
   observe: value => accessEvents.push(value) }).start();
 
 try {
-  const transport = await macOfficialTransport({ browserPid: browser.pid, applicationPid: browser.pid, nativeHost, profileDirectory: path.join(profile, fixtureOwner ? fixtureProfile : "Default"), onProbe: value => { if (!hostProbes.some(old => JSON.stringify(old) === JSON.stringify(value))) hostProbes.push(value); } });
+  // This base fixture has exactly one private profile and one exact copied
+  // host. Multiple-profile checks additionally require profile association.
+  const transport = await macOfficialTransport({ browserPid: browser.pid, applicationPid: browser.pid, nativeHost, profileDirectory: fixtureOwner ? path.join(profile, fixtureProfile) : undefined, onProbe: value => { if (!hostProbes.some(old => JSON.stringify(old) === JSON.stringify(value))) hostProbes.push(value); } });
   await write("transport.json", transport);
   const modules = manifest.paths.nodeModuleDirs.map(name => path.join(runtime, name));
   const env = { ...process.env, ...access.environment, CODEX_HOME: path.join(output, "codex"), CODEX_CLI_PATH: cli,

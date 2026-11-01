@@ -221,11 +221,6 @@ class BrowserApp final : public CefApp, public CefBrowserProcessHandler {
     NSString* extension = options[@"extensionPath"];
     if (extension.length) command->AppendSwitchWithValue("load-extension", extension.UTF8String);
     command->AppendSwitch("no-first-run");
-    // Chromium only exposes its genuine source-profile reconnect argument
-    // when this native-messaging feature is enabled. No origin/review gate
-    // is disabled; the official signed host receives the normal arguments.
-    command->AppendSwitchWithValue("enable-features", "OnConnectNative");
-    emit(@{@"event": @"native-browser-config", @"enableFeatures": @(command->GetSwitchValue("enable-features").ToString().c_str())});
     if ([options[@"diagnostics"] boolValue]) {
       command->AppendSwitchWithValue("enable-logging", "stderr");
       command->AppendSwitchWithValue("vmodule", "native_message*=2,native_process_launcher*=2,extension_service_worker*=2");
@@ -261,6 +256,9 @@ int QQClawCefStart(int argc, char** argv, const char* json, QQClawCefEvent event
   CefSettings settings;
   settings.no_sandbox = false;
   settings.use_views_default_popup = true;
+  NSString* helperPath = options[@"helperPath"];
+  if ([helperPath isKindOfClass:NSString.class] && helperPath.isAbsolutePath)
+    CefString(&settings.browser_subprocess_path) = helperPath.UTF8String;
   CefString(&settings.root_cache_path) = profile.UTF8String;
   CefString(&settings.cache_path) = [profile stringByAppendingPathComponent:@"Default"].UTF8String;
   CefString(&settings.log_file) = [profile stringByAppendingPathComponent:@"cef.log"].UTF8String;

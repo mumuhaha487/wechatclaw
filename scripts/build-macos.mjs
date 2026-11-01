@@ -55,7 +55,7 @@ export async function buildMac(root = project) {
     const compiled = [];
     for (const target of macTargets) {
       const binary = path.join(temporary, target.split("-")[0]); compiled.push(binary);
-      await run("/usr/bin/xcrun", ["swiftc", "-swift-version", "5", "-parse-as-library", "-O", "-whole-module-optimization", "-sdk", sdk, "-target", target, "-framework", "AppKit", "-framework", "WebKit", "-framework", "Security", "-framework", "CryptoKit", path.join(root, "native/macos/QQClaw.swift"), path.join(root, "native/macos/BrowserHost.swift"), "-o", binary]);
+      await run("/usr/bin/xcrun", ["swiftc", "-swift-version", "5", "-parse-as-library", "-O", "-whole-module-optimization", "-sdk", sdk, "-target", target, "-framework", "AppKit", "-framework", "WebKit", "-framework", "Security", "-framework", "CryptoKit", path.join(root, "native/macos/QQClaw.swift"), path.join(root, "native/macos/BrowserHost.swift"), path.join(root, "native/macos/CefRuntime.swift"), "-o", binary]);
     }
     const executable = path.join(binaries, "QQClaw");
     await run("/usr/bin/lipo", ["-create", ...compiled, "-output", executable]);

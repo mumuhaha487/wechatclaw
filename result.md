@@ -18,11 +18,13 @@
 
 CEF源码另明确：Views创建的Chrome浏览器被设为TYPE_POPUP，官方扩展新标签只在normal窗口里选择宿主；默认扩展新窗口因此可能是非Views窗口。`use_views_default_popup`为CEF146+的公开配置，当前尝试用它及公开Views重新挂接接口处理官方弹窗，不能在新检查通过前宣称修复。`native/macos/CefRuntime.swift`动态原生适配层已在Mac通过Swift类型检查，但尚未接入正式Host。新UI专用profile/tab接口仍需实际多账号及生命周期验证。
 
-3a50b2d的真实云运行结果待核对。现有检查保留create/claim两个明确模式，claim只证明官方接管既有页面，不代表`tabs.new()`嵌入能力；没有改官方功能代码或引入替代驱动。
+41359782773（3a50b2d）及41360215072（e9e82da）仍在配置目录匹配阶段失败，原生退出均为0；最后一轮实际启动参数已明确包含OnConnectNative，依旧没有reconnect参数。继续核对固定Chromium154源码确认：该参数还要求原扩展声明natively_connectable、transientBackground及runtime.onConnectNative监听器。当前官方扩展不满足，不能通过修改其manifest伪造支持，已移除无效的功能开关及主机清单字段。单配置组件检查继续使用已证明的“独立复制宿主路径＋实际进程树＋唯一socket”归属；多配置检查保留额外目录绑定要求，生产Mac分支也必须确认目录，尚不启用。
+
+最新Swift Host源码已新增受`QQCLAW_MAC_CEF_PREVIEW=1`控制的CEF root接入，沿用原前端、菜单、数据锁和后台保存确认；默认启动路径不变，未向模型宣告官方浏览可用。没有覆盖CEF原生窗口内部delegate。新的云步骤将运行真实Host＋打包前端＋空账户后台，验证同窗、截图、设置加密落盘和保存后退出；它仍是隔离组件检查，不是完整安装包、微信或模型验收。该新增步骤与官方claim模式的结果待核对。现有检查保留create/claim两个明确模式，claim只证明官方接管既有页面，不代表`tabs.new()`嵌入能力；没有改官方功能代码或引入替代驱动。
 
 项目内唯一Apple Silicon原版资源为`runtime/macos/official-browser/runtime-darwin-arm64.tar.gz`，226931853字节，SHA256 `8f1df2ce75043880693128467d16f5224344cf1d043638bf5281d735fab6fc52`。含原Node v24.22.1、Node REPL、官方扩展/宿主和完整CodexCLI.app，复制项目会带走资源。来源是官方`https://persistent.oaistatic.com/codex-app-prod/Codex.dmg`，实际外层ChatGPT.app，bundle `com.openai.codex`，26.1027.51404。原生签名Team `2DC432GLL2`保持不变；官方扩展ID `hehggadaopoacecdllhhajmbjkdcmajg`、版本1.26.1020.11845，CRX3签名与ID已核对，未修改功能代码。插件附带独立签名文件未另行验签，不能写为通过。
 
-`backend/bundled-browser.mjs`已新增Mac清单/架构/路径识别与原宿主配置，`official-browser.mjs`新增Mac传输及MCP参数分支。Mac生产原生宿主仍未启用，发现入口保留`QQCLAW_MAC_BROWSER_READY`能力门槛；没有在原生接口尚未接通时向模型宣称可用。原Swift BrowserHost仍为手动WebKit。
+`backend/bundled-browser.mjs`已新增Mac清单/架构/路径识别与原宿主配置，`official-browser.mjs`新增Mac传输及MCP参数分支。Mac生产自动浏览仍未启用，发现入口保留`QQCLAW_MAC_BROWSER_READY`能力门槛；没有在原生接口尚未接通时向模型宣称可用。现有BrowserHost仍提供手动WebKit网页，CEF根窗口接入仅用于后续隔离验证。
 
 剩余：接通生产Swift窗口/菜单/退出保存、多会话/标签归属并实测，再编译同名DMG。Intel官方primary办公运行库已下载但缺少浏览宿主与REPL，不能冒充Intel浏览组件；其他官方资源还需查证。完整原生GUI/IME/DPI、微信浏览闭环、Blob官方下载和参考主页全部操作一致性仍未完成。自建检查页的精确origin授权是夹具自己的策略，记录为`isolated-fixture-owner`，不是人类确认；生产确认流程未改。原微信账户未启动或发消息，旧正式进程未停止，用户数据未清理。
 

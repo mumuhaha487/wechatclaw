@@ -814,7 +814,7 @@ jobs:
           await fs.writeFile(verifier,source.slice(0,bootstrap)+main);
           const executable = path.join(temporary,'QQClawVerify');
           const sdk = run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-path']).trim();
-          run('/usr/bin/xcrun',['swiftc','-swift-version','5','-parse-as-library','-O','-sdk',sdk,'-framework','AppKit','-framework','WebKit','-framework','Security','-framework','CryptoKit',verifier,path.join(root,'native/macos/BrowserHost.swift'),'-o',executable]);
+          run('/usr/bin/xcrun',['swiftc','-swift-version','5','-parse-as-library','-O','-sdk',sdk,'-framework','AppKit','-framework','WebKit','-framework','Security','-framework','CryptoKit',verifier,path.join(root,'native/macos/BrowserHost.swift'),path.join(root,'native/macos/CefRuntime.swift'),'-o',executable]);
           const fixture = spawn(process.execPath,['-e',String.raw`
             const http=require('node:http');
             const slowPages=[];
