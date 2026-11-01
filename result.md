@@ -1,5 +1,25 @@
 # QQClaw 本轮需求、实现与验收记录
 
+## Mac后续源码：CEF Views与WebKit同窗验证（未集成正式软件）
+
+本轮没有重编译或替换正式0.3.37 EXE/DMG，也没有启用Mac官方自动浏览。新增 native/cef/macos 原生桥、scripts/build-macos-browser.mjs及独立的组件云检查工作流，继续解决Mac接入的基础条件。Windows既有原版官方ChatGPT扩展与运行链路未改。
+
+CEF固定版本154.0.34+g14c5a08+chromium-154.0.8037.98。官方示例将Chrome风格直接嵌入原生父窗口的方式限定在Windows/Linux；Mac采用同进程的CEF Chrome Views根窗口，WebKit界面容器位于同窗上层，以原生遮罩和hitTest区域露出实际CEF页面。本轮WebKit仅加载隔离HTML检查壳，没有加载正式QQClaw前端。模型工具没有走这条应用UI控制接口，未新增替代远控。此时尚未加载官方ChatGPT扩展，不称为Mac官方浏览任务通过。
+
+三轮真实云结果分别保留：
+
+1. [41345489487](https://github.com/mumuhaha487/wechatclaw/actions/runs/41345489487)：原生代码编译后，复制“Helper (Alerts).app”的CMake命令缺少VERBATIM，在括号处发生shell语法错误，尚未进入运行检查；修复参数转义，并使API版本定义同时作用于wrapper。
+2. [41345865890](https://github.com/mumuhaha487/wechatclaw/actions/runs/41345865890)：构建和签名通过；原生程序实际运行后，8项中6项通过、两个尺寸断言失败，最终退出1。CEF默认FillLayout在下一次布局时把(700,80,320,540)重置为(0,0,1024,653)，重新打开后又占满1200×656。没有弱化原有断言。读取固定版本CefPanelImpl::Initialize源码确认其默认调用SetToFillLayout，随后使用公开BoxLayout的insets/flex保留所需浏览区域，并响应窗口布局变化。
+3. [41346379388](https://github.com/mumuhaha487/wechatclaw/actions/runs/41346379388)：原8项全部通过，构建代码46f745bdb83b2c916107587a5a426679bc135cc1。真实HTTP本机页面返回200及标题，CEF与WebKit属于同一NSWindow，初始区域保持(700,80,320,540)，隐藏后CEF不可见、WebKit遮罩移除且命中区域恢复；改变窗口尺寸并重新打开后区域保持(780,90,280,450)。browser-closed/root-closed均实际收到，进程正常退出0。
+
+该次为macosarm64原生组件检查，验证了实际窗口归属、CEF布局、遮罩存在及直接调用原生hitTest的结果；未验证完整QQClaw界面、遮罩实际画面、可信物理鼠标/焦点/输入法/DPI、Intel运行或微信/真实模型流程。CEF helper使用官方sandbox初始化，构建未传no-sandbox。日志仍包含backupd XPC无效连接、CEF Desktop Identity Consistency未配置OAuth和退出时SQLite flush任务警告；原始日志保留，不写成零错误或借此推导浏览器功能全部通过。
+
+GitHub artifact摘要9f284182eb583053cbd62693af9e49a317efffba4f853d83c8e25f5b9d1e5551已核对，5个原生输入文件与当前源码逐项核对（只允许LF/CRLF规范化）。证据在 C:/Users/admin/AppData/Local/Temp/qqclaw-mac-views-4b38954，包括三轮原始日志、第二轮失败verification.json、第三轮verification.json/mac-browser-build.json及verified-mac-component.json。第三轮只上传证据，没有生成第二个项目内安装包；隔离进程/站点随检查正常结束。
+
+当前native/macos/QQClaw.swift还没有调用新桥，backend/official-browser.mjs仍明确对Mac返回未接通。下一步必须接入生产Host的窗口/菜单/后端退出确认、会话与多标签归属、原版Mac官方运行库/扩展和专属传输；补齐Intel及真实官方浏览检查后才能打进正式Mac包。不能只替换窗口构造便宣称完成。完整goal保持active；Blob、完整原生GUI及微信闭环等原缺口同样保留。
+
+来源：[OpenAI浏览器扩展](https://learn.chatgpt.com/docs/chrome-extension)、[固定CEF示例说明](https://github.com/chromiumembedded/cef/blob/14c5a08/tests/cefclient/README.md)、[默认FillLayout实现](https://github.com/chromiumembedded/cef/blob/14c5a08/libcef/browser/views/panel_impl.h)。以下0.3.37为已交付成品记录，不包含本节组件。
+
 ## 当前交付状态：0.3.37（2026-11-02）
 
 本轮继续对照实际参考截图补齐主页行为。发现并修复：每次状态更新重建侧栏后滚动回顶、键盘焦点丢失；分隔线被状态更新移除而中断指针捕获；侧栏分隔线右半部分超出父元素后被裁掉；抓住分隔线中间移动时出现约3px起始偏移。

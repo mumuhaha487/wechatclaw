@@ -1,5 +1,13 @@
 # 官方 ChatGPT 扩展接入调查
 
+## Mac原生适配后续源码（未发布）
+
+native/cef/macos新增CEF Chrome Views/WebKit同窗桥接。真实Mac arm64云运行[41346379388](https://github.com/mumuhaha487/wechatclaw/actions/runs/41346379388)通过8项组件检查；前两轮复制命令失败、FillLayout覆盖尺寸的失败及修复均保留在[result.md](../result.md)。该桥尚未接入生产Swift Host，没有加载原版Mac官方扩展，也没有打进正式0.3.37安装包；不能把同窗/布局检查当作官方自动浏览、完整GUI、Intel或微信通过。
+
+源码入口：CefBridge.h/.mm提供主线程C接口、CEF根窗口、WebKit遮罩/命中和公开Views布局；Helper.cc启动sandbox/helper；CMakeLists.txt和Info.plist.in构建嵌套helper；scripts/build-macos-browser.mjs固定官方SDK并编译签名；.github/workflows/macos-browser.yml只验证该原生组件，检查入口在runner临时目录生成。
+
+后续需在NSApplication首次创建之前初始化CEF，复用其根窗口；保留Host原有后端保存确认，并将close-requested转接到该退出流程。会话/多标签隔离、原版Mac运行库及专属传输、Intel、真实官方浏览均待接入。成品仍是0.3.37，完整goal保持active。
+
 ## 当前状态：0.3.37（2026-11-02）
 
 本轮只改主页交互，没有修改原版官方扩展或引入其他驱动。ui/app.mjs保留侧栏滚动/焦点和菜单锚点，拖动时延后绘制以保留指针捕获，增加普通会话展开/收起与侧栏右键/键盘菜单；ui/desktop.css修正完整6px分隔线命中区和拖动动画。版本文件与Codex clientInfo同步0.3.37。
