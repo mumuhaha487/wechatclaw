@@ -64,7 +64,7 @@ jobs:
           const root=path.join(process.env.RUNNER_TEMP,'official-runtime'),found=[];
           async function visit(folder){for(const item of await fs.readdir(folder,{withFileTypes:true})){const file=path.join(folder,item.name);if(item.isDirectory())await visit(file);else if(item.isFile()&&item.name==='codex'){const data=await fs.readFile(file);if(['cffaedfe','feedfacf','cafebabe','bebafeca'].includes(data.subarray(0,4).toString('hex')))found.push(file)}}}
           await visit(path.join(root,'cli'));if(found.length!==1)throw Error('Standalone CLI not uniquely identified');
-          const child=spawn(process.execPath,['scripts/check-macos-official-browser.mjs','--output',path.join(process.env.RUNNER_TEMP,'official-browser-proof'),'--runtime',path.join(root,'runtime'),'--cli',found[0],'--build',path.join(process.env.RUNNER_TEMP,'browser-build')],{stdio:'inherit'});
+          const child=spawn(process.execPath,['scripts/check-macos-official-browser.mjs','--record-handshake','--output',path.join(process.env.RUNNER_TEMP,'official-browser-proof'),'--runtime',path.join(root,'runtime'),'--cli',found[0],'--build',path.join(process.env.RUNNER_TEMP,'browser-build')],{stdio:'inherit'});
           const code=await new Promise(resolve=>child.on('exit',resolve));if(code!==0)throw Error('Official browser component check failed');
           NODE
       - uses: actions/upload-artifact@v4

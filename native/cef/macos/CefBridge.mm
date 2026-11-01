@@ -2,6 +2,7 @@
 #import <WebKit/WebKit.h>
 #import <QuartzCore/QuartzCore.h>
 #include <memory>
+#include <map>
 #include <string>
 #include <algorithm>
 #include "include/cef_app.h"
@@ -24,6 +25,7 @@ NSDictionary* options;
 CefRefPtr<CefWindow> root;
 CefRefPtr<CefBrowserView> browserView;
 CefRefPtr<CefBrowser> browser;
+std::map<int, CefRefPtr<CefBrowser>> pages;
 std::unique_ptr<CefScopedLibraryLoader> loader;
 bool closing = false;
 CefRect requestedBounds;
@@ -98,21 +100,33 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   void OnAfterCreated(CefRefPtr<CefBrowser> value) override {
-    browser = value;
+    if (pages.empty()) browser = value;
+    pages[value->GetIdentifier()] = value;
     emit(@{@"event": @"browser-created", @"tabId": @(value->GetIdentifier())});
+    if (closing) value->GetHost()->CloseBrowser(true);
   }
   void OnBeforeClose(CefRefPtr<CefBrowser> value) override {
     if (browser && browser->IsSame(value)) browser = nullptr;
+    pages.erase(value->GetIdentifier());
     emit(@{@"event": @"browser-closed", @"tabId": @(value->GetIdentifier())});
-    if (closing && root) root->Close();
+    if (closing && pages.empty()) {
+      if (root) root->Close(); else CefQuitMessageLoop();
+    }
   }
   void OnLoadEnd(CefRefPtr<CefBrowser> value, CefRefPtr<CefFrame> frame, int status) override {
     if (!frame->IsMain()) return;
-    emit(@{@"event": @"load-end", @"status": @(status),
+    emit(@{@"event": @"load-end", @"tabId": @(value->GetIdentifier()), @"status": @(status),
            @"url": @(frame->GetURL().ToString().c_str())});
   }
   void OnTitleChange(CefRefPtr<CefBrowser> value, const CefString& title) override {
-    emit(@{@"event": @"title", @"title": @(title.ToString().c_str())});
+    emit(@{@"event": @"title", @"tabId": @(value->GetIdentifier()), @"title": @(title.ToString().c_str())});
+  }
+  void OnLoadingStateChange(CefRefPtr<CefBrowser> value, bool loading, bool back, bool forward) override {
+    emit(@{@"event": @"loading", @"tabId": @(value->GetIdentifier()),
+      @"loading": @(loading), @"canGoBack": @(back), @"canGoForward": @(forward)});
+  }
+  void OnAddressChange(CefRefPtr<CefBrowser> value, CefRefPtr<CefFrame> frame, const CefString& url) override {
+    if (frame->IsMain()) emit(@{@"event": @"address", @"tabId": @(value->GetIdentifier()), @"url": @(url.ToString().c_str())});
   }
  private:
   IMPLEMENT_REFCOUNTING(BrowserClient);
@@ -136,14 +150,14 @@ class RootDelegate final : public CefWindowDelegate {
   void OnWindowDestroyed(CefRefPtr<CefWindow> window) override {
     root = nullptr; browserView = nullptr;
     emit(@{@"event": @"root-closed"});
-    CefQuitMessageLoop();
+    if (pages.empty()) CefQuitMessageLoop();
   }
   void OnLayoutChanged(CefRefPtr<CefView> view, const CefRect& bounds) override {
     layoutBrowser();
   }
   bool CanClose(CefRefPtr<CefWindow> window) override {
     if (!closing) { emit(@{@"event": @"close-requested"}); return false; }
-    return !browser || browser->GetHost()->TryCloseBrowser();
+    return pages.empty();
   }
   CefSize GetPreferredSize(CefRefPtr<CefView> view) override { return CefSize(1100, 760); }
   cef_runtime_style_t GetWindowRuntimeStyle() override { return CEF_RUNTIME_STYLE_CHROME; }
@@ -153,6 +167,10 @@ class RootDelegate final : public CefWindowDelegate {
 class BrowserApp final : public CefApp, public CefBrowserProcessHandler {
  public:
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
+  // chrome.tabs/windows APIs and extension onboarding can create browsers
+  // outside CreateBrowserView. They still belong to this application's
+  // lifecycle, and must finish closing before CefShutdown.
+  CefRefPtr<CefClient> GetDefaultClient() override { return new BrowserClient; }
   void OnBeforeCommandLineProcessing(const CefString& type, CefRefPtr<CefCommandLine> command) override {
     if (!type.empty()) return;
     NSString* extension = options[@"extensionPath"];
@@ -255,6 +273,7 @@ const char* QQClawCefState() {
       ([handle isKindOfClass:NSView.class] ? [(NSView*)handle window] : nil);
   CefRect bounds = browserView ? browserView->GetBounds() : CefRect();
   NSDictionary* state = @{@"ready": @(browser != nullptr && window != nil),
+    @"browserCount": @(pages.size()),
     @"browserWindowMatchesRoot": @(window && browserWindow == window),
     @"shellWindowMatchesRoot": @(window && shell.window == window),
     @"width": @(NSWidth(content.bounds)), @"height": @(NSHeight(content.bounds)),
@@ -270,7 +289,8 @@ const char* QQClawCefState() {
 }
 void QQClawCefClose() {
   closing = true;
-  if (browser) browser->GetHost()->CloseBrowser(true);
+  const auto open = pages;
+  if (!open.empty()) for (const auto& page : open) page.second->GetHost()->CloseBrowser(true);
   else if (root) root->Close();
   else CefQuitMessageLoop();
 }
