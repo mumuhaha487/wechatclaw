@@ -39,12 +39,12 @@ await fs.mkdir(sdk, { recursive: true });
 await run("/usr/bin/tar", ["-xjf", archive, "-C", sdk, "--strip-components", "1"], { maxBuffer: 1024 * 1024 });
 const sdkBuild = path.join(sdk, "CMakeLists.txt");
 const extra = `\nadd_subdirectory("${path.join(project, "native/cef/macos")}" "\${CMAKE_BINARY_DIR}/qqclaw-macos")\n`;
-await fs.appendFile(sdkBuild, extra);
+await fs.writeFile(sdkBuild, "add_compile_definitions(CEF_API_VERSION=15400)\n" + await fs.readFile(sdkBuild, "utf8") + extra);
 const execute = async (exe, args) => {
   try { const { stdout, stderr } = await run(exe, args, { maxBuffer: 16 * 1024 * 1024 }); if (stdout.trim()) console.log(stdout.trim()); if (stderr.trim()) console.log(stderr.trim()); }
-  catch (error) { throw new Error(error.stderr || error.stdout || error.message); }
+  catch (error) { throw new Error([error.stdout, error.stderr, error.message].filter(Boolean).join("\n")); }
 };
-await execute("cmake", ["-S", sdk, "-B", build, "-DCMAKE_BUILD_TYPE=Release", `-DPROJECT_ARCH=${process.arch === "arm64" ? "arm64" : "x86_64"}`, "-DUSE_SANDBOX=ON", "-DCEF_API_VERSION=15400", "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.5", `-DQQCLAW_CEF_ENTRY=${entry}`]);
+await execute("cmake", ["-S", sdk, "-B", build, "-DCMAKE_BUILD_TYPE=Release", `-DPROJECT_ARCH=${process.arch === "arm64" ? "arm64" : "x86_64"}`, "-DUSE_SANDBOX=ON", "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.5", `-DQQCLAW_CEF_ENTRY=${entry}`]);
 await execute("cmake", ["--build", build, "--config", "Release", "--target", "QQClawBrowser", "--parallel", "4"]);
 // CEF_TARGET_OUT_DIR depends on the selected generator and CEF SDK layout.
 let builtApp;
@@ -74,6 +74,6 @@ await execute("/usr/bin/codesign", ["--force", "--sign", "-", builtApp]);
 await execute("/usr/bin/codesign", ["--verify", "--deep", "--strict", builtApp]);
 const sourceHashes = {};
 for (const name of ["CefBridge.h", "CefBridge.mm", "Helper.cc", "CMakeLists.txt", "Info.plist.in"]) sourceHashes[name] = await digest(path.join(project, "native/cef/macos", name), "sha256");
-const record = { version, platform: pin.platform, archiveSha1: pin.sha1, archiveSha256: await digest(archive, "sha256"), app: builtApp, executable: path.join(builtApp, "Contents/MacOS/QQClawBrowser"), sandbox: true, sourceHashes };
+const record = { version, platform: pin.platform, archiveSha1: pin.sha1, archiveSha256: await digest(archive, "sha256"), app: builtApp, executable: path.join(builtApp, "Contents/MacOS/QQClawBrowser"), sandboxRequested: true, sourceHashes };
 await fs.writeFile(path.join(output, "mac-browser-build.json"), JSON.stringify(record, null, 2));
 console.log(JSON.stringify(record));

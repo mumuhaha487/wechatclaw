@@ -29,7 +29,8 @@ set_target_properties(${CEF_TARGET} PROPERTIES
   BUILD_RPATH "@executable_path/../Frameworks")
 COPY_MAC_FRAMEWORK("${CEF_TARGET}" "${CEF_BINARY_DIR}" "${CEF_APP}")
 add_custom_command(TARGET ${CEF_TARGET} POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:QQClawCefBridge>" "${CEF_APP}/Contents/Frameworks/libQQClawCefBridge.dylib")
+  COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:QQClawCefBridge>" "${CEF_APP}/Contents/Frameworks/libQQClawCefBridge.dylib"
+  VERBATIM)
 
 foreach(_suffix_list ${CEF_HELPER_APP_SUFFIXES})
   string(REPLACE ":" ";" _suffix_list "${_suffix_list}")
@@ -50,5 +51,6 @@ foreach(_suffix_list ${CEF_HELPER_APP_SUFFIXES})
   set_target_properties(${_helper_target} PROPERTIES OUTPUT_NAME "${_helper_name}" MACOSX_BUNDLE_INFO_PLIST "${_helper_plist}")
   add_dependencies(${CEF_TARGET} ${_helper_target})
   add_custom_command(TARGET ${CEF_TARGET} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CEF_TARGET_OUT_DIR}/${_helper_name}.app" "${CEF_APP}/Contents/Frameworks/${_helper_name}.app")
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CEF_TARGET_OUT_DIR}/${_helper_name}.app" "${CEF_APP}/Contents/Frameworks/${_helper_name}.app"
+    VERBATIM)
 endforeach()
