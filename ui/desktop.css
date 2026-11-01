@@ -360,7 +360,7 @@ select:focus-visible {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: -3px;
+  right: 0;
   width: 6px;
   cursor: col-resize;
   z-index: 15;
@@ -1844,6 +1844,8 @@ select:focus-visible {
 .panel-splitter:hover::after, .panel-splitter:focus-visible::after, .resizing-panel .panel-splitter::after { background: var(--text); }
 .panel-splitter.hidden { display: none; }
 .resizing-panel, .resizing-panel * { cursor: col-resize !important; user-select: none !important; }
+.resizing-sidebar, .resizing-sidebar * { cursor: col-resize !important; user-select: none !important; }
+.resizing-sidebar .sidebar { transition: none; }
 .panel-header > strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .show-more-sessions { margin: 4px 14px 8px 31px; padding: 4px 8px; font-size: 12px; font-weight: 400; color: var(--muted); gap: 6px; }
 .show-more-sessions .icon { width: 12px; height: 12px; }

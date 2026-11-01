@@ -139,6 +139,10 @@ const ui = {
   page: "",
   panel: viewStorage.getItem("panel-open") === "true",
   sidebar: viewStorage.getItem("sidebar-open") !== "false",
+  sidebarScroll: 0,
+  generalMore: false,
+  resizing: false,
+  resizeRenderPending: false,
   panelMax: viewStorage.getItem("panel-maximized") === "true",
   browserHidden: new Set(),
   projectMore: new Set(),
@@ -555,6 +559,9 @@ function sidebar() {
   const general = state.sessions.filter(
     (s) => !state.projects.some((p) => sameWorkspace(p.workspace, s.workspace)),
   ).sort(recentFirst);
+  const visibleGeneral = general.slice(0, ui.generalMore ? general.length : 6);
+  const currentGeneral = general.find(s => s.id === ui.active);
+  if (currentGeneral && !visibleGeneral.includes(currentGeneral)) visibleGeneral[visibleGeneral.length - 1] = currentGeneral;
   return (
     '<aside class="sidebar' +
     (ui.sidebar ? "" : " collapsed") +
@@ -567,11 +574,10 @@ function sidebar() {
     '</div></div><div class="side-body"><button class="sidebar-new-chat" data-action="new-session" aria-label="新建会话">' +
     icon("compose") + '<span>新聊天</span></button>' +
     (general.length ? '<div class="section-heading">会话</div>' : "") +
-    general
-      .slice(0, 6)
+    visibleGeneral
       .map((s) => sessionRow(s))
       .join("") +
-    (general.length > 6 ? '<button class="show-more-sessions" data-action="history">查看全部会话' + icon("down") + '</button>' : "") +
+    (general.length > 6 ? `<button class="show-more-sessions${ui.generalMore ? " expanded" : ""}" data-action="general-show-more" aria-expanded="${ui.generalMore}">${ui.generalMore ? "收起会话" : "展开会话"}${icon("down")}</button>` : "") +
     '<div class="section-heading projects-heading">项目<div class="section-tools">' +
     ib("add-project", "添加项目", "plus") +
     "</div></div>" +
@@ -626,7 +632,7 @@ function sidebar() {
         icon("folder") +
         "打开项目</button>") +
     '</div><div class="side-footer">' +
-    '<button class="version" data-action="about">v' + appVersion + '</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div></aside>'
+    '<button class="version" data-action="about">v' + appVersion + '</button></div><div class="sidebar-splitter" role="separator" aria-label="调整侧栏宽度" aria-orientation="vertical" aria-valuemin="220" aria-valuemax="520" aria-valuenow="' + (Number(viewStorage.getItem("sidebar-width")) || 275) + '" tabindex="0"></div></aside>'
   );
 }
 function messages() {
@@ -1420,7 +1426,17 @@ function settings() {
       "",
     )}<button class="settings-back" data-action="return">${icon("back")}返回应用</button></aside><div class="settings-main"><div class="settings-titlebar" data-drag>${isMac ? navigationButtons() : ""}</div><main class="settings-content"><div class="settings-inner">${({ general: generalSettings, models: modelSettings, projects: projectSettings, runtime: runtimeSettings, about: aboutSettings }[ui.page] || generalSettings)()}</div></main></div></div>`;
 }
+function sidebarControlKey(element) {
+  const control = element?.closest(".sidebar [data-action],.sidebar-splitter");
+  return control ? { action: control.dataset.action, id: control.dataset.id || "", splitter: control.classList.contains("sidebar-splitter") } : null;
+}
+function sidebarControl(key) {
+  if (!key) return null;
+  return key.splitter ? document.querySelector(".sidebar-splitter") : [...document.querySelectorAll(".sidebar [data-action]")].find(control => control.dataset.action === key.action && (control.dataset.id || "") === key.id);
+}
 function render() {
+  // A streamed update must not detach the separator holding pointer capture.
+  if (ui.resizing) { ui.resizeRenderPending = true; return; }
   rememberPanelTabScroll();
   syncPanelOwner();
   rememberDocumentScroll();
@@ -1438,6 +1454,11 @@ function render() {
   }
   for (const detail of document.querySelectorAll("details[data-detail-key]")) ui.detailStates.set(detail.dataset.detailKey, detail.open);
   const active = document.hasFocus() ? document.activeElement : null;
+  const sidebarFocus = sidebarControlKey(active);
+  const sidebarMenu = document.querySelector(".context-menu");
+  const sidebarMenuAnchor = sidebarControlKey(sidebarMenu?.contextAnchor);
+  const sideBody = document.querySelector(".side-body");
+  if (sideBody) ui.sidebarScroll = sideBody.scrollTop;
   const focusId = active?.id;
   const start = active?.selectionStart,
     end = active?.selectionEnd;
@@ -1478,6 +1499,14 @@ function render() {
   messageFind.refresh();
   if (document.querySelector(".settings-content"))
     document.querySelector(".settings-content").scrollTop = settingsScroll;
+  const nextSideBody = document.querySelector(".side-body");
+  if (nextSideBody) nextSideBody.scrollTop = ui.sidebarScroll;
+  if (sidebarFocus) sidebarControl(sidebarFocus)?.focus({ preventScroll: true });
+  if (sidebarMenuAnchor && sidebarMenu?.isConnected) {
+    const anchor = sidebarControl(sidebarMenuAnchor);
+    if (anchor && ui.sidebar) sidebarMenu.contextAnchor = anchor;
+    else sidebarMenu.remove();
+  }
   const documentScroll = document.querySelector(".document-scroll");
   if (documentScroll && ui.filePreview) {
     if (ui.filePreview.pendingLine && ui.filePreview.loaded) {
@@ -2321,6 +2350,9 @@ async function action(name, element) {
     case "project-show-more":
       ui.projectMore.has(id) ? ui.projectMore.delete(id) : ui.projectMore.add(id);
       return render();
+    case "general-show-more":
+      ui.generalMore = !ui.generalMore;
+      return render();
     case "add-project":
       return addProject();
     case "new-session":
@@ -2869,6 +2901,10 @@ document.addEventListener("change", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (!environmentReady() && (event.ctrlKey || event.metaKey)) return;
+  if ((event.key === "ContextMenu" || event.shiftKey && event.key === "F10") && sidebarContextMenu(event.target)) {
+    event.preventDefault();
+    return;
+  }
   if (environmentReady() && workspaceKeyboardAvailable() && !event.isComposing && !event.altKey && !event.shiftKey && (isMac ? event.metaKey : event.ctrlKey) && event.key.toLowerCase() === "f") {
     event.preventDefault(); action("find-current").catch(e => toast(e.message)); return;
   }
@@ -3115,6 +3151,20 @@ render();
   render();
 });
 
+function sidebarContextMenu(target, point) {
+  const row = target.closest?.(".sidebar .session-row,.sidebar .project-row[data-id]");
+  if (!row) return false;
+  action(row.classList.contains("session-row") ? "session-menu" : "project-menu", row).then(menu => {
+    if (!point || !menu?.isConnected) return;
+    menu.style.left = Math.max(8, Math.min(innerWidth - menu.offsetWidth - 8, point.x)) + "px";
+    menu.style.top = Math.max(8, Math.min(innerHeight - menu.offsetHeight - 8, point.y)) + "px";
+  }).catch(error => toast(error.message));
+  return true;
+}
+document.addEventListener("contextmenu", event => {
+  if (sidebarContextMenu(event.target, { x: event.clientX, y: event.clientY })) event.preventDefault();
+});
+
 function showContext(anchor, items) {
   document.querySelector(".context-menu")?.remove();
   const menu = document.createElement("div");
@@ -3229,17 +3279,23 @@ async function loadPanel(directory = "") {
   render();
 }
 document.addEventListener("pointerdown", (e) => {
-  if (!e.target.closest(".sidebar-splitter")) return;
+  if (e.button !== 0 || !e.target.closest(".sidebar-splitter")) return;
   e.preventDefault();
   const splitter = e.target.closest(".sidebar-splitter");
   splitter.setPointerCapture(e.pointerId);
-  const left = splitter.closest(".sidebar").getBoundingClientRect().left;
+  ui.resizing = true;
+  document.documentElement.classList.add("resizing-sidebar");
+  const initialWidth = splitter.closest(".sidebar").getBoundingClientRect().width, initialX = e.clientX;
   const move = (event) => {
-    const width = Math.max(220, Math.min(520, event.clientX - left));
+    const width = Math.round(Math.max(220, Math.min(520, initialWidth + event.clientX - initialX)));
     document.documentElement.style.setProperty("--sidebar-width", width + "px");
     viewStorage.stageItem("sidebar-width", String(width));
+    splitter.setAttribute("aria-valuenow", String(Math.round(width)));
   };
+  let finished = false;
   const done = () => {
+    if (finished) return;
+    finished = true;
     viewStorage.persist();
     splitter.removeEventListener("pointermove", move);
     splitter.removeEventListener("pointerup", done);
@@ -3247,6 +3303,8 @@ document.addEventListener("pointerdown", (e) => {
     splitter.removeEventListener("lostpointercapture", done);
     window.removeEventListener("blur", done);
     if (splitter.hasPointerCapture(e.pointerId)) splitter.releasePointerCapture(e.pointerId);
+    document.documentElement.classList.remove("resizing-sidebar");
+    finishResize();
   };
   splitter.addEventListener("pointermove", move);
   splitter.addEventListener("pointerup", done);
@@ -3286,15 +3344,25 @@ function syncPanelDimensions() {
   splitter.setAttribute("aria-valuemax", String(Math.max(280, Math.min(1200, area.clientWidth - 400))));
 }
 applyPanelWidth();
+
+function finishResize() {
+  ui.resizing = false;
+  if (ui.resizeRenderPending) { ui.resizeRenderPending = false; render(); }
+  scheduleBrowserView();
+}
 document.addEventListener("pointerdown", (event) => {
   const splitter = event.target.closest(".panel-splitter");
   if (!splitter || event.button !== 0) return;
   event.preventDefault();
-  const area = document.querySelector(".content-area");
+  const initialWidth = document.querySelector(".work-panel").getBoundingClientRect().width, initialX = event.clientX;
   splitter.setPointerCapture(event.pointerId);
+  ui.resizing = true;
   document.documentElement.classList.add("resizing-panel");
-  const move = (e) => resizePanel(area.getBoundingClientRect().right - e.clientX, false);
+  const move = (e) => resizePanel(initialWidth + initialX - e.clientX, false);
+  let finished = false;
   const done = () => {
+    if (finished) return;
+    finished = true;
     viewStorage.persist();
     splitter.removeEventListener("pointermove", move);
     splitter.removeEventListener("pointerup", done);
@@ -3303,7 +3371,7 @@ document.addEventListener("pointerdown", (event) => {
     window.removeEventListener("blur", done);
     document.documentElement.classList.remove("resizing-panel");
     if (splitter.hasPointerCapture(event.pointerId)) splitter.releasePointerCapture(event.pointerId);
-    scheduleBrowserView();
+    finishResize();
   };
   splitter.addEventListener("pointermove", move);
   splitter.addEventListener("pointerup", done);
@@ -3313,6 +3381,12 @@ document.addEventListener("pointerdown", (event) => {
 });
 document.addEventListener("dblclick", (event) => {
   if (event.target.closest(".panel-splitter")) resetPanelWidth();
+  if (event.target.closest(".sidebar-splitter")) {
+    viewStorage.removeItem("sidebar-width");
+    document.documentElement.style.setProperty("--sidebar-width", "275px");
+    document.querySelector(".sidebar-splitter")?.setAttribute("aria-valuenow", "275");
+    scheduleBrowserView();
+  }
 });
 document.addEventListener("keydown", (event) => {
   const tabButton = event.target.closest('.work-tabs-bar [data-action="panel-select-tab"]');
@@ -3332,7 +3406,7 @@ document.addEventListener("keydown", (event) => {
     const current = panel ? document.querySelector(".work-panel").getBoundingClientRect().width : Number(viewStorage.getItem("sidebar-width")) || 275;
     const value = event.key === "Home" ? (panel ? 280 : 220) : event.key === "End" ? (panel ? innerWidth : 520) : current + (event.key === "ArrowLeft" ? (panel ? step : -step) : (panel ? -step : step));
     if (panel) resizePanel(value);
-    else { const width = Math.max(220, Math.min(520, value)); document.documentElement.style.setProperty("--sidebar-width", width + "px"); viewStorage.setItem("sidebar-width", String(width)); }
+    else { const width = Math.max(220, Math.min(520, value)); document.documentElement.style.setProperty("--sidebar-width", width + "px"); viewStorage.setItem("sidebar-width", String(width)); splitter.setAttribute("aria-valuenow", String(width)); }
     return;
   }
   const panelTabShortcut = event.ctrlKey && event.key === "Tab";
