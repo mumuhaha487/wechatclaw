@@ -18,6 +18,7 @@ const build = JSON.parse(await fs.readFile(path.join(path.resolve(option("--buil
 const manifest = JSON.parse(await fs.readFile(path.join(runtime, "runtime.json"), "utf8"));
 const exec = promisify(execFile), delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 await fs.mkdir(output, { recursive: true });
+await fs.mkdir(path.join(output, "codex"), { recursive: true });
 const write = (name, value) => fs.writeFile(path.join(output, name), JSON.stringify(value, null, 2));
 const profile = path.join(output, "profile"), hostDirectory = path.join(output, "native-host");
 await fs.mkdir(path.join(profile, "NativeMessagingHosts"), { recursive: true });
@@ -60,8 +61,9 @@ async function launchOriginalRuntime(env) {
   runtimeProcess.stdout = new PassThrough(); runtimeProcess.stderr = new PassThrough();
   runtimeProcess.serverPid = server.pid;
   const processHandle = "qqclaw-original-runtime-" + randomUUID();
-  let sequence = 0, buffer = "", writes = Promise.resolve(); const requests = new Map();
+  let sequence = 0, buffer = "", writes = Promise.resolve(), serverExited = false; const requests = new Map();
   const rpc = (method, params) => new Promise((resolve, reject) => {
+    if (serverExited) { reject(Error("Original app-server has exited")); return; }
     const id = ++sequence, timer = setTimeout(() => { requests.delete(id); reject(Error("App-server timed out: " + method)); }, 20000);
     requests.set(id, { resolve, reject, timer }); server.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
   });
@@ -80,9 +82,11 @@ async function launchOriginalRuntime(env) {
     }
   });
   server.once("exit", (code, signal) => {
+    serverExited = true;
     for (const p of requests.values()) { clearTimeout(p.timer); p.reject(Error("Original app-server exited")); } requests.clear();
     runtimeProcess.emit("exit", code, signal);
   });
+  server.stdin.on("error", error => { replLog += "App-server stdin: " + error.message + "\n"; });
   runtimeProcess.stdin = new Writable({
     write(chunk, encoding, callback) { writes = writes.then(() => rpc("process/writeStdin", { processHandle, deltaBase64: chunk.toString("base64") })); writes.then(() => callback(), callback); },
     final(callback) { writes = writes.then(() => rpc("process/writeStdin", { processHandle, closeStdin: true })); writes.then(() => callback(), callback); },
