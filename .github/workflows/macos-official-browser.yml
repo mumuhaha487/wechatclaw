@@ -10,9 +10,12 @@ on:
 permissions:
   contents: read
   actions: read
+concurrency:
+  group: mac-official-browser-check
+  cancel-in-progress: true
 jobs:
   browser:
-    runs-on: macos-15
+    runs-on: macos-14
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +47,7 @@ jobs:
           path: |
             ${{ runner.temp }}/browser-build/build/qqclaw-macos/Release/QQClawBrowser.app
             ${{ runner.temp }}/browser-build/mac-browser-build.json
-          key: mac-cef-arm64-${{ hashFiles('native/cef/macos/**', 'scripts/build-macos-browser.mjs') }}
+          key: mac-cef-14-arm64-${{ hashFiles('native/cef/macos/**', 'scripts/build-macos-browser.mjs') }}
       - name: Compile sandboxed CEF Chrome Views component
         if: steps.cef.outputs.cache-hit != 'true'
         run: node scripts/build-macos-browser.mjs --entry native/cef/macos/OfficialCheck.mm --output "$RUNNER_TEMP/browser-build"
