@@ -5,6 +5,7 @@ on:
     branches: [work/official-browser-integration]
     paths:
       - scripts/check-macos-official-browser.mjs
+      - scripts/macos-browser-runtime.mjs
       - native/cef/macos/OfficialCheck.mm
       - .github/workflows/macos-official-browser.yml
 permissions:
@@ -33,13 +34,11 @@ jobs:
       - name: Unpack verified original runtime and install standalone CLI
         run: |
           node --input-type=module <<'NODE'
-          import fs from 'node:fs/promises';import path from 'node:path';import {createHash} from 'node:crypto';
+          import fs from 'node:fs/promises';import path from 'node:path';
+          import {unpackMacBrowserRuntime} from './scripts/macos-browser-runtime.mjs';
           const root=path.join(process.env.RUNNER_TEMP,'official-runtime');
-          const archive=await fs.readFile(path.join(root,'runtime-darwin-arm64.tar.gz'));
-          if(createHash('sha256').update(archive).digest('hex')!=='edd36d48a6604f897aa985cfe3a550e5305174325b3cd572378cc371b1e298f5')throw Error('Original runtime archive differs');
-          await fs.mkdir(path.join(root,'runtime'));
+          await unpackMacBrowserRuntime({cache:root,destination:path.join(root,'runtime')});
           NODE
-          tar -xzf "$RUNNER_TEMP/official-runtime/runtime-darwin-arm64.tar.gz" -C "$RUNNER_TEMP/official-runtime/runtime"
           npm install --prefix "$RUNNER_TEMP/official-runtime/cli" --no-audit --no-fund @openai/codex@0.166.0
       - uses: actions/cache/restore@v4
         id: cef

@@ -42,6 +42,7 @@ await write("browser-options.json", { profile, extensionPath: path.join(runtime,
 const browser = spawn(build.executable, [], { detached: true, env: { ...process.env, RUST_LOG: "debug", CODEX_HOME: path.join(output, "codex"),
   QQCLAW_CHECK_OPTIONS: path.join(output, "browser-options.json"), QQCLAW_CHECK_STOP: path.join(output, "stop") }, stdio: ["ignore", "pipe", "pipe"] });
 let browserLog = "", repl, replLog = "", result = { passed: false }, active = true;
+const notifications = [], socketSnapshots = [];
 browser.stdout.on("data", b => browserLog += b); browser.stderr.on("data", b => browserLog += b);
 const browserExit = new Promise(resolve => browser.once("exit", (code, signal) => resolve({ code, signal })));
 const task = { sessionId: randomUUID(), turnId: randomUUID() }, accessEvents = [];
@@ -84,7 +85,7 @@ try {
       if (request) { clearTimeout(request.timer); pending.delete(value.id); value.error ? request.reject(Error(JSON.stringify(value.error))) : request.resolve(value.result); }
       else if (value.id !== undefined && value.method) {
         unexpectedRequests.push(value); repl.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: value.id, error: { code: -32601, message: "This check has no interactive approval UI" } }) + "\n");
-      }
+      } else notifications.push(value);
     }
   });
   repl.once("exit", () => { for (const p of pending.values()) { clearTimeout(p.timer); p.reject(Error("Original Node REPL exited")); } pending.clear(); });
@@ -101,11 +102,14 @@ try {
     await write(name + ".json", value); if (value.isError) throw Error("Official runtime: " + JSON.stringify(value)); return value;
   };
   const client = pathToFileURL(path.join(runtime, manifest.paths.browserClientPath)).href;
+  await call("runtime-environment", 'nodeRepl.write({backendPaths:nodeRepl.env?.BROWSER_USE_BACKEND_PATHS,backends:nodeRepl.env?.BROWSER_USE_AVAILABLE_BACKENDS,surfaces:nodeRepl.env?.CUA_REPL_ENABLED_SURFACES})');
   await call("browser-bootstrap", `var {setupBrowserRuntime}=await import(${JSON.stringify(client)}); var agent=await setupBrowserRuntime()`);
   let available = [];
   for (let attempt = 0; attempt < 12; attempt++) {
     const value = await call("browser-list-" + attempt, "nodeRepl.write(await agent.browsers.list())");
     for (const item of value.content || []) if (item.type === "text") { try { const data = JSON.parse(item.text); if (Array.isArray(data)) available = data; } catch {} }
+    socketSnapshots.push({ attempt, process: (await exec("/bin/ps", ["-p", String(transport.hostPid), "-o", "pid=,ppid=,comm="]).catch(error => ({ stdout: "exited: " + error.code }))).stdout,
+      sockets: (await exec("/usr/sbin/lsof", ["-a", "-p", String(transport.hostPid), "-U", "-Fn"]).catch(() => ({ stdout: "" }))).stdout });
     if (available.length) break;
     await delay(1000);
   }
@@ -129,6 +133,7 @@ finally {
   async function collect(directory, depth = 0) {
     if (depth > 5) return;
     for (const item of await fs.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      if (item.name === ".tmp" || item.name === "skills") continue;
       const file = path.join(directory, item.name);
       if (item.isDirectory()) await collect(file, depth + 1);
       else if (item.isFile()) {
@@ -139,6 +144,10 @@ finally {
     }
   }
   await collect(path.join(output, "codex")); await write("runtime-diagnostics.json", diagnostics);
+  const sqlite = path.join(output, "codex/logs_2.sqlite");
+  const logs = await exec("/usr/bin/sqlite3", [sqlite, ".dump"], { maxBuffer: 2 * 1024 * 1024 }).catch(error => ({ stdout: error.message }));
+  await fs.writeFile(path.join(output, "runtime-sqlite.log"), logs.stdout);
+  await write("notifications.json", notifications); await write("socket-snapshots.json", socketSnapshots);
   await fs.writeFile(path.join(output, "browser.log"), browserLog); await fs.writeFile(path.join(output, "repl.log"), replLog);
   await write("result.json", { ...result, exit, observations }); console.log(JSON.stringify({ ...result, exit }));
 }
