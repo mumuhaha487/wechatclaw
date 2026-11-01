@@ -118,7 +118,7 @@ internal static class Program {
     }
     [MethodImpl(MethodImplOptions.NoInlining)] static void Run() { Application.Run(new DesktopWindow()); }
     private static readonly object nativeLogGate = new object();
-    private static void LogNativeFailure(Exception error) {
+    internal static void LogNativeFailure(Exception error) {
         try {
             lock (nativeLogGate) {
                 var directory = Path.Combine(DataDirectory, "logs"); Directory.CreateDirectory(directory);
@@ -232,7 +232,7 @@ internal sealed class DesktopWindow : Form {
             var request = json.Deserialize<Dictionary<string, object>>(args.WebMessageAsJson);
             id = request["id"]; var method = Get(request, "method"); var p = Params(request);
             object result;
-            if (method == "window.focusBrowser") result = browserHost != null && browserHost.Focus(Get(p, "owner"), Get(p, "tabId"));
+            if (method == "window.focusBrowser") result = browserHost != null && await browserHost.FocusAsync(Get(p, "owner"), Get(p, "tabId"));
             else if (method.StartsWith("window.")) {
                 if (method == "window.theme") {
                     bool dark = Get(p, "theme") == "dark";
@@ -321,7 +321,11 @@ internal sealed class DesktopWindow : Form {
         return browserHost ?? (browserHost = new BrowserHost(this, value => Post(new { kind = "event", @event = "browser-state", data = value }), value => Post(new { kind = "event", @event = "browser-downloads", data = value }), value => Post(new { kind = "event", @event = "browser-history", data = value }), value => {
             if (exiting || view == null || view.IsDisposed) return;
             view.Focus(); Post(new { kind = "event", @event = "browser-shortcut", data = value });
-        }));
+        }, attachProcess: AttachBrowserProcess));
+    }
+    private void AttachBrowserProcess(Process process) {
+        if (exiting || job == IntPtr.Zero || !AssignProcessToJobObject(job, process.Handle))
+            throw new Exception("无法将浏览器加入当前应用的进程组。");
     }
     private void OpenUrl(string url) {
         Uri uri; if (!Uri.TryCreate(url, UriKind.Absolute, out uri) || (uri.Scheme != "https" && uri.Scheme != "http")) throw new Exception("只能打开 HTTP 或 HTTPS 链接。");
@@ -526,6 +530,10 @@ internal sealed class DesktopWindow : Form {
         if (exiting) return;
         e.Cancel = true; exiting = true;
         await ShutdownBackend();
+        if (browserHost != null) {
+            try { await browserHost.CloseAll(); }
+            catch (Exception failure) { Program.LogNativeFailure(failure); }
+        }
         StopBackend(); if (job != IntPtr.Zero) { CloseHandle(job); job = IntPtr.Zero; }
         Close();
     }

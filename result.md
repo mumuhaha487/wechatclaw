@@ -1,8 +1,47 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-11-01。正式 Windows EXE 与 Mac 唯一安装包为 **0.3.32**；Windows 已替换并启动，原有账户/会话/配置核对保留。工作区另有**未发布的官方扩展接入开发**，不能再将源码与 .32 成品视为完全一致。真实模型及隔离微信接口的官方浏览器流程已走通；最新 CEF 沙箱组件还通过原版官方扩展的新建/读取/关闭标签检查，但**尚未接入产品内核**。Google 成功结果、全新电脑安装、macOS 及主页全部 1:1 仍未完成，整体目标保持 active。以下旧版本章节属于当时现场。
+更新时间：2026-11-01。正式 Windows EXE 与 Mac 唯一安装包为 **0.3.32**，Windows 已替换并启动。**未发布源码已将 CEF 接到实际 BrowserHost、正式 helper 和可选打包流程，真实配置模型已通过原版官方扩展新建、读取、关闭检查页。** 这仍是隐藏原生 Form 的组件检查，不能当作正式 EXE GUI、微信、Google、全新电脑或 Mac 验收。原始目标保持 active；下方旧检查点中的“尚未接线”等描述只表示各阶段当时状态。
 
-## 最新源码检查点：原生 CEF worker 与 C# 桥接已入库，产品路由未接
+## 最新源码检查点：BrowserHost 接线与真实模型验证（未发布）
+
+正式程序 PID 95560 与两端 .32 成品未停止、未替换。项目外的开发候选约 5.73 MiB，未安装到 release。项目内没有增加运行库、测试、依赖、旧版 EXE 或第二个成品。
+
+| 当前代码索引 | 已实现行为 |
+| --- | --- |
+| native/BrowserHost.cs | prepareOfficial 选择 CEF；保留已有 WebView2 标签并合并会话状态；CEF 内部 ID 使用 cef:N，不冒充扩展 tabId；手动切换、关闭、后台恢复、空组重开；每会话短 profile；删除会话时复用同一关闭任务并拒绝迟到操作 |
+| native/cef/BrowserEngine.cpp | 真实创建者 PID/父 HWND 归属检查；UI 新建同步得到真实标签 ID；恢复返回新 ID 并保留原选择；标签实际关闭后才确认，不自动补页 |
+| native/CefBrowserEngine.cs | 独立限长写入队列；文件校验移出 UI 线程；启动任务去重、view 签名去重防状态/布局循环；嵌套响应合并；启动失败会拒绝等待中的操作；退出核对关闭确认及实际进程结束 |
+| native/CefBrowserRuntime.cs | 从程序集 QQClaw.browser-engine 资源读取可信清单；按摘要计算独立安装目录；固定版本、文件名及摘要；VerifyOwnedWorker 不接受任意 CEF 路径或旁边替换的清单 |
+| native/OfficialBrowser.cs | 同一 EXE helper→本应用 Node 后台→本应用 browser→官方 native host 的所属链；WebView2 保留微软签名要求，CEF 核对内嵌资源指定路径与四个二进制；官方 Node REPL/native host 继续校验 OpenAI 签名 |
+| native/Program.cs | 调用异步浏览器焦点；将自己的 CEF worker 加入应用 job；退出先等待 BrowserHost 关闭，再关闭 job |
+| backend/official-browser.mjs / backend/codex.mjs | 核对原生准备与 helper 的 engine 一致，CEF/chrome 与 WebView2/edge 对应；tabCreation 使用实际能力；只有本任务官方 node_repl/js 的成功工具元数据才标已连接，失败、别的回合/工具不算 |
+| scripts/build-browser-engine.mjs / browser-engine-artifact.mjs / build-windows.mjs | 构建导出配套 bootstrap、chrome_elf、客户端、许可证与清单；导入时拒绝旧源码和损坏文件；可选 --browser-engine 嵌入可信程序集资源和小客户端；--output 允许项目外候选。大型 CEF、Codex、官方 Node REPL 未打进 EXE |
+
+### 实际验证与限制
+
+最终组件证据：`C:/Users/admin/AppData/Local/Temp/qqclaw-cef-contract-20261101/host-integration-2552e209e5ff4dab96ea84b084d7514e/verification.json`。原始动作、模型事件、正式 helper 输出、源码快照、两个令牌检查、官方返回截图及 QA 截图均在同目录。根程序 157032；A/B worker 为147932/142604，官方 helper 仅确认 A 的 native host38356。这是实际产品 BrowserHost/CefBrowserEngine/OfficialBrowserMetadata，**未改 helper 校验条件来迁就实验**。
+
+- 精确采用 QQClaw 当前配置 gpt-6.1-sol/xhigh；9次官方 Node REPL 工具调用，0 Responses 夹具、0独立搜索或 shell 调用。实际新建扩展标签1662818320，读取正确主标题及说明，关闭后再列为空、createdTabRemoved=true。CUA 在检查页允许本次 localhost 站点访问；没有调用真实微信账户，没有复制开发聊天身份、管道或授权。
+- CUA 操作了混合标签、只关闭当前原生标签、以新 ID 在后台恢复、关闭最后页后重开、两会话隔离、200次尺寸请求、显示/隐藏保留标签。B 的两次并发 dispose 都等待同一关闭过程，后续新建被拒绝。此次200次请求经过实际 BrowserHost，但没有把原生 surface 几何反馈导出到 QA，所以**不套用前轮“原生2次、499×599”数字**，也不证明拖条手感或真实显示比例。
+- A/B 当时各4个 renderer 的 OS 令牌均受限、低于中完整性、在 job 中，无 --no-sandbox。network utility 没有相同令牌限制，不能写成全部 Chromium 服务均已沙箱化。正常结束时收到所有标签关闭确认，backend/root exit0；确切根/worker及其直接子进程复查无遗留。QA 最后显示的是关闭前缓存状态，不是关闭后的进程仍在。
+- 真实模型完成后额外收紧了连接状态的回合/工具归属，以这轮真实响应回放覆盖成功及错误族；并添加 StartGuarded。C# 缺失运行库测试证明启动与同时排队的 state 请求都会失败且不创建进程。**这两处后续细化没有再跑真实模型，不把前一运行冒充最终所有字节的实机执行。**
+- 119项既有回归、18项许可/消息预算/隔离检查和3项新增引擎/构建边界检查通过，58个 JS/MJS 语法检查通过。另有上述 C# 失败并发检查。候选已重新编译，反射核对 QQClaw.browser-engine 资源、payload 六个组件文件、四个安装二进制摘要通过；没有打包大型运行库。这些不等于安装入口验收。
+
+候选记录：项目外 `host-package/build.json`、`verification.json`、`syntax.json`。最终 EXE 6010880 bytes，SHA-256 `5476B370F866D911E533DE2816D2DDC7489FD758F3BB3BE8062FD01187D18D91`。正式 release 的 EXE/DMG 摘要仍为 AEBFAC2B…EE875 / F693941A…BB75。
+
+### 已定位的真实失败
+
+第一次组件后台的 --import 传 Windows 路径而非 file URL，Node 启动失败；证据在 host-integration-ce64bac443cb4671ace10fc76a8f437b，未启动浏览器。修正后首轮真实启动在 host-integration-738567b72c8f41a1a59b44a7d3a914d5 因 chrome_elf.dll 证书要求失败，进程返回 -2147483645。不是“进程没退出就正常”。
+
+已读取固定 CEF 源码 bootstrap_win.cc 和官方 Code Signing/Installer 文档：bootstrap 要求它与旁边的 chrome_elf、客户端 DLL 签名身份一致，也允许它们同时未签名。signed runtime 不包含匹配 bootstrap；此前误把 minimal 未签名 bootstrap 与 Spotify 签名 chrome_elf 混用。当前改为从同一固定官方 minimal 档取原版配套 bootstrap/chrome_elf，两者及自编客户端仍未签名；libcef 使用 signed 档原文件，Spotify 签名有效并固定 SHA-256。**没有剥除签名、跳过检查、加信任根、修改官方扩展或关闭沙箱；也不宣称整套应用已完成代码签名。**
+
+运行库只在该候选摘要对应的 `%LOCALAPPDATA%/QQClaw/components/browser/<bundle>/Release` 中做实验安装，给公开运行库目录两个 AppContainer 组 RX，profile/日志/配置不在此树。新组件触发可选 on-device-model 的日志为 Unable to get gpu adapter，未出现旧可执行文件访问错误；仍未完成功能检查。Chrome 无效外部扩展注册项的 Missing value path 日志仍存在，未改用户注册表。扩展初装打开公开 ChatGPT 登录页，未输入凭据；此次不能写成仅 localhost 导航。
+
+### 尚未完成与下一步
+
+优先完成可分发的运行库安装/修复入口和仅安装 CLI 的全新电脑官方组件准备；目前实验由项目外脚本解压固定摘要官方档，**源码没有产品安装器**，普通 build 不含该资源时会明确报组件未包含。接着补新 CEF 的网页查找、下载/取消/历史、快捷键、焦点/DPI/输入法及控件外观。当前 chromeControlsVisible=true，不能将正式版本的 WebView2 功能或样式套到新内核。再做真实产品 GUI、微信收发与额度/附件、Google 结果、Mac 原版扩展内核和参考主页完整操作验收。整体目标仍 active，未发布开发候选。
+
+## 历史源码检查点：原生 CEF worker 与 C# 桥接已入库，产品路由未接
 
 本轮开始把前一原型整理为项目内的开发模块，仍未安装或发布。没有改 `native/BrowserHost.cs` 的路由、`native/OfficialBrowser.cs` 的签名/归属要求、`backend/official-browser.mjs` 的 tabCreation=false，也未改正式 Windows/Mac 成品。以下验证属于新 worker 的真实原生组件；前轮真实模型成功属于旧原型，**没有把两者拼成这份新 worker 已完成模型或微信验收**。
 

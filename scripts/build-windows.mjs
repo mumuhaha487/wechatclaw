@@ -6,15 +6,30 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { importBrowserEngine } from "./browser-engine-artifact.mjs";
 
 const exec = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const option = name => {
+  const index = process.argv.indexOf(name);
+  if (index < 0) return undefined;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`Missing ${name} value`);
+  return path.resolve(value);
+};
+const output = option("--output") || path.join(root, "release", "QQClaw.exe");
+if (path.extname(output).toLowerCase() !== ".exe") throw new Error("Windows output must be an EXE file.");
+const relative = path.relative(root, output);
+if (relative !== path.join("release", "QQClaw.exe") && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative))
+  throw new Error("Place development candidates outside the project. The release folder has only one QQClaw.exe.");
+const browserSource = option("--browser-engine");
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "qqclaw-build-"));
 const manifest = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
 if (!/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(manifest.version)) throw new Error("无效的构建版本。");
 const buildInfo = path.join(temporary, "BuildInfo.cs");
 await fs.writeFile(buildInfo, `internal static class BuildInfo { internal const string Version = ${JSON.stringify(manifest.version)}; }\n`);
 const staging = path.join(temporary, "payload");
+const browserArtifact = browserSource ? await importBrowserEngine(browserSource, staging, root) : null;
 const sdkVersion = "1.0.4314.35";
 const sdkSha512 = "cOaiVqP3BmQHMnxGpZzANM22tUXgycrisyJHjIGNzIaMsm8iXj7Kx+ceYg+RbYwJtzT009qfcFTocvVLY+ekMw==";
 const sdkCache = path.join(
@@ -245,7 +260,6 @@ const references = [
   path.join(staging, "Microsoft.Web.WebView2.WinForms.dll"),
 ];
 const compiledExe = path.join(temporary, "QQClaw.exe");
-const exe = path.join(root, "release", "QQClaw.exe");
 const args = [
   "/nologo",
   "/target:winexe",
@@ -256,10 +270,13 @@ const args = [
   `/win32manifest:${path.join(root, "native", "app.manifest")}`,
   `/win32icon:${path.join(staging, "app.ico")}`,
   `/resource:${archive},payload.zip`,
+  ...(browserArtifact ? [`/resource:${browserArtifact.resource},QQClaw.browser-engine`] : []),
   ...references.map((r) => `/reference:${r}`),
   path.join(root, "native", "Program.cs"),
   path.join(root, "native", "BrowserHost.cs"),
   path.join(root, "native", "OfficialBrowser.cs"),
+  path.join(root, "native", "CefBrowserEngine.cs"),
+  path.join(root, "native", "CefBrowserRuntime.cs"),
   buildInfo,
 ];
 try {
@@ -272,14 +289,15 @@ try {
   throw new Error(error.stdout || error.stderr || error.message);
 }
 try {
-  await fs.copyFile(compiledExe, exe);
+  await fs.mkdir(path.dirname(output), { recursive: true });
+  await fs.copyFile(compiledExe, output);
 } catch (error) {
   if (["EBUSY", "EPERM", "EACCES"].includes(error.code))
     throw new Error("请先关闭 QQClaw，再重新构建。成品始终只有 QQClaw.exe。");
   throw error;
 }
-const bytes = await fs.readFile(exe);
+const bytes = await fs.readFile(output);
 await fs.rm(temporary, { recursive: true, force: true });
 console.log(
-  `已构建 ${exe} · ${(bytes.length / 1024 / 1024).toFixed(2)} MB · Windows x64 · 不内置 Node / Codex / WebView2 Runtime`,
+  `已构建 ${output} · ${(bytes.length / 1024 / 1024).toFixed(2)} MB · Windows x64 · 不内置 Node / Codex / WebView2 / CEF Runtime${browserArtifact ? " · 已嵌入浏览器组件清单和客户端，运行库需单独安装" : " · 未包含官方扩展浏览器组件"}`,
 );

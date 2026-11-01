@@ -7,14 +7,45 @@ using System.Security.Cryptography;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using System.Collections.Concurrent;
+
+// Pipe writes run off the UI and receive threads. A blocked browser must not
+// make the UI writer and stdout receiver wait on one another's locks.
+internal sealed class CefInputWriter {
+    readonly BlockingCollection<string> queue = new BlockingCollection<string>(128);
+    readonly object gate = new object();
+    int characters;
+    bool completed;
+    internal CefInputWriter(Stream stream, Action failed) {
+        Task.Factory.StartNew(delegate {
+            try {
+                using (var writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true })
+                    foreach (var line in queue.GetConsumingEnumerable()) {
+                        lock (gate) characters -= line.Length;
+                        writer.WriteLine(line);
+                    }
+            } catch { Complete(); failed(); }
+        }, TaskCreationOptions.LongRunning);
+    }
+    internal bool Write(string line) {
+        lock (gate) {
+            if (completed || characters + line.Length > 1024 * 1024) return false;
+            characters += line.Length;
+            if (queue.TryAdd(line)) return true;
+            characters -= line.Length; return false;
+        }
+    }
+    internal void Complete() { lock (gate) { if (completed) return; completed = true; queue.CompleteAdding(); } }
+}
 
 // The packager must provide these hashes from its verified build inputs. A
 // manifest beside a downloaded executable is not itself a trust anchor.
 internal sealed class CefEngineFiles {
-    internal string Directory, BootstrapSha256, ClientSha256, LibrarySha256;
+    internal string Directory, BootstrapSha256, ClientSha256, ElfSha256, LibrarySha256;
     internal void Verify() {
         Check(Path.Combine(Directory, "QQClawBrowser.exe"), BootstrapSha256);
         Check(Path.Combine(Directory, "QQClawBrowser.dll"), ClientSha256);
+        Check(Path.Combine(Directory, "chrome_elf.dll"), ElfSha256);
         Check(Path.Combine(Directory, "libcef.dll"), LibrarySha256);
     }
     private static void Check(string file, string expected) {
@@ -27,14 +58,13 @@ internal sealed class CefEngineFiles {
 
 // One process/profile per session. Anonymous inherited pipes are private to
 // this parent/child pair; no HTTP, CDP, remote control or model-facing tool.
-// This class is not selected by BrowserHost until its product integration and
-// dependency installer have been completed and checked.
 internal sealed class CefBrowserEngine {
     readonly Form parent;
     readonly string owner;
     readonly CefEngineFiles files;
     readonly Action<Dictionary<string, object>> changed;
     readonly Action<string> log;
+    readonly Action<Process> attach;
     readonly Process process = new Process();
     readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = 2 * 1024 * 1024, RecursionLimit = 40 };
     readonly Dictionary<int, TaskCompletionSource<Dictionary<string, object>>> pending = new Dictionary<int, TaskCompletionSource<Dictionary<string, object>>>();
@@ -42,25 +72,35 @@ internal sealed class CefBrowserEngine {
     readonly TaskCompletionSource<int> exited = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly TaskCompletionSource<bool> workerClosed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly object gate = new object();
-    StreamWriter input;
+    CefInputWriter input;
+    Task startup;
     int next;
     bool started, closing;
     volatile bool outputEnded;
     Dictionary<string, object> queuedView;
     bool sendingView;
+    string viewSignature = "";
     internal Dictionary<string, object> State { get; private set; }
     internal int ProcessId { get { return started ? process.Id : 0; } }
+    internal bool Running { get { try { return started && !process.HasExited; } catch { return false; } } }
 
-    internal CefBrowserEngine(Form parent, string owner, CefEngineFiles files, Action<Dictionary<string, object>> changed, Action<string> log) {
+    internal CefBrowserEngine(Form parent, string owner, CefEngineFiles files, Action<Dictionary<string, object>> changed, Action<string> log, Action<Process> attach = null) {
         Guid id;
         if (!Guid.TryParseExact(owner, "D", out id)) throw new Exception("浏览器会话无效。");
         this.parent = parent; this.owner = owner; this.files = files;
         this.changed = changed ?? delegate { }; this.log = log ?? delegate { };
+        this.attach = attach ?? delegate { };
     }
     static string Quote(string value) { return "\"" + value.Replace("\"", "\\\"") + "\""; }
-    internal async Task Start(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins = null) {
-        if (started) { await ready.Task; return; }
-        files.Verify();
+    internal Task Start(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins = null) {
+        return startup ?? (startup = StartGuarded(profilePath, extensionPath, configurationPath, logPath, allowedOrigins));
+    }
+    private async Task StartGuarded(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins) {
+        try { await StartCore(profilePath, extensionPath, configurationPath, logPath, allowedOrigins); }
+        catch (Exception error) { CloseInput(); Fail(error); throw; }
+    }
+    private async Task StartCore(string profilePath, string extensionPath, string configurationPath, string logPath, string[] allowedOrigins) {
+        await Task.Run(() => files.Verify());
         Directory.CreateDirectory(profilePath);
         Directory.CreateDirectory(Path.GetDirectoryName(configurationPath));
         Directory.CreateDirectory(Path.GetDirectoryName(logPath));
@@ -94,8 +134,9 @@ internal sealed class CefBrowserEngine {
             exited.TrySetResult(process.ExitCode); CompleteExit();
         };
         process.Start(); started = true;
-        input = new StreamWriter(process.StandardInput.BaseStream, new UTF8Encoding(false)) { AutoFlush = true };
+        input = new CefInputWriter(process.StandardInput.BaseStream, () => Fail(new Exception("浏览器输入通道已关闭。")));
         process.BeginOutputReadLine(); process.BeginErrorReadLine();
+        try { attach(process); } catch { CloseInput(); throw; }
         if (await Task.WhenAny(ready.Task, Task.Delay(15000)) != ready.Task) {
             CloseInput(); throw new Exception("浏览器组件未在 15 秒内确认启动；尚未确认它已经退出。");
         }
@@ -125,7 +166,10 @@ internal sealed class CefBrowserEngine {
         if (message.TryGetValue("error", out value) && value != null) request.TrySetException(new Exception(Convert.ToString(value)));
         else {
             var result = message["result"] as Dictionary<string, object>;
-            try { if (result != null && result.ContainsKey("owner")) ApplyState(result); }
+            try {
+                if (result != null && result.ContainsKey("owner")) ApplyState(result);
+                else if (result != null && result.ContainsKey("state")) ApplyState((Dictionary<string, object>)result["state"]);
+            }
             catch (Exception error) { request.TrySetException(error); throw; }
             request.TrySetResult(result);
         }
@@ -150,7 +194,7 @@ internal sealed class CefBrowserEngine {
             var request = parameters == null ? new Dictionary<string, object>() : new Dictionary<string, object>(parameters);
             request["id"] = id; request["owner"] = owner; request["action"] = action;
             pending.Add(id, result);
-            try { lock (json) input.WriteLine(json.Serialize(request)); }
+            try { lock (json) { if (!input.Write(json.Serialize(request))) throw new Exception("浏览器操作队列已满或已关闭。"); } }
             catch { pending.Remove(id); throw; }
         }
         if (await Task.WhenAny(result.Task, Task.Delay(15000)) != result.Task) {
@@ -162,13 +206,16 @@ internal sealed class CefBrowserEngine {
     // Dragging a splitter replaces obsolete geometry instead of accumulating
     // one pending native request per mouse movement.
     internal void SetView(bool visible, int x, int y, int width, int height) {
+        string signature = visible + ":" + x + ":" + y + ":" + width + ":" + height;
+        if (signature == viewSignature) return;
+        viewSignature = signature;
         queuedView = new Dictionary<string, object> {{"visible",visible},{"x",x},{"y",y},{"width",width},{"height",height}};
         if (!sendingView && !closing) SendViews();
     }
     async void SendViews() {
         sendingView = true;
         try { while (queuedView != null && !closing) { var view = queuedView; queuedView = null; await Call("view", view); } }
-        catch (Exception error) { Log(error.ToString()); }
+        catch (Exception error) { viewSignature = ""; Log(error.ToString()); }
         finally { sendingView = false; }
     }
     void FailPending(Exception error) {
@@ -184,21 +231,26 @@ internal sealed class CefBrowserEngine {
         else if (workerClosed.Task.Status != TaskStatus.RanToCompletion) Fail(new Exception("浏览器组件未返回完整的退出确认。"));
         else FailPending(new Exception("浏览器会话已关闭。"));
     }
-    void CloseInput() { lock (gate) { try { if (input != null) input.Close(); } catch { } } }
+    void CloseInput() { lock (gate) { if (input != null) input.Complete(); } }
     internal async Task Close() {
         if (!started) return;
+        Exception shutdownFailure = null;
         if (!closing) {
             closing = true; queuedView = null;
             try {
-                var result = await Call("shutdown");
-                if (result == null || !Object.Equals(result["closed"], true) || Convert.ToInt32(result["remainingTabs"]) != 0)
-                    throw new Exception("浏览器未确认全部标签已经关闭。");
+                if (ready.Task.Status == TaskStatus.RanToCompletion) {
+                    var result = await Call("shutdown");
+                    if (result == null || !Object.Equals(result["closed"], true) || Convert.ToInt32(result["remainingTabs"]) != 0)
+                        throw new Exception("浏览器未确认全部标签已经关闭。");
+                }
+            } catch (Exception failure) { shutdownFailure = failure;
             } finally { CloseInput(); }
         }
         var completed = Task.WhenAll(exited.Task, workerClosed.Task);
         if (await Task.WhenAny(completed, Task.Delay(15000)) != completed)
             throw new Exception("浏览器组件仍未确认退出，请查看日志；当前不会强制停止或伪报清理成功。");
         await completed;
+        if (shutdownFailure != null) throw shutdownFailure;
         if (await exited.Task != 0) throw new Exception("浏览器组件未正常退出。");
     }
 }

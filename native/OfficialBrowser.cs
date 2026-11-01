@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
 // Metadata only. The caller must be the backend of the exact application that
-// owns WebView2. No window control, page access or arbitrary pipe discovery.
+// owns the browser. No window control, page access or arbitrary pipe discovery.
 internal static class OfficialBrowserMetadata {
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct TrustFile {
         internal uint Size; [MarshalAs(UnmanagedType.LPWStr)] internal string File; internal IntPtr Handle, Subject;
@@ -99,9 +99,11 @@ internal static class OfficialBrowserMetadata {
             var backend = ProcessById(helper.Parent);
             var application = ProcessById(applicationId);
             var browser = ProcessById(browserId);
-            if (backend.Parent != applicationId || !Same(helper.Path, application.Path) || browser.Parent != applicationId || Path.GetFileName(browser.Path) != "msedgewebview2.exe")
+            if (backend.Parent != applicationId || !Same(helper.Path, application.Path) || browser.Parent != applicationId)
                 throw new Exception("检测请求不属于同一个 QQClaw 浏览器进程。");
-            Publisher(browser.Path, "Microsoft Corporation");
+            string engine;
+            if (Path.GetFileName(browser.Path) == "msedgewebview2.exe") { Publisher(browser.Path, "Microsoft Corporation"); engine = "webview2"; }
+            else { CefBrowserRuntime.VerifyOwnedWorker(browser.Path); engine = "cef"; }
             var manifest = json.Deserialize<Dictionary<string, object>>(File.ReadAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenAI", "extension", "com.openai.codexextension.json")));
             if (Convert.ToString(manifest["name"]) != "com.openai.codexextension" || Convert.ToString(manifest["type"]) != "stdio") throw new Exception("官方原生宿主注册无效。");
             bool origin = false; foreach (var value in (System.Collections.IEnumerable)manifest["allowed_origins"]) if (Convert.ToString(value) == "chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/") origin = true;
@@ -113,15 +115,17 @@ internal static class OfficialBrowserMetadata {
                     ProcessInfo candidate;
                     try { candidate = ProcessById(Convert.ToInt32(row["ProcessId"])); if (!Same(candidate.Path, hostPath)) continue; }
                     catch { continue; }
-                    var parent = ProcessById(candidate.Parent);
-                    if (Path.GetFileName(parent.Path) == "cmd.exe") { if (!Same(parent.Path, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"))) continue; parent = ProcessById(parent.Parent); }
-                    if (parent.Id == browserId) candidates.Add(candidate);
+                    try {
+                        var parent = ProcessById(candidate.Parent);
+                        if (Path.GetFileName(parent.Path) == "cmd.exe") { if (!Same(parent.Path, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"))) continue; parent = ProcessById(parent.Parent); }
+                        if (parent.Id == browserId) candidates.Add(candidate);
+                    } catch { /* An unrelated native host may exit during enumeration. */ }
                 }
             if (candidates.Count != 1) throw new Exception("没有找到唯一属于当前内置浏览器的官方宿主。");
             var native = candidates[0]; Publisher(native.Path, "OpenAI OpCo, LLC");
             string[] paths = PipeNames(native.Id);
             if (paths.Length != 1 || ProcessById(native.Id).Created != native.Created || ProcessById(browserId).Created != browser.Created) throw new Exception("官方扩展通道不唯一或所属进程已经变化。");
-            Console.WriteLine(json.Serialize(new { verified = true, applicationPid = applicationId, browserPid = browserId, nativePid = native.Id, paths = paths })); return 0;
+            Console.WriteLine(json.Serialize(new { verified = true, applicationPid = applicationId, browserPid = browserId, nativePid = native.Id, engine = engine, paths = paths })); return 0;
         } catch (Exception error) { Console.WriteLine(json.Serialize(new { verified = false, reason = error.Message })); return 1; }
     }
 }

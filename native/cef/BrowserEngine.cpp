@@ -4,6 +4,7 @@
 #define _UNICODE
 #include <windows.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 #include <atomic>
 #include <algorithm>
 #include <filesystem>
@@ -69,6 +70,7 @@ std::wstring profile, extension;
 HWND surface=nullptr;
 int active=0, width=1000, height=760;
 bool visible=false, closing=false;
+bool creatingForUi=false;
 uint64_t revision=0;
 uint64_t viewUpdates=0;
 HANDLE input=INVALID_HANDLE_VALUE, output=INVALID_HANDLE_VALUE, readerHandle=nullptr;
@@ -184,7 +186,7 @@ void CEF_CALLBACK created(cef_life_span_handler_t*, cef_browser_t* browser) {
   // OnBeforeClose; callbacks may use different wrappers for the same browser.
   pages.emplace(key,Page{browser}); active=key;
   if(closing || pages.size()>12) {auto* host=browser->get_host(browser);host->close_browser(host,1);release(host);}
-  layout(); publish();
+  layout(); if(!creatingForUi) publish();
 }
 void CEF_CALLBACK closed(cef_life_span_handler_t*, cef_browser_t* browser) {
   int key=browser->get_identifier(browser); auto entry=pages.find(key);
@@ -231,6 +233,19 @@ void createPage(const std::string& value) {
   cef_browser_settings_t settings{};settings.size=sizeof(settings);auto buffer=wide(value);auto url=text(buffer);
   if(!API(cef_browser_host_create_browser)(&info,owned(client),&url,&settings,nullptr,nullptr)) throw std::runtime_error("Could not create a browser tab");
 }
+int createUiPage(const std::string& value, bool select) {
+  if(pages.size()>=12)throw std::runtime_error("Close an unused tab first");
+  const int previous=active;
+  cef_window_info_t info{};info.size=sizeof(info);info.runtime_style=CEF_RUNTIME_STYLE_CHROME;
+  cef_browser_settings_t settings{};settings.size=sizeof(settings);auto buffer=wide(value);auto url=text(buffer);
+  creatingForUi=true;
+  auto* browser=API(cef_browser_host_create_browser_sync)(&info,owned(client),&url,&settings,nullptr,nullptr);
+  creatingForUi=false;
+  if(!browser)throw std::runtime_error("Could not create a browser tab");
+  int key=browser->get_identifier(browser);release(browser);
+  if(!select)active=pages.count(previous)?previous:0;
+  layout();publish();return key;
+}
 void CEF_CALLBACK contextReady(cef_browser_process_handler_t*) {
   auto* context=API(cef_request_context_get_global_context)();context->set_chrome_color_scheme(context,CEF_COLOR_VARIANT_LIGHT,0);release(context);
   createPage("about:blank");
@@ -253,7 +268,16 @@ void execute(const Json& request) {
       visible=request.value("visible",false);const int x=std::clamp(request.value("x",0),-10000,30000),y=std::clamp(request.value("y",0),-10000,30000);
       SetWindowPos(surface,nullptr,x,y,width,height,SWP_NOZORDER|SWP_NOACTIVATE);layout();answer(request,state());return;
     }
-    if(action=="newTab") {if(pages.size()>=12)throw std::runtime_error("Close an unused tab first");createPage("about:blank");answer(request,{{"requested",true}});return;}
+    if(action=="newTab") {createUiPage("about:blank",true);answer(request,state());return;}
+    if(action=="restoreTab") {
+      auto value=request.value("url","");if(value.empty())value="about:blank";
+      if(!allowed(value))throw std::runtime_error("Unsupported browser URL");
+      int key=createUiPage(value,false);answer(request,{{"tabId",id(key)},{"state",state()}});return;
+    }
+    if(action=="open" && pages.empty() && request.value("tabId","").empty()) {
+      auto value=request.value("url","");if(!allowed(value))throw std::runtime_error("Unsupported browser URL");
+      createUiPage(value,true);answer(request,state());return;
+    }
     const int key=browserId(request);auto entry=pages.find(key);if(entry==pages.end())throw std::runtime_error("The browser tab has closed");
     auto* browser=entry->second.browser;
     if(action=="closeTab") {closingRequests[key].push_back(request);auto* host=browser->get_host(browser);host->close_browser(host,1);release(host);return;}
@@ -317,8 +341,11 @@ extern "C" __declspec(dllexport) int RunWinMain(HINSTANCE instance,LPWSTR,int,vo
     if(count!=2)return 22;std::ifstream stream{std::filesystem::path(arguments[1])};LocalFree(arguments);stream>>config;
     owner=config.at("owner").get<std::string>();profile=wide(config.at("profilePath").get<std::string>());extension=wide(config.at("extensionPath").get<std::string>());
     if(owner.size()!=36||!std::filesystem::is_directory(profile)||!std::filesystem::is_regular_file(std::filesystem::path(extension)/L"manifest.json"))throw std::runtime_error("Invalid browser configuration");
-    HWND parent=reinterpret_cast<HWND>(config.value("parentWindow",uint64_t(0)));DWORD parentPid=0;
-    if(parent) {GetWindowThreadProcessId(parent,&parentPid);if(parentPid!=config.at("parentProcessId").get<DWORD>())throw std::runtime_error("The browser surface belongs to another process");}
+    HWND parent=reinterpret_cast<HWND>(config.value("parentWindow",uint64_t(0)));DWORD parentPid=0,creator=0;
+    HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);PROCESSENTRY32W entry{};entry.dwSize=sizeof(entry);
+    if(snapshot!=INVALID_HANDLE_VALUE){if(Process32FirstW(snapshot,&entry))do{if(entry.th32ProcessID==GetCurrentProcessId()){creator=entry.th32ParentProcessID;break;}}while(Process32NextW(snapshot,&entry));CloseHandle(snapshot);}
+    if(!creator || creator!=config.at("parentProcessId").get<DWORD>())throw std::runtime_error("The browser configuration does not belong to its creator");
+    if(parent) {GetWindowThreadProcessId(parent,&parentPid);if(parentPid!=creator)throw std::runtime_error("The browser surface belongs to another process");}
     WNDCLASSW type{};type.hInstance=instance;type.lpfnWndProc=windowProc;type.lpszClassName=L"QQClawCefSurface";RegisterClassW(&type);
     surface=CreateWindowExW(0,type.lpszClassName,L"QQClaw browser",(parent?WS_CHILD:WS_OVERLAPPEDWINDOW)|WS_CLIPCHILDREN|WS_CLIPSIBLINGS,0,0,width,height,parent,nullptr,instance,nullptr);
     if(!surface)throw std::runtime_error("Could not create the browser surface");SetTimer(surface,1,200,nullptr);

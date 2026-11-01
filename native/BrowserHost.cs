@@ -20,15 +20,21 @@ internal sealed class BrowserHost {
     private readonly Action<object> notify;
     private readonly Action<object> shortcutNotify;
     private readonly Dictionary<string, BrowserSession> sessions = new Dictionary<string, BrowserSession>();
+    private readonly HashSet<string> disposedOwners = new HashSet<string>();
+    private readonly Func<CefEngineFiles> cefFiles;
+    private readonly Action<Process> attachProcess;
+    private readonly object cefLogGate = new object();
     private string visibleOwner = "";
     private Rectangle bounds = new Rectangle(-2000, 0, 1000, 760);
     private bool visible;
     internal readonly BrowserDownloads Downloads;
     internal readonly BrowserHistory History;
-    internal BrowserHost(Form parent, Action<object> notify, Action<object> downloadNotify = null, Action<object> historyNotify = null, Action<object> shortcutNotify = null) {
+    internal BrowserHost(Form parent, Action<object> notify, Action<object> downloadNotify = null, Action<object> historyNotify = null, Action<object> shortcutNotify = null, Func<CefEngineFiles> cefFiles = null, Action<Process> attachProcess = null) {
         this.parent = parent; this.notify = notify; Downloads = new BrowserDownloads(downloadNotify ?? delegate { });
         this.shortcutNotify = shortcutNotify ?? delegate { };
         History = new BrowserHistory(historyNotify ?? delegate { });
+        this.cefFiles = cefFiles ?? (() => CefBrowserRuntime.RequireFiles());
+        this.attachProcess = attachProcess ?? delegate { };
     }
     internal void SetView(Dictionary<string, object> p) {
         visibleOwner = Value(p, "owner");
@@ -46,16 +52,27 @@ internal sealed class BrowserHost {
         double value; return Double.TryParse(Value(p, key), out value) && !Double.IsInfinity(value) && !Double.IsNaN(value) ? Math.Max(-10000, Math.Min(30000, value)) : 0;
     }
     private void Layout() {
-        foreach (var pair in sessions) foreach (var tab in pair.Value.Tabs) {
-            bool show = visible && pair.Key == visibleOwner && pair.Value.Active == tab && bounds.Width > 0 && bounds.Height > 0;
-            tab.Web.Bounds = show ? bounds : new Rectangle(-2000, 0, 1000, 760);
-            tab.Web.Visible = show;
-            if (show) tab.Web.BringToFront();
+        foreach (var pair in sessions) {
+            foreach (var tab in pair.Value.Tabs) {
+                bool show = visible && pair.Key == visibleOwner && !pair.Value.CefSelected && pair.Value.Active == tab && bounds.Width > 0 && bounds.Height > 0;
+                tab.Web.Bounds = show ? bounds : new Rectangle(-2000, 0, 1000, 760);
+                tab.Web.Visible = show;
+                if (show) tab.Web.BringToFront();
+            }
+            if (pair.Value.Cef != null) pair.Value.Cef.SetView(visible && pair.Key == visibleOwner && pair.Value.CefSelected && bounds.Width > 0 && bounds.Height > 0,
+                bounds.X, bounds.Y, Math.Max(1, bounds.Width), Math.Max(1, bounds.Height));
         }
+    }
+    internal async Task<bool> FocusAsync(string owner, string tabId) {
+        BrowserSession session;
+        if (!visible || owner != visibleOwner || !sessions.TryGetValue(owner, out session) || session.Disposed) return false;
+        if (!session.CefSelected) return Focus(owner, tabId);
+        if (session.Cef == null || Value(session.Cef.State, "activeTab") != tabId) return false;
+        await session.Cef.Call("focus", new Dictionary<string, object> { { "tabId", tabId } }); return true;
     }
     internal bool Focus(string owner, string tabId) {
         BrowserSession session;
-        if (!visible || owner != visibleOwner || !sessions.TryGetValue(owner, out session) || session.Disposed || session.Active == null || session.Active.Id != tabId || !session.Active.Web.Visible) return false;
+        if (!visible || owner != visibleOwner || !sessions.TryGetValue(owner, out session) || session.Disposed || session.CefSelected || session.Active == null || session.Active.Id != tabId || !session.Active.Web.Visible) return false;
         return session.Active.Web.Focus();
     }
     private void Shortcut(BrowserSession session, BrowserTab tab, string command) {
@@ -73,6 +90,27 @@ internal sealed class BrowserHost {
         string owner = Value(p, "owner"), action = Value(p, "action"); Guid id;
         if (!Guid.TryParseExact(owner, "D", out id)) throw new Exception("浏览器会话无效。");
         BrowserSession session;
+        if (disposedOwners.Contains(owner) && action != "dispose") {
+            throw new Exception("浏览器会话已关闭。");
+        }
+        if (sessions.TryGetValue(owner, out session) && action != "dispose" && action != "prepareOfficial") {
+            string requested = Value(p, "tabId");
+            bool cefTarget = requested.StartsWith("cef:", StringComparison.Ordinal) || requested == "" && session.CefSelected;
+            if (action == "state") return State(session, false);
+            if (session.Cef != null && (cefTarget || action == "newTab" || action == "restoreTab")) {
+                if (session.Disposed) throw new Exception("浏览器会话已关闭。");
+                var result = await session.Cef.Call(action, p);
+                if (session.Disposed) throw new Exception("浏览器会话已关闭。");
+                if (action == "selectTab" || action == "newTab" || action == "open") session.CefSelected = true;
+                if (CefTabs(session).Length == 0 && session.Tabs.Count > 0) session.CefSelected = false;
+                Layout(); Publish(session, action == "newTab");
+                if (action == "restoreTab") return new { tabId = Value(result, "tabId"), state = State(session, false) };
+                if (action == "find") return result;
+                return State(session, false);
+            }
+            if (requested != "" && cefTarget) throw new Exception("浏览器标签页已关闭。");
+            if (action == "selectTab") { session.CefSelected = false; session.LastCefActive = session.Cef == null ? "" : Value(session.Cef.State, "activeTab"); }
+        }
         if (action == "stop") {
             if (sessions.TryGetValue(owner, out session)) {
                 foreach (var page in session.Tabs) if (Value(p, "tabId") == "" || Value(p, "tabId") == page.Id) page.Stop();
@@ -86,12 +124,10 @@ internal sealed class BrowserHost {
             return await page.Find(p);
         }
         if (action == "dispose") {
+            disposedOwners.Add(owner);
             if (sessions.TryGetValue(owner, out session)) {
-                session.Disposed = true;
-                foreach (var tab in session.Tabs) tab.Close();
-                session.Tabs.Clear(); session.Active = null; sessions.Remove(owner);
-                if (visibleOwner == owner) { visibleOwner = ""; visible = false; }
-                Layout();
+                if (session.Disposal == null) session.Disposal = DisposeSession(session);
+                await session.Disposal;
             }
             return new { disposed = true };
         }
@@ -107,25 +143,16 @@ internal sealed class BrowserHost {
             if (!File.Exists(Path.Combine(extensionPath, "manifest.json"))) throw new Exception("未找到官方 ChatGPT 扩展文件。");
             string automationProfile = Value(p, "profile");
             if (!System.Text.RegularExpressions.Regex.IsMatch(automationProfile, "^[0-9a-f]{32}$")) throw new Exception("浏览器用户目录无效。");
-            if (session.OfficialEnvironment == null) {
-                var options = new CoreWebView2EnvironmentOptions(); options.AreBrowserExtensionsEnabled = true;
-                session.OfficialEnvironment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(Program.DataDirectory, "browsers", "official-" + automationProfile), options);
-                session.OfficialProfile = "official-" + automationProfile;
+            if (session.CefPreparing != null && session.CefPreparing.IsCompleted && (session.CefPreparing.IsFaulted || session.CefPreparing.IsCanceled) && (session.Cef == null || !session.Cef.Running)) {
+                session.Cef = null; session.CefPreparing = null;
             }
-            if (session.Disposed) throw new Exception("浏览器会话已关闭。");
-            var tab = session.Tabs.Find(t => t.IsOfficial);
-            if (tab == null) tab = NewTab(session);
-            await tab.EnsureReady(session.OfficialEnvironment);
-            if (session.Disposed || !session.Tabs.Contains(tab)) throw new Exception("浏览器标签页已关闭。");
-            var installed = await tab.Web.CoreWebView2.Profile.GetBrowserExtensionsAsync();
-            var extension = installed.FirstOrDefault(item => item.Id == "hehggadaopoacecdllhhajmbjkdcmajg");
-            if (extension == null || session.OfficialExtensionPath != extensionPath) extension = await tab.Web.CoreWebView2.Profile.AddBrowserExtensionAsync(extensionPath);
-            if (extension.Id != "hehggadaopoacecdllhhajmbjkdcmajg" || !extension.IsEnabled) throw new Exception("官方 ChatGPT 扩展未启用，已停止连接。");
-            if (session.Disposed || !session.Tabs.Contains(tab)) throw new Exception("浏览器标签页已关闭。");
-            session.OfficialExtensionPath = extensionPath;
+            if (session.Cef != null && session.OfficialExtensionPath != extensionPath) throw new Exception("官方扩展已更新，请结束当前浏览器会话后重新连接。");
+            if (session.CefPreparing == null && session.Cef == null) session.CefPreparing = PrepareCef(session, extensionPath);
+            if (session.CefPreparing != null) await session.CefPreparing;
+            if (session.Disposed || session.Cef == null) throw new Exception("浏览器会话已关闭。");
             Publish(session, false);
-            return new { applicationPath = Application.ExecutablePath, applicationProcessId = Process.GetCurrentProcess().Id, browserProcessId = (int)tab.Web.CoreWebView2.BrowserProcessId,
-                extensionId = extension.Id, tabId = tab.Id };
+            return new { applicationPath = Application.ExecutablePath, applicationProcessId = Process.GetCurrentProcess().Id, browserProcessId = session.Cef.ProcessId,
+                extensionId = "hehggadaopoacecdllhhajmbjkdcmajg", tabId = Value(session.Cef.State, "activeTab"), engine = "cef", browserFamily = "chrome", tabCreation = true };
         }
         if (action == "restoreTab") {
             string url = Value(p, "url");
@@ -141,7 +168,7 @@ internal sealed class BrowserHost {
         else if (action == "selectTab" || action == "closeTab") {
             var tab = session.Tabs.Find(t => t.Id == Value(p, "tabId"));
             if (tab == null) throw new Exception("浏览器标签页已关闭。");
-            if (action == "selectTab") session.Active = tab;
+            if (action == "selectTab") { session.Active = tab; session.CefSelected = false; session.LastCefActive = session.Cef == null ? "" : Value(session.Cef.State, "activeTab"); }
             else CloseTab(session, tab);
         }
         if (new [] { "state", "newTab", "selectTab", "closeTab" }.Contains(action)) { Layout(); Publish(session, action == "newTab"); return State(session, false); }
@@ -164,15 +191,16 @@ internal sealed class BrowserHost {
     }
     private BrowserTab NewTab(BrowserSession session) {
         if (session.Tabs.Count >= 12) throw new Exception("最多打开 12 个标签页，请先关闭不用的页面。");
-        var tab = new BrowserTab(parent, session.OfficialProfile ?? session.Profile, () => Publish(session, false), Downloads, session.Owner, History,
-            opener => OpenWindow(session, opener), page => CloseTab(session, page), (page, command) => Shortcut(session, page, command), session.OfficialEnvironment);
-        session.Tabs.Add(tab); session.Active = tab;
+        var tab = new BrowserTab(parent, session.Profile, () => Publish(session, false), Downloads, session.Owner, History,
+            opener => OpenWindow(session, opener), page => CloseTab(session, page), (page, command) => Shortcut(session, page, command));
+        session.Tabs.Add(tab); session.Active = tab; session.CefSelected = false;
         return tab;
     }
     private void CloseTab(BrowserSession session, BrowserTab tab) {
         int index = session.Tabs.IndexOf(tab); if (index < 0 || session.Disposed) return;
         session.Tabs.RemoveAt(index);
         if (session.Active == tab) session.Active = session.Tabs.Count == 0 ? null : session.Tabs[Math.Min(index, session.Tabs.Count - 1)];
+        if (session.Active == null && CefTabs(session).Length > 0) session.CefSelected = true;
         tab.Close(); Layout(); Publish(session, false);
     }
     private async Task<BrowserTab> OpenWindow(BrowserSession session, BrowserTab opener) {
@@ -195,14 +223,72 @@ internal sealed class BrowserHost {
     }
     private object State(BrowserSession s, bool reveal) {
         var tab = s.Active;
+        var cef = s.Cef == null ? null : s.Cef.State;
+        var all = s.Tabs.Select(t => (object)new { id = t.Id, title = t.Title, url = t.DisplayUrl, loading = t.Loading }).ToList();
+        all.AddRange(CefTabs(s));
+        if (s.CefSelected && cef != null) {
+            return new { owner = s.Owner, revision = ++s.Revision, reveal = reveal, activeTab = Value(cef, "activeTab"), tabs = all.ToArray(),
+                url = Value(cef, "url") == "about:blank" ? "" : Value(cef, "url"), title = Value(cef, "title"),
+                loading = Flag(cef, "loading"), canGoBack = Flag(cef, "canGoBack"), canGoForward = Flag(cef, "canGoForward"), error = Value(cef, "error"), engine = "cef" };
+        }
         return new { owner = s.Owner, revision = ++s.Revision, reveal = reveal, activeTab = tab == null ? "" : tab.Id,
-            tabs = s.Tabs.Select(t => new { id = t.Id, title = t.Title, url = t.DisplayUrl, loading = t.Loading }).ToArray(),
+            tabs = all.ToArray(),
             url = tab == null ? "" : tab.DisplayUrl, title = tab == null ? "" : tab.Title, loading = tab != null && tab.Loading,
             canGoBack = tab != null && tab.CanGoBack, canGoForward = tab != null && tab.CanGoForward, error = tab == null ? "" : tab.Error };
     }
     private void Publish(BrowserSession session, bool reveal) { if (!session.Disposed) notify(State(session, reveal)); }
+    private static bool Flag(Dictionary<string, object> p, string key) { object value; return p != null && p.TryGetValue(key, out value) && Object.Equals(value, true); }
+    private static object[] CefTabs(BrowserSession session) {
+        object raw;
+        if (session.Cef == null || session.Cef.State == null || !session.Cef.State.TryGetValue("tabs", out raw)) return new object[0];
+        return ((System.Collections.IEnumerable)raw).Cast<object>().Select(item => {
+            var tab = new Dictionary<string, object>((Dictionary<string, object>)item);
+            if (Value(tab, "url") == "about:blank") tab["url"] = "";
+            if (Value(tab, "title") == "about:blank" || Value(tab, "title") == "") tab["title"] = "新标签页";
+            return (object)tab;
+        }).ToArray();
+    }
+    private void CefChanged(BrowserSession session, Dictionary<string, object> state) {
+        if (session.Disposed || session.Cef == null || !Object.ReferenceEquals(session.Cef.State, state) || !sessions.ContainsKey(session.Owner) || sessions[session.Owner] != session) return;
+        string next = Value(state, "activeTab");
+        if (next != "" && next != session.LastCefActive) session.CefSelected = true;
+        session.LastCefActive = next;
+        if (next == "" && session.Tabs.Count > 0) session.CefSelected = false;
+        Layout(); Publish(session, false);
+    }
+    private async Task PrepareCef(BrowserSession session, string extensionPath) {
+        var engine = new CefBrowserEngine(parent, session.Owner, cefFiles(), state => CefChanged(session, state), message => {
+            try { lock (cefLogGate) { var directory = Path.Combine(Program.DataDirectory, "logs"); Directory.CreateDirectory(directory); File.AppendAllText(Path.Combine(directory, "browser-native.log"), message + Environment.NewLine, Encoding.UTF8); } } catch { }
+        }, attachProcess);
+        session.Cef = engine; session.OfficialExtensionPath = extensionPath;
+        string profile;
+        using (var sha = SHA256.Create()) profile = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(Program.DataDirectory.ToLowerInvariant() + ":" + session.Owner))).Replace("-", "").ToLowerInvariant().Substring(0, 32);
+        string data = Path.Combine(Program.DataDirectory, "browser-runtime", session.Owner);
+        Exception failure = null;
+        try { await engine.Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QQClaw", "browser-profiles", profile), extensionPath, Path.Combine(data, "engine.json"), Path.Combine(data, "cef.log")); }
+        catch (Exception error) { failure = error; }
+        if (failure != null || session.Disposed) {
+            try { await engine.Close(); } catch { }
+            if (!session.Disposed && !engine.Running) session.Cef = null;
+            throw failure ?? new Exception("浏览器会话已关闭。");
+        }
+        Layout();
+    }
+    internal async Task CloseAll() {
+        foreach (var owner in sessions.Keys.ToArray()) await Handle(new Dictionary<string, object> { { "owner", owner }, { "action", "dispose" } });
+    }
+    private async Task DisposeSession(BrowserSession session) {
+        session.Disposed = true;
+        foreach (var tab in session.Tabs) tab.Close();
+        session.Tabs.Clear(); session.Active = null;
+        if (session.CefPreparing != null) { try { await session.CefPreparing; } catch { } }
+        if (session.Cef != null) await session.Cef.Close();
+        sessions.Remove(session.Owner);
+        if (visibleOwner == session.Owner) { visibleOwner = ""; visible = false; }
+        Layout();
+    }
     internal static string Value(Dictionary<string, object> p, string key) {
-        object v; return p.TryGetValue(key, out v) && v != null ? Convert.ToString(v) : "";
+        object v; return p != null && p.TryGetValue(key, out v) && v != null ? Convert.ToString(v) : "";
     }
     internal static bool Allowed(string value) {
         Uri uri;
@@ -295,10 +381,14 @@ internal sealed class BrowserSession {
     internal long Revision;
     internal bool Disposed;
     internal string Owner, Profile;
-    internal string OfficialProfile, OfficialExtensionPath;
-    internal CoreWebView2Environment OfficialEnvironment;
+    internal string OfficialExtensionPath;
     internal readonly List<BrowserTab> Tabs = new List<BrowserTab>();
     internal BrowserTab Active;
+    internal CefBrowserEngine Cef;
+    internal Task CefPreparing;
+    internal Task Disposal;
+    internal bool CefSelected;
+    internal string LastCefActive = "";
     internal BrowserSession(string owner, string profile) { Owner = owner; Profile = profile; }
 }
 internal sealed class BrowserTab {

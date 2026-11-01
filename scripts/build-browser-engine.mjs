@@ -24,6 +24,7 @@ if (output.toLowerCase() === root.toLowerCase() || output.toLowerCase().startsWi
 const expectedVersion = "154.0.34+g14c5a08+chromium-154.0.8037.98";
 const expectedApiHash = "726dc73763db22edb289e41af2421a232617f7f4";
 const bootstrapHash = "0b6c80b6c81615f8c2b6c051d698cb9ff93d626fb82016ce61eefd62d8cc4fec";
+const elfHash = "f26656bfe38e1b78e42f292b6a8be1b5f0b5db15395ac571d6e20a1dedf698fb";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const versionHeader = await fs.readFile(path.join(sdk, "include/cef_version.h"), "utf8");
 const apiHeader = await fs.readFile(path.join(sdk, "include/cef_api_versions.h"), "utf8");
@@ -31,6 +32,11 @@ if (!versionHeader.includes(`#define CEF_VERSION "${expectedVersion}"`) || !apiH
   throw new Error("The CEF SDK version or Windows API hash does not match this client.");
 const bootstrap = await fs.readFile(path.join(sdk, "Release/bootstrap.exe"));
 if (hash(bootstrap) !== bootstrapHash) throw new Error("The official CEF bootstrap hash does not match.");
+// CEF's bootstrap requires its adjacent chrome_elf to have the same signing
+// identity. Use the unchanged pair from the pinned minimal SDK. The separately
+// fetched libcef retains its distribution signature; do not strip signatures.
+const elf = await fs.readFile(path.join(sdk, "Release/chrome_elf.dll"));
+if (hash(elf) !== elfHash) throw new Error("The official CEF bootstrap companion hash does not match.");
 const cefLicense = await fs.readFile(path.join(sdk, "LICENSE.txt"));
 const cache = path.join(os.tmpdir(), "qqclaw-build-cache/browser-engine/json-3.12.0");
 async function dependency(name, expected) {
@@ -71,6 +77,7 @@ try {
   throw new Error(`CEF client compilation failed; see ${path.join(output, "compiler.log")}`);
 }
 await fs.writeFile(exe, bootstrap);
+await fs.writeFile(path.join(output, "chrome_elf.dll"), elf);
 const pe = (await run("objdump", ["-p", dll], { windowsHide: true, maxBuffer: 8 * 1024 * 1024 })).stdout;
 await fs.writeFile(path.join(output, "client-pe.txt"), pe);
 const importStart = pe.indexOf("The Import Tables"), importEnd = pe.indexOf("The Export Tables");
@@ -81,9 +88,10 @@ const artifact = async file => ({ file: path.basename(file), sha256: hash(await 
 const manifest = {
   version: 1, cefVersion: expectedVersion, cefApiVersion: 15400, apiHash: expectedApiHash,
   sandboxCompatibilityHash: "265fca9293e6b6ef", sourceSha256: hash(await fs.readFile(source)),
-  client: await artifact(dll), bootstrap: await artifact(exe),
+  client: await artifact(dll), bootstrap: await artifact(exe), elf: await artifact(path.join(output, "chrome_elf.dll")),
   runtime: { url: `https://cef-builds.spotifycdn.com/cef_binary_${encodeURIComponent(expectedVersion)}_windows64_signed.tar.xz`,
-    archiveSha256: "ed5bed11096bedd69bfc9d534f3055a8cce290a583543959eca6d3fb22de8d5f" },
+    archiveSha256: "ed5bed11096bedd69bfc9d534f3055a8cce290a583543959eca6d3fb22de8d5f",
+    librarySha256: "23bc0d10e6a4b1980890f9e383d3747819598a803e5e860569cb381e5c47b472" },
   scope: "Unpublished browser surface component. Packing, installation and full product integration are not provided by this build command.",
 };
 await fs.writeFile(path.join(output, "browser-engine.json"), JSON.stringify(manifest, null, 2));

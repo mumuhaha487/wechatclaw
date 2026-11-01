@@ -1,6 +1,18 @@
 # 官方 ChatGPT 扩展接入调查
 
-## 最新源码检查点：原生 worker、C# 桥接与独立构建入口
+## 最新源码检查点：实际 BrowserHost、正式 helper 和真实模型（未发布）
+
+正式 EXE/DMG 仍0.3.32。本次已经将 CEF 接入 native/BrowserHost.cs、Program.cs 和 OfficialBrowser.cs，并由 backend/official-browser.mjs 核对原生/helper 的 engine 和能力；CEF 真实支持新建标签时返回 chrome/tabCreation=true。新 CefBrowserRuntime.cs 只信任程序集 QQClaw.browser-engine 清单，固定安装路径与 bootstrap、客户端、chrome_elf、libcef 摘要。scripts/browser-engine-artifact.mjs 验证当前源码及固定官方输入，build-windows.mjs 可通过 --browser-engine 导入小客户端/可信资源，通过 --output 输出项目外候选。没有提供运行库安装器，未发布或替换正式软件。
+
+实际产品 BrowserHost/CefBrowserEngine/OfficialBrowserMetadata 组件已由 QQClaw 配置的 gpt-6.1-sol/xhigh 验证：9次原版官方 Node REPL/ChatGPT 扩展调用，新建1662818320，读取 localhost 检查页原文，关闭后再列为空；0 Responses 夹具、0独立搜索/命令调用。CUA 允许本站一次。隐藏 Form 根157032、A/B worker147932/142604；真实 helper 的签名与归属条件没有修改来迁就实验。混合手动/CEF标签、当前标签关闭、后台恢复新ID、空组重开、会话隔离、200次尺寸请求、显示/隐藏保留、重复dispose与拒绝迟到请求均已操作。A/B各4个renderer令牌检查及实际正常退出0通过。**这不是完整产品GUI、拖条/DPI/可信按键、Google结果、真实微信、Mac或安装验收。** 本轮没有导出最终surface几何统计，不沿用前轮“2次/499×599”数字。
+
+证据根仍为项目外 qqclaw-cef-contract-20261101，本轮主目录 host-integration-2552e209e5ff4dab96ea84b084d7514e，含 verification.json、model-events.json、actions.json、native-helper.json、官方截图和QA截图。真实模型之后的连接状态回合/工具收紧使用录制真实响应回放验证，启动失败并发拒绝使用C#失败探针验证；没有声称这两个后续修订又跑过真实模型。119既有回归、18许可/预算/隔离、3新增引擎/构建边界与58脚本语法检查通过。最终开发候选6010880 bytes，SHA256 5476B370F866D911E533DE2816D2DDC7489FD758F3BB3BE8062FD01187D18D91，可信资源和payload文件核对通过，仍不能直接交付。
+
+首轮 signed runtime 启动失败：CEF bootstrap_win.cc 要求 bootstrap 与 chrome_elf/客户端签名身份一致（或同时未签名）。minimal未签名bootstrap与signed档的Spotify签名chrome_elf混用会FATAL退出；当前使用同版本官方minimal原版配套bootstrap/chrome_elf，libcef保留signed档有效Spotify签名及固定摘要。没有剥签、跳过检查、添加系统信任根或关闭沙箱；应用整体仍未签名。[官方签名说明](https://github.com/chromiumembedded/cef/blob/14c5a089e8452874cb1a556dc3fde26ed2d87723/docs/code_signing.md)与固定源码记录保存在项目外。Node --import 路径错误、证书失败、并发启动等待问题及源码索引详见[result.md](../result.md)首节。
+
+后续先完成可信运行库安装/修复及仅CLI新电脑的官方组件准备，再补CEF查找、下载/历史/取消、快捷键/焦点、Chrome控件外观及完整GUI/微信/Google/Mac验收。当前chromeControlsVisible=true；不能拿旧WebView2/WKWebView的这些功能当作新CEF已经支持。原版官方组件仍从已安装位置加载，不将其私有身份/授权复制进软件。整体目标保持active。
+
+## 历史源码检查点：原生 worker、C# 桥接与独立构建入口
 
 项目现新增 native/cef/BrowserEngine.cpp、native/CefBrowserEngine.cs、scripts/build-browser-engine.mjs（package.json 的 build:browser）。这三个模块已编译和进行原生组件操作检查，但**BrowserHost/打包器尚未选择它们**，正式版本仍 .32；官方运行组件发现、主 helper 与 tabCreation=false 未改。前轮真实模型证据属于旧原型，不代表新 worker 已做真实模型/微信验收。
 

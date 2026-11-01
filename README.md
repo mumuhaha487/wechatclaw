@@ -145,7 +145,9 @@ npm run build
 
 Windows 构建始终只输出 `release/QQClaw.exe`。构建前请关闭程序；不会另存带版本号的程序。第三方许可证已经嵌入 EXE，临时构建文件写入系统临时目录。
 
-未发布的 CEF Windows 组件可单独编译：`npm run build:browser -- --cef-sdk "C:\cef-sdk" --output "C:\outside-project\browser-build"`。SDK 必须是官方 `154.0.34+g14c5a08+chromium-154.0.8037.98` Windows x64 minimal 包，目录包含 include、Release/bootstrap.exe 和 LICENSE.txt；编译端还需 g++、dlltool、objdump。脚本校验版本、API hash、bootstrap 与 nlohmann/json 头文件摘要，生成客户端 DLL、官方 bootstrap、组件清单及两份许可证。默认输出系统临时目录，不改 release，也不启用产品路由；普通 .32 构建流程仍不依赖 C++。运行库安装、正式打包、原生面板接线和 Mac 组件尚未完成，不能仅凭这个命令构建成功声称功能可用。
+未发布的 CEF Windows 组件可单独编译：`npm run build:browser -- --cef-sdk "C:\cef-sdk" --output "C:\outside-project\browser-build"`。SDK 必须是官方 `154.0.34+g14c5a08+chromium-154.0.8037.98` Windows x64 minimal 包，目录包含 include、Release/bootstrap.exe、Release/chrome_elf.dll 和 LICENSE.txt；编译端还需 g++、dlltool、objdump。脚本校验版本、API hash、配套官方二进制与 JSON 头文件摘要，生成客户端、bootstrap、chrome_elf、清单及许可证。默认输出系统临时目录，不改 release。应用开发候选可用 `node scripts/build-windows.mjs --browser-engine "C:\outside-project\browser-build" --output "C:\outside-project\candidate\QQClaw.exe"` 构建：校验当前源码与产物，嵌入可信清单及小客户端，不打包大型运行库。未指定组件的普通构建仍不需要 C++，也不会自动获得官方扩展能力。
+
+**该组件仍未发布，缺少产品运行库安装器与新电脑官方组件准备入口。** 当前实验安装的 libcef 使用固定官方 signed 档；bootstrap/chrome_elf 使用同版本 minimal 原版配套文件，遵守其签名身份匹配要求，没有剥签；本应用整体仍未签名。实际 BrowserHost/正式 helper 与真实模型的新建、读取、关闭已做组件验证，完整 GUI、新 CEF 查找/下载/历史、控件外观、真实微信/Google及Mac扩展仍缺。构建成功不能作为整体验收，详细范围见 result.md 首节。
 
 `npm run dev` 编译并打开桌面应用。源码和成品目录不包含测试文件、测试截图或旧版程序。
 
@@ -227,4 +229,4 @@ Google 实际导航触发异常流量人机验证，程序已如实回报，**�
 ## 0.3.11 阶段性交付
 
 本轮不宣称整体目标完成。已修复界面、面板/标签关闭、上下文累计值错误，新增消息更改卡片及时间/菜单；官方扩展自动调用、截图中部分原生交互仍未完成。具体实现、实测范围、代码与证据索引以 [result.md](result.md) 为准。上面的 0.3.10 等交付记录属于历史，不能作为官方扩展验收证据。
-> 开发状态（2026-11-01）：正式 EXE/DMG 为 0.3.32；源码正在接入官方 ChatGPT 扩展，尚未发布。独立 WebView2 组件已经实际通过官方扩展打开隔离页面并读取正文/截图，模型使用协议夹具；这不等于真实 AI、微信或 Mac 已通过。最新范围及索引见 docs/OFFICIAL-BROWSER-INTEGRATION.md 开头。
+> 开发状态（2026-11-01）：正式 EXE/DMG 为 0.3.32。未发布源码已接实际 BrowserHost、CEF及正式归属校验 helper；QQClaw配置的真实模型通过原版扩展新建、读原文、关闭并再查确认。检查宿主是隐藏原生Form，尚不是完整EXE GUI、真实微信、Google、安装或Mac验收。最新范围及索引见 docs/OFFICIAL-BROWSER-INTEGRATION.md 开头。

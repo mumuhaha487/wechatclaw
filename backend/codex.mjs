@@ -215,7 +215,12 @@ export class CodexClient extends EventEmitter {
         const meta = message.params?.item?.result?._meta;
         const surface = meta?.["codex/toolSurface"];
         if (this.browserConfiguration?.available && message.method === "item/completed" && message.params?.item?.type === "mcpToolCall" &&
-          meta?.["codex/browserUse"] === true && surface?.kind === "browserUse" && surface.browserId && surface.browserFamily === "edge") {
+          this.active?.interrupted === false && !this.stopping && this.active.turnId &&
+          message.params.threadId === this.active.threadId && message.params.turnId === this.active.turnId &&
+          message.params.item.server === "node_repl" && message.params.item.tool === "js" &&
+          message.params.item.status === "completed" && !message.params.item.error && message.params.item.result?.isError !== true &&
+          meta?.["codex/browserUse"] === true && surface?.kind === "browserUse" && surface.browserId &&
+          this.browserConfiguration.browserFamily && surface.browserFamily === this.browserConfiguration.browserFamily) {
           this.browserConnected = true;
           this.emit("browser-status", this.browserStatus());
         }
