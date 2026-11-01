@@ -1,6 +1,6 @@
 # QQClaw 本轮需求、实现与验收记录
 
-更新时间：2026-11-01。当前源码 **0.3.29**。Mac 唯一安装包已更新为 0.3.29；Windows 0.3.29 候选已编译，正式 EXE 仍为 0.3.26（PID 115392），等待用户正常退出后替换。 官方 ChatGPT 扩展自动浏览仍未接通，全部主页 1:1 仍有缺失，整体目标没有完成；最新实现、证据与限制见文末0.3.29。
+更新时间：2026-11-01。当前源码 **0.3.30**。用户确认退出后，Windows 同名 EXE 已更新并启动；原账户绑定、3 个会话及 134 条历史消息核对保留。Mac 最新云构建与产物核对见文末 0.3.30 章节。新增原生持续目标、已有消息设为目标、暂停/继续、真实目标统计和阶段附件汇总；控制操作不会重复发送原用户指令。**官方 ChatGPT 扩展自动浏览仍未接通，主页全部 1:1 仍未完成，整体目标保持 active。** 以下旧版本章节属于当时现场，不能拿旧 PID、旧包或旧缺失列表代替本轮结果。
 
 ## 用户目标与不可替换的要求
 
@@ -930,3 +930,66 @@ Mac更新前将旧两端成品和加密状态备份至replacement-v0329。更新
 新增证据：项目外qqclaw-official-probe-20261101/public-source-review.json，包含7份源码摘要、安装版字段及只读现场。文档补丁第一次因result.md上下文不匹配被整体拒绝，核对无改动后修正，不计作产品失败或测试通过。本次没有新增UI或原生输入验收。
 
 **整体目标继续active，官方扩展微信自动浏览及主页全部1:1仍未完成。** Windows新版替换仍等待此前正常退出请求的回复，没有重复请求或强杀。
+
+## 0.3.30 原生持续目标、阶段附件和正式替换（当前结果）
+
+此节优先于所有旧版本现场。用户本轮已明确回复“已退出，替换程序”，不再需要重复授权。只读确认正式 QQClaw 已退出后，完成最新回归、重新构建、备份数据，替换同名 EXE 并启动；没有强杀原正式任务。当前 Windows 和 Mac 唯一成品均为 0.3.30。
+
+### 功能与代码索引
+
+| 入口 / 文件 | 行为与边界 |
+| --- | --- |
+| 输入区“目标”；用户消息下“设为目标” | 对接 Codex 原生持续目标，目标 1～4000 个字符，可选正整数 Token 预算；没有偷偷加入默认预算或任务超时 |
+| 目标卡片 / 详情 | 显示原生状态、累计 Token/时间及可选预算，支持用户暂停、继续、编辑和手动移除；暂停保留目标和用量，不自动删除 |
+| `shared/goal.mjs` | 快照字段过滤、请求校验和状态名称 |
+| `backend/codex-answer.mjs` | 监督整个目标的多个原生回合，等目标终态及最后回复均到达后结束；汇总全部阶段附件并按路径去重 |
+| `backend/codex.mjs` | 原生 `thread/goal/get/set/clear`；线程恢复前就绪观察者；当前模型/思考等级/权限；暂停目标后中断实际 turn；提供用户授权附件路径上下文 |
+| `backend/app.mjs` | 目标全程共用工作区锁、文件快照、任务归属和微信进度预算；`goal.fromMessage/set/get/resume/clear` RPC；源消息关联 `goalMessageIndex` |
+| `backend/conversations.mjs` | 备份目标、源消息索引、阶段消息及每次运行的目标统计；保留真实原生 threadId，不伪造 Codex rollout |
+| `ui/app.mjs` / `ui/icons.mjs` / `ui/desktop.css` | 亮色目标入口、卡片、状态与详情；已有消息设目标和继续操作不新增重复用户气泡 |
+| `.github/workflows/macos.yml` | 增加目标多回合、控制操作不重发 turn、阶段附件及源消息备份检查 |
+
+原生 `thread/resume` 可能直接调度 active 目标，并且响应先于 `turn/started`。现在在恢复前建立监听和快照，等待真实启动；普通新用户输入用 `turn/steer` 进入该实际回合，避免竞速启动第二个 turn。“已有消息设目标”“继续”“详情编辑”则直接调用原生目标 API，**不再重复发送原用户指令，也不人为增加“继续”用户 turn**。原消息附件在原生上下文中提供路径；暂停、冷连接及便携备份恢复保留关联，目标被移除或外部更换时清除过期关联。
+
+明确更换目标时，旧版 Codex 可能沿用旧目标用量。现在先清除旧原生目标再设置新目标，新预算从零计量；继续同一目标保留用量，历史统计继续存在于原历史消息中。旧 CLI 不支持目标元数据时，普通任务仍可用；显式目标请求会报告不支持，未造一个假的兼容目标。实际原生验证版本为 codex-cli 0.157.1，不能从中推导所有旧版均支持。
+
+已实际复现“附件只在中间阶段声明、最终总结没重复时丢失”的问题，并保留修复前失败。现在过程附件既显示在阶段卡片，也合并进任务最终结果，不要求模型重新声明；微信过程最多 6 条，再发省略提示，最终总结和文件仍统一走最终发件箱。桌面发起的后续任务不推微信。
+
+### 实际验证与证据
+
+证据根目录：`C:/Users/admin/AppData/Local/Temp/qqclaw-v0330-20261101`。依赖、测试脚本、日志、截图、旧包及回滚数据均在项目外，`release` 只有一个 EXE 和一个 DMG。
+
+| 实际检查 | 结果 / 证据 | 范围 |
+| --- | --- | --- |
+| 后台既有回归 | 119 项通过，`regression.tap` | 模型/存储/微信/附件/长任务等既有检查 |
+| 目标生命周期 | 23 项通过，`goal-lifecycle.tap` | 事件次序、快速完成、旧事件、显式停止、目标状态、阶段文件、纯目标控制等协议单测 |
+| 真实原生目标与自定义模型 | `goal-native-probe.json`、`goal-answer-native.json`、`goal-stop-native.json`、`goal-replacement-accounting.json`、`goal-custom-model-native.json` | 独立 Codex 0.157.1；实际目标工具与任意自定义模型名；本地 Responses 夹具 |
+| App 全程监督 / 冷恢复 | `goal-app-native.json`、`goal-app-resume-native.json` | 实际 App/Store/Archive/Checkpoints；锁及快照覆盖全程，最终回复前不结束，排队和归属保留 |
+| 最新控制 RPC | `goal-control-native.json` | 真实 `goal.fromMessage/resume/set/clear`；零 `turn/start/steer`，用户记录始终 1 条；原附件路径进入实际模型请求；暂停计量、备份恢复及冷连接继续通过；3 次完整快照 |
+| 微信阶段文件 | `goal-wechat-stage-files.json`；失败基线 `goal-wechat-stage-files-baseline.json` | 12 个原生阶段，6 条过程＋1 条省略提示＋1 条总结＋2 个文件＝10 条；最终总结不重复阶段文件仍发送成功；微信接口为夹具 |
+| CUA 目标界面 | `goal-ui-control-checks.json`、`goal-ui-events.json`、`QQClaw-0.3.30-final-ui.png` | 实际前端/后台与独立 Codex；设目标、暂停/继续、编辑预算、阶段预览、面板关闭及最终汇总；用户消息始终 1 条，最后预算 10000/真实已用 90，窗口错误和 RPC/服务器错误为 0 |
+| 布局与语法 | `goal-layout-checks.json`；50 个 JS/MJS 语法检查通过 | 既有四尺寸目标区域边界检查；不扩大为所有网页/内容或真实 EXE GUI 通过 |
+| 源码一致性 | `candidate-source-match.json` / `cloud-source-match.json`，60 文件一致 | 主目录和 Windows 构建副本逐字节一致；Mac 源码按 LF 规范化一致 |
+
+真实 Codex 检查均使用自己的独立 CODEX_HOME 和 localhost 模型响应，隔离 vault 是明文夹具；没有联系原微信账号、没有向原会话发测试消息，也没有使用真实模型收费请求。CLI 自身可能尝试插件元数据预热并得到 401，不能声称完全没有外部网络。CUA 检查是项目外本地前端服务，不等于独立正式 EXE 全套 GUI；最后关闭了自己的检查标签、服务与独立子进程。
+
+### 两端成品与正式数据
+
+代码 head：`c1c092b3a6a41e8ce6a0ef3d0f398b0215066af1`。[Mac 云构建 41254665344](https://github.com/mumuhaha487/wechatclaw/actions/runs/41254665344) 成功，artifact `13062767532`。只统计主执行日志带时间戳且从 `PASS:` 开始的输出，共 **42 条**，不计源码回显和重复步骤日志。覆盖 DMG 校验/只读挂载与复制安装、Universal 原生程序及签名检查、无 Homebrew 运行依赖、目标生命周期、既有 WebKit/下载/查找/标签/恢复、管道、钥匙串和后端重启数据。它不是用户 Mac GUI、中文输入法或可信按键验收，也未 Apple 公证。
+
+ZIP SHA-256 `D8560901386B653407084079B5E79CB3780394D8ACEE6A2F6D63F7371BE37DD1` 与 GitHub artifact digest 一致；CRC、唯一 DMG 及 UDIF 尾部均通过。下载和云构建核对见 `mac-build.json`。
+
+| 正式文件 | 当前状态 | 大小 bytes | SHA-256 |
+| --- | --- | --- | --- |
+| `release/QQClaw.exe` | 0.3.30 已替换并启动 | 693760 | `77CB4E4288C5B61C92BE94392B2388F61E54E2A21BFBEC413824FCA205E0F203` |
+| `release/macos/QQClaw.dmg` | 0.3.30 最新同名安装包已更新 | 861445 | `800CA5D76928E27D73F9EC46FAFE1E0A2417E4D24C972C52642CE6719DF4975E` |
+
+Windows 启动现场：正式进程 PID 150564，新后台确实来自 `%LOCALAPPDATA%/QQClaw/app/68346EDB92FCD943`，内嵌 BuildInfo、`.complete` 和源码版本均为 0.3.30；日志有本轮“后端已启动”，审计时新增 ERROR 为 0，无 native.log。Windows 文件资源的 Win32 ProductVersion 仍是 0.0.0.0，未把它冒称为正确版本；该元数据问题尚未修正。上述为资源、后台路径、日志和持久数据检查，**不是以进程存在替代全套 GUI 验收**。
+
+替换前备份在 `replacement-v0330`：`state-protected-before.json`、`QQClaw-previous.exe` 等均保存在项目外；更新最新 Mac 前另存 `QQClaw-b657-before-final.dmg`。最终数据审计仍是 1 个账户、1 条保留身份、3 个会话/134 条消息，busy/queued/pending 为 0；原账户目录/模型绑定、保留身份、threadId、逐条消息正文和时间、Provider URL/Key 的比较全部为 true。运行后的加密状态摘要发生变化，程序会保存状态；因此只声称原数据字段核对保留，不声称状态文件逐字节未变。
+
+### 失败记录与未完成项
+
+完整失败记录在项目外 `failure-notes.md`：包含真实的恢复竞态、旧目标预算沿用、阶段文件遗漏，以及夹具 key/依赖缺失、SSE 参数错误、旧 AX 索引、共享测试 archive、路径转义断言、CRLF diff、文档补丁和 `$PSScriptRoot` 在命令行为空等准备失败。后者在 Mac 文件替换前即报错，改用已核对的绝对目录后完成；没有把准备失败计作产品通过。原数据、旧包和失败基线均保留。
+
+**原始整体 goal 继续 active，未宣称完成。** 当前新增“目标/设为目标”入口补齐了先前一项主页差异，但官方 ChatGPT 扩展自动浏览仍无真实授权/操作成功证据，QQClaw 自身可信宿主与网站/任务授权仍待解决。没有启用自建 MCP、普通远控、Playwright/CDP/HTTP 替代，也没有借用开发聊天身份、令牌或管道。主页全部 1:1、网页批注、完整 SPA/Cookie/网站权限、Mac 实机/公证和原生可信按键等既有差异仍保留，不能由本轮目标功能或云构建通过推导它们已完成。
