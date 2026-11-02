@@ -12,9 +12,6 @@ import { sameWorkspace, workspaceKey } from "../shared/workspace.mjs";
 import { BrowserViewer, officialBrowserStatus } from "./browser.mjs";
 import { prepareOfficialBrowser } from "./official-browser.mjs";
 import { DesktopAttachments, attachmentPreview } from "./desktop-attachments.mjs";
-import { Checkpoints } from "./checkpoints.mjs";
-import { groupChanges } from "../shared/change-stats.mjs";
-import { reviewView } from "../shared/review-view.mjs";
 import { viewPreferences } from "../shared/view-preferences.mjs";
 import { goalRequest, goalSnapshot } from "../shared/goal.mjs";
 import { validDraftKey, draftValue, readDrafts } from "./composer-drafts.mjs";
@@ -106,7 +103,6 @@ export class App {
     Object.assign(this, { directory, native, emit, clientFactory, runtimeResolver, log });
     this.store = store || new Store(directory, native);
     this.desktopAttachments = new DesktopAttachments(directory || this.store.directory);
-    this.checkpoints = new Checkpoints(directory || this.store.directory, native);
     this.clients = new Map();
     this.workspaces = new Map();
     this.sessionRuns = new Map();
@@ -134,26 +130,11 @@ export class App {
   }
   async init() {
     await this.store.init();
-    for (const session of this.store.state.sessions) for (const message of session.messages) {
-      const checkpoint = message.runStats?.checkpoint;
-      if (checkpoint?.id && checkpoint.status === "applying") {
-        try {
-          const status = await this.checkpoints.status(checkpoint.id, session.workspace);
-          message.runStats.checkpoint = status;
-          if (status.at && status.direction) for (const item of this.store.state.sessions) if (sameWorkspace(item.workspace, session.workspace)) item.fileRestore = {
-            at: status.at, direction: status.direction, files: (message.runStats.changes || []).map(c => c.relative || c.path).slice(0, 100),
-          };
-        } catch (error) { checkpoint.status = "recovery-needed"; checkpoint.reason = safeError(error); }
-      }
-    }
     await this.bridge.init();
     return this;
   }
   changed() {
     this.emit("state", this.store.snapshot());
-  }
-  hasPendingRestore(workspace, exceptId) {
-    return this.store.state.sessions.some(s => sameWorkspace(s.workspace, workspace) && s.messages.some(m => m.runStats?.checkpoint?.id !== exceptId && ["applying", "recovery-needed"].includes(m.runStats?.checkpoint?.status)));
   }
   getSession(id) {
     if (this.removingSessions.has(id)) throw new Error("会话正在移除，请稍后重试。");
@@ -307,37 +288,16 @@ export class App {
       this.emit("activity", { sessionId: id, text: "正在准备工作目录…" });
     await previous.catch(() => {});
     let progressChain = Promise.resolve();
-    let checkpointFinished = false;
-    const completeCheckpoint = async () => {
-      if (checkpointFinished || !session.runStats?.checkpoint) return;
-      checkpointFinished = true;
-      try {
-        const result = await this.checkpoints.finish(session.runStats.checkpoint, session.workspace);
-        session.runStats.checkpoint = result.checkpoint;
-        const reported = groupChanges(session.runStats.changes);
-        session.runStats.changes = result.changes === null ? reported : result.changes.map(change => ({
-          ...change, diffs: reported.find(c => workspaceKey(path.resolve(session.workspace, c.path)) === workspaceKey(change.path))?.diffs || [],
-        }));
-      } catch (error) {
-        session.runStats.checkpoint = { status: "unavailable", reason: safeError(error) };
-        session.runStats.changes = groupChanges(session.runStats.changes);
-      }
-      session.runStats.durationMs = Date.now() - session.runStats.startedAt;
-    };
     try {
       if (this.cancelled.has(id) || this.closing)
         return await this.finish(session, "任务已停止。", taskKey);
-      if (this.hasPendingRestore(session.workspace)) throw new Error("工作目录有尚未完成的文件恢复，请先在更改卡片中恢复操作前状态。");
       const client = await this.client(session);
       const runningEntry = this.clients.get(id);
       if (runningEntry) runningEntry.taskKey = taskKey || null;
       session.runStats = { startedAt: Date.now(), tools: 0, actions: [], changes: [] };
-      this.emit("activity", { sessionId: id, text: "正在准备文件更改快照…" });
-      try { session.runStats.checkpoint = await this.checkpoints.begin(session.workspace); }
-      catch (error) { session.runStats.checkpoint = { status: "unavailable", reason: safeError(error) }; }
       await this.store.save();
       if (this.cancelled.has(id) || this.closing) {
-        await completeCheckpoint();
+        if (session.runStats) session.runStats.durationMs = Date.now() - session.runStats.startedAt;
         return await this.finish(session, "任务已停止。", taskKey);
       }
       const progressSeen = new Set();
@@ -398,11 +358,11 @@ export class App {
       }, { images: taskKey ? [] : (options.attachments || []).filter(a => a.kind === "image").map(a => a.path), goal: options.goal,
         onThread: async () => { await this.store.save(); if (this.cancelled.has(id) || this.closing) await client.interrupt(); } });
       await progressChain;
-      await completeCheckpoint();
+      if (session.runStats) session.runStats.durationMs = Date.now() - session.runStats.startedAt;
       return await this.finish(session, reply, taskKey);
     } catch (error) {
       await progressChain;
-      await completeCheckpoint();
+      if (session.runStats) session.runStats.durationMs = Date.now() - session.runStats.startedAt;
       const secrets = this.store.state.providers.map((p) => p.apiKey);
       const message = safeError(error, secrets);
       session.messages.push({
@@ -462,45 +422,6 @@ export class App {
     await this.store.save();
     return text;
   }
-  checkpointMessage(p) {
-    const session = this.getSession(p.sessionId), index = Number(p.message);
-    const message = Number.isInteger(index) && index >= 0 ? session.messages[index] : null;
-    if (!message?.runStats?.checkpoint?.id) throw new Error("此消息没有可用的文件快照。");
-    if (p.checkpointId && p.checkpointId !== message.runStats.checkpoint.id)
-      throw new Error("此消息的文件快照已变化，请重新打开更改卡片。");
-    return { session, message, id: message.runStats.checkpoint.id };
-  }
-  async restoreCheckpoint(p) {
-    if (this.closing) throw new Error("应用正在退出。");
-    const { session, id } = this.checkpointMessage(p), workspace = await workspacePath(session.workspace), key = workspaceKey(workspace);
-    if (this.hasPendingRestore(workspace, id)) throw new Error("请先在原更改卡片中恢复上次未完成的文件操作。");
-    if (this.workspaces.has(key) || this.store.state.sessions.some(s => sameWorkspace(s.workspace, workspace) && (s.busy || s.queued))) throw new Error("请等待此工作目录中的任务或文件操作完成。");
-    let unlock;
-    const lock = new Promise(resolve => { unlock = resolve; });
-    this.workspaces.set(key, lock);
-    const update = checkpoint => {
-      for (const item of this.store.state.sessions) {
-        if (item.runStats?.checkpoint?.id === id) item.runStats.checkpoint = structuredClone(checkpoint);
-        for (const message of item.messages) if (message.runStats?.checkpoint?.id === id) message.runStats.checkpoint = structuredClone(checkpoint);
-      }
-    };
-    try {
-      const status = await this.checkpoints.status(id, workspace);
-      update({ ...status, status: "applying" });
-      await this.store.save(); this.changed();
-      const result = await this.checkpoints.restore(id, workspace, p.direction);
-      const review = await this.checkpoints.review(id, workspace);
-      for (const item of this.store.state.sessions) if (sameWorkspace(item.workspace, workspace)) item.fileRestore = {
-        at: result.at, direction: result.direction, files: review.files.map(c => c.relative).slice(0, 100),
-      };
-      return result;
-    } finally {
-      try { update(await this.checkpoints.status(id, workspace)); }
-      catch (error) { update({ id, status: "recovery-needed", reason: safeError(error) }); }
-      try { await this.store.save(); this.changed(); }
-      finally { unlock(); if (this.workspaces.get(key) === lock) this.workspaces.delete(key); }
-    }
-  }
   async stop(id) {
     this.getSession(id);
     this.cancelled.add(id);
@@ -519,7 +440,6 @@ export class App {
     const fingerprint = session ? `${session.threadId}:${session.messages.length}:${session.updatedAt || ""}` : "";
     workspace = session?.workspace || workspace;
     if (!workspace) throw new Error("请先选择工作目录。");
-    if (this.hasPendingRestore(workspace)) throw new Error("请先恢复此工作目录中未完成的文件操作，再接续 Desktop。");
     const key = workspaceKey(workspace);
     if (this.workspaces.has(key) || this.store.state.sessions.some((s) => sameWorkspace(s.workspace, workspace) && (s.busy || s.queued)))
       throw new Error("请等待该工作目录中的任务完成，再在 Desktop 中继续。");
@@ -646,23 +566,10 @@ export class App {
         await this.store.save();
         return { saved: true };
       }
-      case "review.remember":
-        state.reviewView = reviewView(p.value, state.sessions);
-        await this.store.save();
-        return { saved: true };
       case "view.remember":
         state.viewPreferences = viewPreferences(p.value, state);
         await this.store.save();
         return { saved: true };
-      case "checkpoint.review": {
-        const { session, id } = this.checkpointMessage(p);
-        return await this.checkpoints.review(id, session.workspace, String(p.relative || ""));
-      }
-      case "checkpoint.restore": {
-        const operation = this.restoreCheckpoint(p);
-        this.fileOperations.add(operation);
-        try { return await operation; } finally { this.fileOperations.delete(operation); }
-      }
       case "desktop.continue":
         return this.continueDesktop(p);
       case "browser.open": {
@@ -892,7 +799,6 @@ export class App {
       }
       case "session.remove": {
         const session = this.getSession(p.id);
-        if (this.hasPendingRestore(session.workspace)) throw new Error("请先恢复尚未完成的文件操作，再移除此会话。");
         if (this.workspaces.has(workspaceKey(session.workspace))) throw new Error("请等待工作目录中的文件操作完成。");
         if (session.busy || session.queued || this.desktopHandoffs.has(p.id)) throw new Error("请先等待任务或 Desktop 接续完成。");
         if (state.accounts.some((a) => this.bridge.accountSessionIds(a).has(p.id)))

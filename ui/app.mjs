@@ -15,7 +15,6 @@ import { contextSnapshot } from "../shared/context-usage.mjs";
 import { AttachmentPreviews } from "./attachments.mjs";
 import { NavigationHistory } from "./navigation.mjs";
 import { groupChanges } from "../shared/change-stats.mjs";
-import { reviewView } from "../shared/review-view.mjs";
 import { ApplicationMenu } from "./application-menu.mjs";
 import { PanelTabs, workspaceFileReference } from "./panel-tabs.mjs";
 import { ClosedPanelTabs } from "./closed-panel-tabs.mjs";
@@ -182,11 +181,6 @@ const ui = {
   notifications: [],
   panelPage: ["browser", "files", "review"].includes(viewStorage.getItem("panel-page")) ? viewStorage.getItem("panel-page") : "",
   panelData: null,
-  reviewTarget: null,
-  reviewHydrated: false,
-  reviewSignature: "null",
-  checkpointBusy: new Set(),
-  checkpointErrors: new Map(),
   panelSeq: 0,
   panelIntent: 0,
 };
@@ -672,21 +666,17 @@ function goalCard(s) {
   return `<section class="goal-card" aria-label="当前目标"><div class="goal-card-heading">${icon("target")}<button class="goal-open" data-action="goal-details"><strong>目标</strong><span>${esc(label)}</span></button><span class="grow"></span><span class="goal-usage">${esc(tokens)} Tokens${goal.tokenBudget ? ` / ${esc(goal.tokenBudget.toLocaleString())}` : ""}</span>${s.busy ? button("stop", running ? "暂停" : "停止", "stop", "ghost") : goal.status !== "complete" ? button("goal-resume", "继续", "arrow", "ghost", s.queued ? "disabled" : "") : ""}${ib("goal-details", "目标详情", "more")}</div><button class="goal-objective" data-action="goal-details">${esc(goal.objective)}</button></section>`;
 }
 function changeCard(message, index, s) {
-  const changes = groupChanges(message.runStats?.changes), cp = message.runStats?.checkpoint;
-  if (!changes.length && (!cp || cp.status === "empty")) return "";
-  const key = `${s.id}:${index}`, busy = ui.checkpointBusy.has(key) || cp?.status === "applying";
-  const recovering = ["applying", "recovery-needed"].includes(cp?.status);
-  const available = cp?.id && ["ready", "undone", "applying", "recovery-needed"].includes(cp.status);
-  const attrs = `data-session="${esc(s.id)}" data-message="${index}"`;
+  const changes = groupChanges(message.runStats?.changes);
+  if (!changes.length) return "";
+  const key = `${s.id}:${index}`;
   const row = (c, i) => {
     const stats = c.stats ? `<span class="change-added">+${c.stats.added}</span><span class="change-removed">−${c.stats.removed}</span>` : `<span class="change-kind">${esc({ add: "新增", delete: "删除", update: "修改" }[c.kind] || "修改")}</span>`;
-    const label = `<span class="ellipsis" title="${esc(c.path)}">${esc(c.relative || c.path)}</span><span class="change-counts">${stats}</span>`;
-    return available ? `<button class="change-file-row" data-action="checkpoint-view" ${attrs} data-relative="${esc(c.relative || "")}">${label}</button>` : `<details class="changed-file" data-detail-key="${key}-change-${i}"><summary>${label}</summary><pre>${esc(c.diffs?.join("\n\n") || c.diff || "本次任务未提供可显示的补丁。")}</pre></details>`;
+    return `<details class="changed-file" data-detail-key="${key}-change-${i}"><summary><span class="ellipsis" title="${esc(c.path)}">${esc(c.relative || c.path)}</span><span class="change-counts">${stats}</span></summary><pre>${esc(c.diffs?.join("\n\n") || c.diff || "本次任务未提供可显示的补丁。")}</pre></details>`;
   };
-  const direction = recovering ? "recover" : cp?.status === "undone" ? "redo" : "undo";
-  const label = recovering ? "恢复操作前状态" : direction === "redo" ? "重新应用" : "撤销";
-  return `<section class="change-card"><div class="change-card-heading">${icon("review")}<div class="grow"><strong>${changes.length ? `已${cp?.status === "undone" ? "撤销" : "更改"} ${changes.length} 个文件` : "文件快照不可用"}</strong><span class="change-card-caption">${cp?.status === "undone" ? "文件已恢复到任务开始前" : "任务期间检测到的文件更改"}</span></div>${available ? `<button class="change-restore" data-action="checkpoint-restore" title="恢复本轮开始前或结束后的文件；包括任务期间其他程序产生的更改。任务结束后的新修改会拒绝覆盖。" ${attrs} data-direction="${direction}" ${busy && !recovering || ui.checkpointBusy.has(key) || s.busy || s.queued ? "disabled" : ""}>${esc(label)}${icon(direction === "redo" ? "redo" : "undo")}</button><button class="change-view" data-action="checkpoint-view" ${attrs}>查看更改</button>` : ""}</div>${changes.length ? `<div class="change-list">${changes.slice(0, 3).map(row).join("")}${changes.length > 3 ? `<details class="more-changes" data-detail-key="${key}-more"><summary>再显示 ${changes.length - 3} 个文件${icon("down")}</summary>${changes.slice(3).map((c, i) => row(c, i + 3)).join("")}</details>` : ""}</div>` : ""}${cp?.reason || ui.checkpointErrors.has(key) ? `<p class="change-card-note" role="status">${esc(ui.checkpointErrors.get(key) || cp.reason)}</p>` : ""}${recovering || busy ? `<p class="change-card-note" role="status">${ui.checkpointBusy.has(key) ? "正在处理文件，请稍候…" : "上次文件操作未完成，请恢复操作前状态。"}</p>` : ""}</section>`;
+  return `<section class="change-card"><div class="change-card-heading">${icon("review")}<strong>已更改 ${changes.length} 个文件</strong></div><div class="change-list">${changes.slice(0, 3).map(row).join("")}${changes.length > 3 ? `<details class="more-changes" data-detail-key="${key}-more"><summary>再显示 ${changes.length - 3} 个文件${icon("down")}</summary>${changes.slice(3).map((c, i) => row(c, i + 3)).join("")}</details>` : ""}</div></section>`;
 }
+
+
 function composer() {
   const s = session(),
     config = s || {
@@ -1027,7 +1017,7 @@ function rememberDocumentScroll() {
 function applyPanelTab(tab = panelTabs.selected(panelOwner())) {
   rememberDocumentScroll();
   ui.panelSeq++;
-  ui.panelData = null; ui.panelLoading = false; ui.panelError = ""; ui.reviewTarget = null;
+  ui.panelData = null; ui.panelLoading = false; ui.panelError = "";
   ui.filePreview = tab?.kind === "file" ? tab : null;
   ui.panelPage = tab?.kind === "file" ? "file" : tab?.kind === "browser" ? "browser" : "";
 }
@@ -1307,16 +1297,13 @@ function workPanel() {
         )
         .join("") +
       "";
-  else if (ui.reviewTarget) {
-    const data = ui.panelData, display = (value, exists) => !exists ? '<p class="review-placeholder">此时文件不存在</p>' : value === null ? '<p class="review-placeholder">二进制文件或超过 256 KiB，不显示文本预览。</p>' : `<pre class="snapshot-source">${esc(value || "（空文件）")}</pre>`;
-    body = `<div class="checkpoint-review"><div class="review-note">本次任务快照 · ${data?.status === "undone" ? "已撤销" : "修改前后"}</div><div class="review-file-list">${(data?.files || []).map(c => `<button class="review-file${data.selected === c.relative ? " active" : ""}" data-action="checkpoint-file" data-relative="${esc(c.relative)}"><span class="ellipsis" title="${esc(c.relative)}">${esc(c.relative)}</span>${c.stats ? `<span class="change-counts">+${c.stats.added} −${c.stats.removed}</span>` : ""}</button>`).join("")}</div><div class="review-path">${esc(data?.selected)}</div><div class="review-columns"><section><h3>修改前</h3>${display(data?.before, data?.beforeExists)}</section><section><h3>修改后</h3>${display(data?.after, data?.afterExists)}</section></div></div>`;
-  } else
+  else
     body =
       '<div class="review-note">工作目录中的未提交更改</div><pre class="diff-preview">' +
       esc(ui.panelData?.diff || "当前没有未提交的更改。") +
       "</pre>";
   return (
-    '<aside class="work-panel tabbed-panel' + (ui.reviewTarget && ui.panelPage === "review" ? " review-panel" : "") +
+    '<aside class="work-panel tabbed-panel' +
     (ui.panelMax ? " maximized" : "") +
     '">' +
     header +
@@ -1464,11 +1451,6 @@ function render() {
   if (ui.composing) { ui.compositionRenderPending = true; return; }
   const composerKey = draftKey();
   if ($("composer-input")?.dataset.draftKey === composerKey) rememberDraft();
-  if (ui.reviewTarget && (ui.reviewTarget.sessionId !== ui.active || !reviewView(ui.reviewTarget, state.sessions))) {
-    invalidatePanel();
-    if (ui.panelPage === "review") ui.panelPage = "";
-  }
-  rememberReview();
   if (environmentReady()) {
     navigation.prune(location => !location.active || state.sessions.some(s => s.id === location.active));
     navigation.visit({ active: ui.active, project: ui.project, page: ui.page });
@@ -1744,20 +1726,6 @@ async function checkEnvironment(restart) {
         document.documentElement.style.setProperty("--sidebar-width", (viewStorage.getItem("sidebar-width") || 275) + "px");
         applyPanelWidth();
       }
-      if (!ui.reviewHydrated) {
-        const saved = reviewView(initial.reviewView, state.sessions);
-        if (saved) {
-          ui.active = saved.sessionId;
-          ui.project = saved.workspace;
-          ui.panel = saved.open;
-          ui.panelPage = "review";
-          ui.reviewTarget = saved;
-          viewStorage.setItem("active-session", ui.active);
-          rememberPanel();
-        }
-        ui.reviewSignature = JSON.stringify(saved);
-        ui.reviewHydrated = true;
-      }
       ui.login = initial.wechat?.login;
       ui.busyAccounts = initial.wechat?.busyAccounts || [];
       if (!state.sessions.some((s) => s.id === ui.active) && !ui.project) ui.active = state.sessions[0]?.id || "";
@@ -1788,8 +1756,7 @@ async function checkEnvironment(restart) {
   if (!environmentReady()) { ui.overlay = ""; renderOverlay(); }
   render();
   if (environmentReady() && ui.panel && ui.panelPage === "browser" && !panelTabs.selected(panelOwner())) await restoreBrowserPanel();
-  else if (environmentReady() && ui.panel && ui.reviewTarget && !ui.panelData && !ui.panelLoading) await loadPanel();
-  else if (environmentReady() && ui.panel && ui.panelPage === "files" && !ui.panelData && !ui.panelLoading) await loadPanel();
+  else if (environmentReady() && ui.panel && ["files", "review"].includes(ui.panelPage) && !ui.panelData && !ui.panelLoading) await loadPanel();
 }
 async function updateComposer(change, origin = session()?.id || null) {
   const s = origin ? state.sessions.find(value => value.id === origin) : null;
@@ -2180,7 +2147,7 @@ async function action(name, element) {
       ui.panelMax = !ui.panelMax;
       rememberPanel();
       render();
-      if ((ui.reviewTarget || ui.panelPage === "files") && !ui.panelData && !ui.panelLoading) return loadPanel();
+      if (["files", "review"].includes(ui.panelPage) && !ui.panelData && !ui.panelLoading) return loadPanel();
       return;
     case "panel-review":
     case "panel-files":
@@ -2194,39 +2161,6 @@ async function action(name, element) {
       if (ui.panelPage === "browser") ui.browserHidden.delete(session()?.id);
       rememberPanel();
       return loadPanel(ui.panelPage === "files" ? panelTabs.group(panelOwner()).directory || "" : "");
-    case "checkpoint-view":
-      ui.panelIntent++;
-      invalidatePanel();
-      ui.panel = true; ui.panelPage = "review";
-      {
-        const s = state.sessions.find(s => s.id === element.dataset.session);
-        const message = Number(element.dataset.message);
-        ui.reviewTarget = reviewView({ sessionId: s?.id, workspace: s?.workspace, message,
-          checkpointId: s?.messages[message]?.runStats?.checkpoint?.id, relative: element.dataset.relative || "", open: true }, state.sessions);
-        if (!ui.reviewTarget) { ui.panelPage = ""; render(); return toast("此消息没有可用的文件快照。"); }
-      }
-      rememberPanel(); return loadPanel();
-    case "checkpoint-file":
-      if (!ui.reviewTarget) return;
-      ui.reviewTarget = { ...ui.reviewTarget, relative: element.dataset.relative };
-      return loadPanel();
-    case "checkpoint-restore": {
-      const params = { sessionId: element.dataset.session, message: Number(element.dataset.message), direction: element.dataset.direction };
-      const key = `${params.sessionId}:${params.message}`;
-      if (ui.checkpointBusy.has(key)) return;
-      ui.checkpointBusy.add(key); ui.checkpointErrors.delete(key); render();
-      try {
-        await rpc("checkpoint.restore", params);
-        toast(params.direction === "undo" ? "已撤销本次文件更改。" : params.direction === "redo" ? "已重新应用文件更改。" : "已恢复操作前状态。");
-      } catch (error) { ui.checkpointErrors.set(key, error.message); }
-      finally {
-        ui.checkpointBusy.delete(key);
-        try { state = await rpc("snapshot"); } catch (error) { toast(error.message); }
-        render();
-        if (ui.reviewTarget?.sessionId === params.sessionId && ui.reviewTarget.message === params.message) await loadPanel();
-      }
-      return;
-    }
     case "panel-refresh":
       return loadPanel();
     case "panel-select-tab": {
@@ -2370,7 +2304,7 @@ async function action(name, element) {
       render();
       if (ui.panel && ui.panelPage === "browser") refreshBrowserConnection().catch(() => {});
       if (ui.panel && ui.panelPage === "browser" && !panelTabs.selected(panelOwner())) return restoreBrowserPanel();
-      if (ui.panel && (ui.reviewTarget || ui.panelPage === "files") && !ui.panelData && !ui.panelLoading) return loadPanel();
+      if (ui.panel && ["files", "review"].includes(ui.panelPage) && !ui.panelData && !ui.panelLoading) return loadPanel();
       return;
     case "project-show-more":
       ui.projectMore.has(id) ? ui.projectMore.delete(id) : ui.projectMore.add(id);
@@ -3251,21 +3185,7 @@ document.addEventListener("keydown", (e) => {
   rows[next].focus();
 });
 function panelContext() {
-  return JSON.stringify([ui.active, workspaceKey(session()?.workspace || project()?.workspace), ui.panelPage, ui.reviewTarget]);
-}
-function rememberReview() {
-  if (!ui.reviewHydrated || !environmentReady()) return;
-  const value = ui.panelPage === "review" && ui.reviewTarget?.sessionId === ui.active
-    ? reviewView({ ...ui.reviewTarget, open: ui.panel }, state.sessions) : null;
-  const signature = JSON.stringify(value);
-  if (signature === ui.reviewSignature) return;
-  ui.reviewSignature = signature;
-  // Send structural changes immediately so normal window shutdown waits for the
-  // Store's existing save queue, including on WebKit's nonpersistent origin.
-  rpc("review.remember", { value }).catch(error => {
-    if (ui.reviewSignature === signature) ui.reviewSignature = undefined;
-    toast(`审阅位置保存失败：${error.message}`);
-  });
+  return JSON.stringify([ui.active, workspaceKey(session()?.workspace || project()?.workspace), ui.panelPage]);
 }
 function invalidatePanel() {
   ui.panelSeq++;
@@ -3273,7 +3193,6 @@ function invalidatePanel() {
   ui.panelData = null;
   ui.filePreview = null;
   ui.panelError = "";
-  ui.reviewTarget = null;
 }
 async function loadPanel(directory = "") {
   const seq = ++ui.panelSeq, context = panelContext();
@@ -3294,8 +3213,8 @@ async function loadPanel(directory = "") {
   render();
   try {
     const data = await rpc(
-      ui.panelPage === "review" ? ui.reviewTarget ? "checkpoint.review" : "workspace.diff" : "workspace.list",
-      ui.reviewTarget || { workspace, directory },
+      ui.panelPage === "review" ? "workspace.diff" : "workspace.list",
+      { workspace, directory },
     );
     if (seq !== ui.panelSeq || context !== panelContext()) return;
     ui.panelData = data;
@@ -3306,8 +3225,6 @@ async function loadPanel(directory = "") {
   }
   if (seq !== ui.panelSeq || context !== panelContext()) return;
   ui.panelLoading = false;
-  if (ui.reviewTarget && ui.panelData && !ui.panelError)
-    ui.reviewTarget = { ...ui.reviewTarget, relative: ui.panelData.selected || "" };
   render();
 }
 document.addEventListener("pointerdown", (e) => {

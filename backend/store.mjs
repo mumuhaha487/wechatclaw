@@ -4,7 +4,6 @@ import { randomBytes } from "node:crypto";
 import { parseActionBlocksSafe } from "./wechat-actions.mjs";
 import { ConversationArchive } from "./conversations.mjs";
 import { workspaceKey } from "../shared/workspace.mjs";
-import { reviewView } from "../shared/review-view.mjs";
 import { viewPreferences } from "../shared/view-preferences.mjs";
 
 export const defaults = () => ({
@@ -30,7 +29,6 @@ export const defaults = () => ({
   sessions: [],
   accounts: [],
   retainedAccounts: [],
-  reviewView: null,
   viewPreferences: null,
   composerDrafts: {},
 });
@@ -80,8 +78,12 @@ export class Store {
       this.state.version = 2;
     }
     // A task in progress at shutdown may already have written files. Do not automatically execute it again.
+    delete this.state.reviewView;
     for (const session of this.state.sessions) {
+      delete session.fileRestore;
+      if (session.runStats) delete session.runStats.checkpoint;
       for (const message of session.messages) {
+        if (message.runStats) delete message.runStats.checkpoint;
         if (message.role !== "assistant") continue;
         const parsed = parseActionBlocksSafe(message.text);
         message.text = parsed.visibleText;
@@ -94,7 +96,6 @@ export class Store {
       session.queued = 0;
       if (session.busy) {
         session.busy = false;
-        if (session.runStats?.checkpoint) session.runStats.checkpoint = { status: "unavailable", reason: "应用中断时未完成任务结束快照，本轮撤销不可用。" };
         session.messages.push({
           role: "system",
           text: "上次任务随应用关闭而中断。请检查工作目录后决定是否继续。",
@@ -103,7 +104,6 @@ export class Store {
         });
       }
     }
-    this.state.reviewView = reviewView(this.state.reviewView, this.state.sessions);
     this.state.viewPreferences = viewPreferences(this.state.viewPreferences, this.state);
     return this;
   }
@@ -151,7 +151,6 @@ export class Store {
   snapshot() {
     const state = structuredClone(this.state);
     delete state.composerDrafts;
-    state.reviewView = reviewView(state.reviewView, state.sessions);
     state.viewPreferences = viewPreferences(state.viewPreferences, state);
     state.providers = state.providers.map(({ apiKey, ...p }) => ({
       ...p,

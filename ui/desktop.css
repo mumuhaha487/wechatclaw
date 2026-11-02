@@ -1895,36 +1895,16 @@ select:focus-visible {
 .navigation-forward > .icon { transform: rotate(180deg); }
 .settings-titlebar .workspace-navigation { margin-right: auto; padding-left: 12px; }
 .sidebar.collapsed { visibility: hidden; pointer-events: none; }
-/* Task changes use actual file snapshots, independent of Git history. */
+/* File changes reported by Codex. */
 .change-card-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 16px; }
 .change-card-heading > .icon { width: 26px; height: 26px; padding: 4px; box-sizing: content-box; border-radius: 8px; background: var(--hover); color: var(--muted); }
 .change-card-heading strong { display: block; font-size: 13px; font-weight: 500; }
-.change-card-caption { display: block; margin-top: 3px; font-size: 11px; color: var(--muted); }
-.change-card-heading button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; white-space: nowrap; font-size: 12px; font-weight: 400; }
-.change-card-heading button:hover { background: var(--hover); }
-.change-card-heading .change-view { border: 1px solid var(--line); background: var(--page); }
-.change-restore .icon { width: 14px; height: 14px; }
-.change-file-row, .review-file { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 9px 12px; text-align: left; border-radius: 0; font-size: 12px; }
-.change-file-row > span:first-child, .review-file > span:first-child { flex: 1; min-width: 0; }
-.change-file-row:hover, .review-file:hover { background: var(--hover); }
 .change-counts { display: inline-flex; flex: 0 0 auto; gap: 6px; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .change-added { color: var(--text); }
 .change-removed, .change-kind { color: var(--muted); }
 .more-changes > summary { display: flex; align-items: center; gap: 5px; padding: 10px 12px; cursor: pointer; list-style: none; font-size: 12px; color: var(--muted); }
 .more-changes > summary::-webkit-details-marker { display: none; }
 .more-changes[open] > summary .icon { transform: rotate(180deg); }
-.change-card-note { font-size: 11px; line-height: 1.6; margin: 0; padding: 10px 14px; color: var(--muted); border-top: 1px solid var(--line); overflow-wrap: anywhere; }
-.work-panel.review-panel { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
-.review-panel .panel-header { flex: 0 0 auto; margin: 0; padding: 10px; }
-.checkpoint-review { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 12px; }
-.review-file-list { max-height: 180px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
-.review-file.active { background: var(--active); }
-.review-path { padding: 14px 0 6px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
-.review-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px; }
-.review-columns section { min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.review-columns h3 { padding: 8px 10px; margin: 0; border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 500; background: var(--tile); }
-.snapshot-source { margin: 0; padding: 10px; max-height: 480px; overflow: auto; font: 11px/1.7 Consolas, Menlo, monospace; white-space: pre; tab-size: 2; }
-.review-placeholder { margin: 0; padding: 14px; color: var(--muted); font-size: 12px; }
 @container (max-width: 719px) {
   .work-panel, .work-panel.browser-panel { position: absolute; inset: 0; width: auto; max-width: none; z-index: 12; border: 0; border-radius: 0; }
   .panel-splitter { display: none; }

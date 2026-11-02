@@ -1,6 +1,8 @@
 # 主页操作对照与验收边界
 
-对应当前0.3.43源码；Mac成品冻结在0.3.41。原始目标保留在根目录result.md；本表用于逐项复查，不能据此宣布整个目标已完成。
+对应当前0.3.44源码；Mac成品冻结在0.3.41。原始目标保留在根目录result.md；本表用于逐项复查，不能据此宣布整个目标已完成。
+
+0.3.44已按用户要求删除额外文件快照、备份及撤销恢复链路。下方历史验收中的快照相关断言不再适用于当前版本；本轮删除范围、需求依据和必要回归见result.md首节。
 
 2026-11-02补充：当前正式包相同资源、生产native源码及独立检查入口完成39项原生集成断言，覆盖模型与组合键、真实CLI两轮、文件审阅、原生指针拖宽376→408px、X关闭真实surface、后台不重开及重启保存恢复。证据根C:/Users/admin/AppData/Local/Temp/qqclaw-windows-full-e0e5cfbd，具体范围及检查宿主失败见result.md首节。SDK生成的trusted事件不等于硬件输入法；菜单部分使用DOM click，模型答案/usage为本机夹具。
 
@@ -16,7 +18,7 @@
 | 前进/后退、收起/展开侧栏 | ui/navigation.mjs；ui/app.mjs的navigate-back、navigate-forward、toggle-sidebar | 本轮实际切换会话并后退，草稿回到原会话；早期拖动/状态更新检查记录见result.md |
 | 新聊天、项目、会话展开收起、搜索、通知和菜单 | ui/app.mjs的sidebar、selectSession、newSession；ui/message-search.mjs | 已有实现；0.3.37真实前端检查覆盖列表/滚动/右键及键盘菜单。不能扩大为全部独立EXE物理输入检查 |
 | 用户长消息“显示更多”、设为目标、会话目录 | ui/conversation-view.mjs；ui/app.mjs的message-goal；shared/goal.mjs | 已实现展开收起、提问定位和持续目标；目标功能不以进程存活代替任务完成 |
-| 过程折叠、最终Markdown、网站卡片、本地文件、文件更改 | ui/app.mjs的runSummary、changeCard；ui/website-cards.mjs；shared/review-view.mjs；backend/checkpoints.mjs | 有真实文件及前端检查记录；本轮未重跑每一种文件撤销情形 |
+| 过程折叠、最终Markdown、网站卡片、本地文件、文件更改 | ui/app.mjs的runSummary、changeCard；ui/website-cards.mjs；backend/app.mjs | 显示Codex报告的文件补丁；审阅面板读取Git差异。额外文件快照与文件撤销恢复已删除 |
 | 多行输入、附件、切换会话保留草稿、运行中继续输入 | ui/render-frame.mjs、composer-drafts.mjs、attachments.mjs；ui/app.mjs的composer | 本轮真实App和Codex进程运行中可编辑18行草稿，切到另一会话后后退能恢复；任务完成仍保留焦点、光标和原生撤销记录 |
 | 权限、模型与思考等级、动态刷新、自定义模型 | ui/composer-model.mjs、controls.mjs、model-catalog.mjs；backend/app.mjs、codex.mjs | 保留服务/模型/思考等级及手填模型ID；模型列表来自发现接口，不能按固定名单冒充动态列表 |
 | 上下文圆环和统计详情 | shared/context-usage.mjs；ui/app.mjs的contextUsage、context-info；backend/codex.mjs | 本轮两轮真实Codex app-server事件使界面从待统计变为3.9%、10.1%。最后一轮26100/258400，累计36200，界面使用last而非total；未知窗口仍显示待统计 |
