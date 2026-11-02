@@ -35,9 +35,9 @@ export class BrowserViewer {
 // Installation is not authorization or connectivity. Check only official store
 // IDs, and report all three states separately. No host identity/token is read.
 export async function officialBrowserStatus({ platform = process.platform, env = process.env, home = os.homedir(), fsImpl = fs } = {}) {
-  if (platform === "win32" && env.QQCLAW_RUNTIME_DIR) {
+  if ((platform === "win32" || platform === "darwin" && env.QQCLAW_MAC_BROWSER_READY === "1") && env.QQCLAW_RUNTIME_DIR) {
     try {
-      const bundled = await bundledBrowser(env.QQCLAW_RUNTIME_DIR);
+      const bundled = await bundledBrowser(env.QQCLAW_RUNTIME_DIR, { platform });
       if (bundled) return { bundled: true, available: true, connected: false, browsers: [],
         reason: "官方浏览运行库和原版 ChatGPT 扩展已内置，发送浏览任务后自动连接。",
         documentation: "https://learn.chatgpt.com/docs/chrome-extension" };

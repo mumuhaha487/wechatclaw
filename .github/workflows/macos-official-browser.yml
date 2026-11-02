@@ -110,6 +110,7 @@ jobs:
           import fs from 'node:fs/promises';import path from 'node:path';import http from 'node:http';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
           import {macPayload} from './scripts/build-macos.mjs';
           import {bundleMacNode} from './scripts/macos-node-runtime.mjs';
+          import {prepareOfficialBrowser,discoverOfficialBrowser} from './backend/official-browser.mjs';
           const run=promisify(execFile),root=process.cwd(),base=path.join(process.env.RUNNER_TEMP,'host-preview');
           const proof=path.join(process.env.RUNNER_TEMP,'official-browser-proof');await fs.mkdir(base,{recursive:true});
           const built=JSON.parse(await fs.readFile(path.join(process.env.RUNNER_TEMP,'browser-build/mac-browser-build.json'),'utf8'));
@@ -125,7 +126,7 @@ jobs:
           const main=String.raw`
           @main struct HostPreview {
             @MainActor static func main() {
-              launchBackendIfRequested(); launchVaultIfRequested(); signal(SIGPIPE,SIG_IGN); setbuf(stdout,nil);print("HOST_BEGIN")
+              launchBackendIfRequested(); signal(SIGPIPE,SIG_IGN); setbuf(stdout,nil);print("HOST_BEGIN")
               func signingStatus() -> OSStatus { var code:SecCode?;let status=SecCodeCopySelf(SecCSFlags(rawValue:0),&code);return status == errSecSuccess ? SecCodeCheckValidity(code!,SecCSFlags(rawValue:0),nil) : status }
               print("HOST_SIGNING_BEFORE_CEF " + String(signingStatus()))
               let host=Host(); var errorText="",checking=false
@@ -191,6 +192,18 @@ jobs:
                         let history=try await host.handle("browser.history",["action":"state"]) as! [String:Any]
                         guard (history["items"] as? [[String:Any]] ?? []).contains(where:{$0["url"] as? String == fixture}) else { throw failure("Product browser history did not preserve the actual page") }
                         print("HOST_BROWSER_UI_PASS: actual page, embedding, find, new/select/close, download content and encrypted history")
+                        let official=try await control("prepareOfficial")
+                        let bindingRoot=URL(fileURLWithPath:ProcessInfo.processInfo.environment["QQCLAW_HOST_BINDING"]!)
+                        try jsonData(["owner":owner,"native":official]).write(to:bindingRoot.appendingPathExtension("ready.json"),options:.atomic)
+                        var acknowledged=false
+                        for _ in 0..<700 {
+                          if let bytes=try? Data(contentsOf:bindingRoot.appendingPathExtension("ack.json")),let result=try? JSONSerialization.jsonObject(with:bytes) as? [String:Any] {
+                            guard result["passed"] as? Bool == true else { throw failure("The actual product's official browser binding failed") };acknowledged=true;break
+                          }
+                          try await Task.sleep(nanoseconds:100_000_000)
+                        }
+                        guard acknowledged else { throw failure("The actual product's official browser binding timed out") }
+                        print("HOST_OFFICIAL_BINDING_PASS")
                         let image: NSImage = try await withCheckedThrowingContinuation { continuation in
                           host.web.takeSnapshot(with:nil) { image,error in
                             if let image { continuation.resume(returning:image) }
@@ -205,7 +218,7 @@ jobs:
                   }
                 }
                 try runtime.start(options:host.cefOptions())
-                DispatchQueue.main.asyncAfter(deadline:.now()+100) { if !host.allowQuit { errorText="Product Host verification timed out";host.backend?.killGroup();runtime.close() } }
+                DispatchQueue.main.asyncAfter(deadline:.now()+150) { if !host.allowQuit { errorText="Product Host verification timed out";host.backend?.killGroup();runtime.close() } }
                 print("HOST_RUN");runtime.run();print("HOST_LOOP_ENDED")
                 if errorText.isEmpty {
                   guard host.allowQuit else { throw failure("The product quit path did not acknowledge saved data") }
@@ -233,12 +246,29 @@ jobs:
           await run('/usr/bin/codesign',['--verify','--deep','--strict',app]);
           const fixture=http.createServer((request,response)=>{if(request.url==='/download'){response.writeHead(200,{'content-type':'application/octet-stream','content-disposition':'attachment; filename="native-proof.txt"'});response.end('QQClaw native download fixture');}else{response.writeHead(200,{'content-type':'text/html; charset=utf-8'});response.end('<!doctype html><meta charset="utf-8"><title>QQClaw Host browser fixture</title><h1>QQClaw native browser fixture</h1><p>Second fixture match.</p>');}});
           await new Promise(resolve=>fixture.listen(0,'127.0.0.1',resolve));
-          const running=run(binary,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(base,'data'),CODEX_HOME:path.join(base,'codex'),QQCLAW_HOST_FIXTURE:'http://127.0.0.1:'+fixture.address().port+'/',QQCLAW_DOWNLOADS_DIR:path.join(base,'downloads'),QQCLAW_HOST_IMAGE:path.join(proof,'host-preview.png'),QQCLAW_HOST_RESULT:path.join(proof,'host-preview.json')},timeout:120000,maxBuffer:2*1024*1024});
+          const bindingRoot=path.join(base,'official-binding');
+          const running=run(binary,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(base,'data'),CODEX_HOME:path.join(base,'codex'),QQCLAW_HOST_FIXTURE:'http://127.0.0.1:'+fixture.address().port+'/',QQCLAW_HOST_BINDING:bindingRoot,QQCLAW_DOWNLOADS_DIR:path.join(base,'downloads'),QQCLAW_HOST_IMAGE:path.join(proof,'host-preview.png'),QQCLAW_HOST_RESULT:path.join(proof,'host-preview.json')},timeout:180000,maxBuffer:2*1024*1024});
+          let bindingActive=true;
+          const binding=(async()=>{
+            try {
+              let record;
+              while(bindingActive){record=await fs.readFile(bindingRoot+'.ready.json','utf8').then(JSON.parse,()=>null);if(record)break;await new Promise(resolve=>setTimeout(resolve,100));}
+              if(!record)throw Error('Product Host exited before official preparation');
+              const env={...process.env,QQCLAW_RUNTIME_DIR:resources,QQCLAW_MAC_BROWSER_READY:'1'};
+              const installation=await discoverOfficialBrowser({env});if(!installation.available)throw Error(installation.reason);
+              const configuration=await prepareOfficialBrowser({session:{id:record.owner},executable:installation.paths.codexCliPath,directory:path.join(base,'data'),discovery:async()=>installation,
+                native:async(method,params)=>{if(method!=='browser.control'||params.action!=='prepareOfficial'||params.owner!==record.owner)throw Error('Unexpected product native request');return record.native;}});
+              if(!configuration.available||configuration.platform!=='darwin')throw Error('The product official browser configuration is unavailable');
+              await fs.writeFile(path.join(proof,'host-official-binding.json'),JSON.stringify({passed:true,owner:record.owner,engine:configuration.engine,platform:configuration.platform,tabCreation:configuration.tabCreation,scope:'Production prepareOfficialBrowser with the actual Swift Host profile, packaged original runtime, copied original host and original user.openTabs identity API. No model or WeChat.'},null,2));
+              await fs.writeFile(bindingRoot+'.ack.json',JSON.stringify({passed:true}));
+            }catch(error){await fs.writeFile(path.join(proof,'host-official-binding.json'),JSON.stringify({passed:false,error:error.message},null,2));await fs.writeFile(bindingRoot+'.ack.json',JSON.stringify({passed:false}));throw error;}
+          })();
+          binding.catch(()=>{});
           let sampling;
           const timer=setTimeout(()=>{if(running.child?.pid)sampling=run('/usr/bin/sample',[String(running.child.pid),'1','1','-file',path.join(proof,'host-native-sample.log')],{timeout:10000,maxBuffer:1024*1024}).catch(error=>fs.writeFile(path.join(proof,'host-sample-error.log'),error.message));},12000);
-          try {const result=await running;await fs.writeFile(path.join(proof,'host-preview.log'),result.stdout+result.stderr);}
+          try {const result=await running;await fs.writeFile(path.join(proof,'host-preview.log'),result.stdout+result.stderr);await binding;}
           catch(error){await fs.writeFile(path.join(proof,'host-preview.log'),(error.stdout||'')+(error.stderr||'')+'\n'+error.message);throw error;}
-          finally {fixture.closeAllConnections();await new Promise(resolve=>fixture.close(resolve));clearTimeout(timer);if(sampling)await sampling;const log=path.join(base,'data/logs/backend.log');await fs.copyFile(log,path.join(proof,'host-backend.log')).catch(()=>{});}
+          finally {bindingActive=false;await binding.catch(()=>{});fixture.closeAllConnections();await new Promise(resolve=>fixture.close(resolve));clearTimeout(timer);if(sampling)await sampling;const log=path.join(base,'data/logs/backend.log');await fs.copyFile(log,path.join(proof,'host-backend.log')).catch(()=>{});}
 
           NODE
       - name: Preserve crash diagnostics from the owned native components

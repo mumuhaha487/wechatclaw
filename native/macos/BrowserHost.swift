@@ -113,6 +113,10 @@ import CryptoKit
         }
         try await ensure(owner, manifest: p["nativeHostManifest"] as? String)
         if action == "prepareOfficial" {
+            if try tabs(owner).isEmpty {
+                let created = try runtime.control(["action": "newTab", "owner": owner, "activate": false])
+                selected[owner] = created["tabId"] as? Int
+            }
             return ["engine": "cef", "browserFamily": "chrome", "tabCreation": false, "extensionId": "hehggadaopoacecdllhhajmbjkdcmajg",
               "browserProcessId": Int(getpid()), "applicationProcessId": Int(getpid()), "applicationPath": Bundle.main.executableURL!.path,
               "nativeProfileDirectory": directory.appendingPathComponent("browser-profiles/\(profiles[owner]!)").path, "identityUrl": "about:blank#qqclaw-profile-\(profiles[owner]!)"]

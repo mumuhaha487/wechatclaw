@@ -15,16 +15,6 @@ func launchBackendIfRequested() {
     exit(71)
 }
 
-func launchVaultIfRequested() {
-    guard CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--vault-key" else { return }
-    do {
-        let vault = Vault(directory: URL(fileURLWithPath: CommandLine.arguments[2]))
-        let key = try vault.localKey(create: CommandLine.arguments[3] == "create")
-        try FileHandle.standardOutput.write(contentsOf: key.withUnsafeBytes { Data($0) })
-        exit(0)
-    } catch { fputs(error.localizedDescription + "\n", stderr); exit(1) }
-}
-
 func failure(_ text: String) -> NSError { NSError(domain: "QQClaw", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }
 func jsonData(_ value: Any) throws -> Data { try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .sortedKeys]) }
 func jsonText(_ value: Any) throws -> String { String(decoding: try jsonData(value), as: UTF8.self) }
@@ -157,42 +147,9 @@ enum Runtime {
 }
 
 final class Vault: Sendable {
-    private final class Cache: @unchecked Sendable {
-        let lock = NSLock()
-        var values: [String: SymmetricKey] = [:]
-        var helper = false
-    }
-    private static let cache = Cache()
-    static func isolateFromChromium() { cache.lock.lock(); cache.helper = true; cache.lock.unlock() }
     let account: String
-    private let directory: URL
-    init(directory: URL) { self.directory = directory; account = SHA256.hash(data: Data(directory.path.utf8)).map { String(format: "%02x", $0) }.joined() }
+    init(directory: URL) { account = SHA256.hash(data: Data(directory.path.utf8)).map { String(format: "%02x", $0) }.joined() }
     func key(create: Bool) throws -> SymmetricKey {
-        Self.cache.lock.lock(); defer { Self.cache.lock.unlock() }
-        if let key = Self.cache.values[account] { return key }
-        let key: SymmetricKey
-        if Self.cache.helper {
-            // Security's legacy Keychain client can wait inside a Chromium
-            // process. Retrieve the same OS-held key in this executable before
-            // it initializes Chromium; secret bytes stay on a private pipe.
-            let child = Process(), output = Pipe(), errors = Pipe()
-            child.executableURL = Bundle.main.executableURL
-            child.arguments = ["--vault-key", directory.path, create ? "create" : "read"]
-            child.standardInput = FileHandle.nullDevice; child.standardOutput = output; child.standardError = errors
-            try child.run()
-            let timeout = DispatchWorkItem { if child.isRunning { child.terminate() } }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: timeout)
-            let bytes = output.fileHandleForReading.readDataToEndOfFile(), error = errors.fileHandleForReading.readDataToEndOfFile()
-            child.waitUntilExit(); timeout.cancel()
-            guard child.terminationStatus == 0, bytes.count == 32 else {
-                let text = String(decoding: error, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                throw failure(text.isEmpty ? "无法读取 macOS 钥匙串密钥，请解锁系统钥匙串后重试。原数据已保留。" : text)
-            }
-            key = SymmetricKey(data: bytes)
-        } else { key = try localKey(create: create) }
-        Self.cache.values[account] = key; return key
-    }
-    func localKey(create: Bool) throws -> SymmetricKey {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.qqclaw.desktop.vault", kSecAttrAccount as String: account]
         var lookup = query; lookup[kSecReturnData as String] = true; lookup[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
@@ -203,7 +160,7 @@ final class Vault: Sendable {
         var insert = query; insert[kSecValueData as String] = bytes
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let added = SecItemAdd(insert as CFDictionary, nil)
-        if added == errSecDuplicateItem { return try localKey(create: false) }
+        if added == errSecDuplicateItem { return try self.key(create: false) }
         guard added == errSecSuccess else { throw failure("无法保存 macOS 钥匙串密钥（\(added)）。") }
         return key
     }
@@ -662,7 +619,6 @@ final class Backend: @unchecked Sendable {
 @main struct QQClawMain {
     @MainActor static func main() {
         launchBackendIfRequested()
-        launchVaultIfRequested()
         signal(SIGPIPE, SIG_IGN)
         let host = Host()
         // Browser packages include their native framework. The existing

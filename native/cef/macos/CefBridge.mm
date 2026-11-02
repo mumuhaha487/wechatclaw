@@ -564,7 +564,9 @@ const char* QQClawCefControl(const char* json) {
     if (context == profiles.end() || !readyProfiles.count(owner.UTF8String)) result = @{@"error": @"The browser profile is not prepared"};
     else {
       CefBrowserSettings settings;
-      auto view = CefBrowserView::CreateBrowserView(new BrowserClient, "about:blank", settings, nullptr, context->second, new BrowserViewDelegate);
+      NSString* key = [@(context->second->GetCachePath().ToString().c_str()) lastPathComponent];
+      NSString* initial = [@"about:blank#qqclaw-working-" stringByAppendingString:key];
+      auto view = CefBrowserView::CreateBrowserView(new BrowserClient, initial.UTF8String, settings, nullptr, context->second, new BrowserViewDelegate);
       openBrowserWindow(view, request[@"activate"] == nil || [request[@"activate"] boolValue]);
       auto page = view ? view->GetBrowser() : nullptr;
       result = @{@"created": @YES, @"tabId": page ? @(page->GetIdentifier()) : @0};
