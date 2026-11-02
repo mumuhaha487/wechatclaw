@@ -2834,6 +2834,11 @@ document.addEventListener("input", (event) => {
     $("settings-search")?.setSelectionRange(start, start);
   }
 });
+// Keep application shortcuts out of native IME confirmation and cancellation.
+document.addEventListener("keydown", event => {
+  if (event.isComposing || event.keyCode === 229 ||
+      ui.composing && event.target.id === "composer-input") event.stopImmediatePropagation();
+}, true);
 document.addEventListener("compositionstart", event => {
   if (event.target.id === "composer-input") ui.composing = true;
 });
@@ -2987,7 +2992,9 @@ document.addEventListener("keydown", (event) => {
     event.target.id === "composer-input" &&
     event.key === "Enter" &&
     !event.shiftKey &&
-    !event.isComposing
+    !event.isComposing &&
+    !ui.composing &&
+    event.keyCode !== 229
   ) {
     event.preventDefault();
     send().catch((e) => toast(e.message));

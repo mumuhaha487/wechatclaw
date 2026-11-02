@@ -236,7 +236,7 @@ document.addEventListener("pointerdown", (event) => {
 document.addEventListener(
   "keydown",
   (event) => {
-    if (!active) return;
+    if (!active || event.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopImmediatePropagation();
