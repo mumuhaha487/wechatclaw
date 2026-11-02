@@ -1,6 +1,37 @@
 # QQClaw 本轮需求、实现与验收记录
 
-## 当前状态：0.3.40（2026-11-02）
+## 当前状态：0.3.41（2026-11-02）
+
+两端同名成品已更新。本轮修复浏览后无法创建报告的实际问题，没有修改界面、官方扩展、官方运行库或其文件沙箱。完整目标继续active，原Windows进程95560未停止，原微信账户没有启动或收到本轮测试消息。
+
+根因与修改：生产App/Bridge/WeChatApi配合真实模型和包内官方浏览组件，实际在Google搜索并核对了三条新闻；模型保存报告时却在浏览器Node REPL使用fs.writeFile，得到EPERM，附件未生成。backend/official-browser.mjs原指引“只使用mcp__node_repl的js工具”范围过宽。本轮把该限制明确限定于网页访问与操作；工作区文件、代码和报告使用Codex原生文件/命令工具，继续遵守当前会话目录与读写权限，先创建和核验文件再返回附件动作。
+
+复测完整保留三阶段：第一轮真实Google读取成功但附件失败；修改后重新搜索时Google要求真人验证，该轮失败，没有绕过或改用其他网页驱动；随后恢复同一个真实Codex thread 01a19a38-2885-7261-88d2-116ee37a5d60，沿用此前已读取的来源，在绑定工作区用原生命令创建AI热点.md并成功完成模拟微信原生文件投递。没有将它称为修改后一次全新搜索到附件的完整通过。
+
+报告3079字节，SHA256 0f655c4457404adda8bcc3015d35176af4a6a983b6a06be4082cec765bdf1c0d。生产上传协议的AES密文在本机CDN接收端解密后与工作区报告逐字节一致，明文MD5/大小、文件卡片中文名、len和AES Key编码均核对通过。实际返回1个原生文件卡片，输入状态有开始与结束；进度1条，各context内推送client_id不超过10条。同会话桌面消息在微信任务期间入队并最终完成，桌面专用标记未出现在微信投递内容中。
+
+范围：使用实际已配置模型，没有夹具模型响应；腾讯请求及CDN由隔离的127.0.0.1 HTTP服务承接，检查的是生产请求序列化、轮询收件、授权回复、执行、进度、加密上传和文件卡片，没有声称腾讯线上接收或手机显示通过。原账户配置只读选取模型，原账户未启动。
+
+Windows0.3.41空数据/系统PATH下使用包内Node v24.22.1启动真实后台通过，检查进程已退出。Mac云运行[41382706673](https://github.com/mumuhaha487/wechatclaw/actions/runs/41382706673)成功，原版官方输入、双配置归属、实际Swift主程序绑定、弹出页/查找/下载内容、加密保存/退出与Universal编译、签名、DMG校验通过。Mac官方浏览组件仍仅arm64，未Apple公证。
+
+两端构建源码：657f255bc5db9c3f455c7bfc5f295cf72ad08b68，97个代码输入与Git副本一致（只规范化LF/CRLF）。Windows 307445248字节，SHA256 2b3c9f1f820027fdd6fc9152e69230c0cf744e424118f2922ef7c4d777ed6505；Mac 537127251字节，SHA256 90340f6e368c448390ece13da7164727dd86763346eb6c0f4393d2b5c5833783。
+
+证据根：C:\Users\admin\AppData\Local\Temp\qqclaw-wechat-browser-18deeadf。首轮result.json/events.json/wechat-wire.json；retry为Google验证阻断；resume保存原会话恢复、真实命令、加密投递和桌面隔离的通过结果；integration-proof.json组合核对了三个阶段。package保存两端构建、源文件核对和交付回执。初次宿主Windows --import路径错误保留在bootstrap-path-error.txt，不计为产品故障。
+
+未完成项保留：Google重新搜索被真人验证阻断的这一轮、腾讯线上微信整条链路、Mac官方tabs.new新普通窗口内嵌、Intel官方自动浏览、官方Blob下载与全部参考主页/物理GUI/输入法/DPI核验。没有使用替代自动浏览驱动，也不把局部检查当成整体验收。
+
+以下为历史记录，不覆盖本节。
+
+
+## 历史发现：浏览后报告未生成（后续结果见当前状态）
+
+0.3.40 后续完整链路检查发现真实失败：生产 App/Bridge/WeChatApi、实际 Codex 模型和包内官方浏览组件已经完成 Google 搜索、三条来源核对、进度回传及同会话桌面消息排队；但模型在浏览器 Node REPL 中调用 fs.writeFile 保存 AI热点.md，官方沙箱返回 EPERM，因此没有生成或发送附件。本次检查没有通过，不能把前面的组件检查扩大成附件任务成功。
+
+原因是 backend/official-browser.mjs 把“只使用 mcp__node_repl 的 js 工具”写成了整个任务的限制。源码已将限制明确限定于网页访问/操作，工作区文件和报告改用 Codex 原生文件或命令工具并遵守会话权限；官方插件、运行库及其沙箱未修改。后续复测结果见当前状态。
+
+证据：C:/Users/admin/AppData/Local/Temp/qqclaw-wechat-browser-18deeadf 的 result.json、events.json、wechat-wire.json 及 transcripts。腾讯接口/CDN由隔离的本机HTTP服务器承接，使用的模型与官方浏览器是真实组件；未连接原微信账户。初次检查宿主的 --import Windows路径错误单独保留在 bootstrap-path-error.txt，修正后才运行上述真实任务，不将它计为产品故障。
+
+## 历史状态：0.3.40（2026-11-02）
 
 本轮改动及针对性检查已完成，两端同名成品已更新。完整目标继续active；不能把本轮验收扩大成线上微信及所有平台全部通过。原Windows进程95560未停止，原微信账户未启动或发送测试消息。
 
