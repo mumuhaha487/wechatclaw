@@ -623,7 +623,13 @@ final class Backend: @unchecked Sendable {
         let host = Host()
         // Browser packages include their native framework. The existing
         // universal package has no framework and keeps its original startup.
-        let hasCef = Bundle.main.privateFrameworksURL.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("libQQClawCefBridge.dylib").path) } ?? false
+        #if arch(arm64)
+        let browserArch = "arm64"
+        #else
+        let browserArch = "x64"
+        #endif
+        let hasRuntime = Bundle.main.resourceURL.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("official-browser/\(browserArch)/runtime.json").path) } ?? false
+        let hasCef = hasRuntime && (Bundle.main.privateFrameworksURL.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("libQQClawCefBridge.dylib").path) } ?? false)
         if hasCef || ProcessInfo.processInfo.environment["QQCLAW_MAC_CEF_PREVIEW"] == "1" {
             do {
                 try host.prepareEnvironment()

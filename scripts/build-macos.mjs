@@ -61,7 +61,7 @@ export async function buildMac(root = project, { browserBuild, runtimeCache, out
     await run("/usr/bin/plutil", ["-lint", path.join(contents, "Info.plist")]);
     const sdk = await run("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"]);
     const compiled = [];
-    const targets = browser ? macTargets.filter(target => target.startsWith(process.arch === "arm64" ? "arm64-" : "x86_64-")) : macTargets;
+    const targets = macTargets;
     for (const target of targets) {
       const binary = path.join(temporary, target.split("-")[0]); compiled.push(binary);
       await run("/usr/bin/xcrun", ["swiftc", "-swift-version", "5", "-parse-as-library", "-O", "-whole-module-optimization", "-sdk", sdk, "-target", target, "-framework", "AppKit", "-framework", "WebKit", "-framework", "Security", "-framework", "CryptoKit", path.join(root, "native/macos/QQClaw.swift"), path.join(root, "native/macos/BrowserHost.swift"), path.join(root, "native/macos/CefRuntime.swift"), "-o", binary]);
@@ -88,7 +88,8 @@ export async function buildMac(root = project, { browserBuild, runtimeCache, out
         ? "3. 首次打开时，如系统询问是否打开，请确认。"
         : "3. 初次打开若被系统拦截，请先尝试打开一次，再到“系统设置 → 隐私与安全性”中选择“仍要打开”。当前版本尚未经过 Apple 公证。",
       "4. 已内置 Node.js 24 和 npm，无需另行安装 Node.js。首次进入软件，按照“前往配置”提示安装或选择 Codex 并登录。",
-      "", browser ? `支持 macOS 13.5 及更新版本；此包适用于 ${process.arch === "arm64" ? "Apple Silicon" : "Intel"}。已内置原版官方浏览扩展及其运行库。` : "支持 macOS 13.5 及更新版本，兼容 Apple Silicon 和 Intel。",
+      "", "支持 macOS 13.5 及更新版本，兼容 Apple Silicon 和 Intel。",
+      ...(browser ? [`已内置原版官方浏览扩展及运行库；当前官方自动浏览适用于 ${process.arch === "arm64" ? "Apple Silicon" : "Intel"}。其他架构保留聊天和手动网页功能，并明确提示自动浏览尚未接通。`] : []),
       "安装完成后可以推出此磁盘映像。删除应用不会主动删除对话数据。", ""
     ].join("\n"));
     const archive = path.join(temporary, "QQClaw.dmg");
@@ -107,7 +108,7 @@ export async function buildMac(root = project, { browserBuild, runtimeCache, out
     await run("/usr/bin/hdiutil", ["verify", archive]);
     const output = requestedOutput ? path.resolve(requestedOutput) : path.join(root, "release/macos/QQClaw.dmg");
     await fs.mkdir(path.dirname(output), { recursive: true }); await fs.copyFile(archive, output);
-    console.log(`已构建 ${output} · macOS 13.5+ · ${browser ? process.arch : "Apple Silicon / Intel Universal"} · ${identity === "-" ? "本地签名，尚未公证" : process.env.MACOS_NOTARY_PROFILE ? "Developer ID 已签名并公证" : "Developer ID 已签名，未公证"} · 已内置 Node / npm${browser ? " / 官方浏览运行库" : ""}，Codex 按需安装`);
+    console.log(`已构建 ${output} · macOS 13.5+ · Apple Silicon / Intel Universal · ${identity === "-" ? "本地签名，尚未公证" : process.env.MACOS_NOTARY_PROFILE ? "Developer ID 已签名并公证" : "Developer ID 已签名，未公证"} · 已内置 Node / npm${browser ? ` / 官方浏览运行库（${process.arch}）` : ""}，Codex 按需安装`);
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
 }
 
