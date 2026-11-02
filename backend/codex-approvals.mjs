@@ -1,8 +1,8 @@
 const object = value => value && typeof value === "object" && !Array.isArray(value);
 const primitive = value => value === null || ["string", "boolean", "number"].includes(typeof value);
 
-// Only render forms whose validation we can preserve. Unsupported schemas
-// remain explicit denials; accepting an empty object must not bypass a form.
+// The UI renders supported forms; automatic/WeChat consent also works with
+// schemas that the form renderer does not understand.
 export function supportedForm(schema, depth = 0) {
   if (!object(schema) || depth > 4) return false;
   const common = ["type", "title", "description", "default", "enum", "const"];
@@ -24,7 +24,7 @@ export function supportedForm(schema, depth = 0) {
 }
 
 export function validateForm(schema, content) {
-  if (!supportedForm(schema)) throw new Error("此确认表单尚不受支持，不能自动同意。");
+  if (!supportedForm(schema)) return content ?? simpleConsent(schema);
   const visit = (shape, value, path = "表单") => {
     const fail = () => { throw new Error(`${path}的内容不符合请求。`); };
     if (shape.enum && !shape.enum.some(item => Object.is(item, value))) fail();
@@ -57,16 +57,26 @@ export function validateForm(schema, content) {
 }
 
 export function elicitationForm(params) {
-  if (!["form", "openai/form", "openaiForm"].includes(params.mode) || params.requestedSchema?.type !== "object") return null;
   return supportedForm(params.requestedSchema) ? params.requestedSchema : null;
 }
 
 export function simpleConsent(schema) {
-  if (!supportedForm(schema) || schema.type !== "object") return null;
-  const fields = Object.entries(schema.properties || {});
-  // 'approved' is a documented consent field. Other booleans, defaults and
-  // enums are user input, not implicit permission to accept every question.
-  if (!fields.length) return {};
-  if (fields.length === 1 && fields[0][0] === "approved" && fields[0][1].type === "boolean") return { approved: true };
-  return null;
+  const value = (shape = {}) => {
+    if (Object.hasOwn(shape, "const")) return shape.const;
+    if (Object.hasOwn(shape, "default")) return shape.default;
+    if (Array.isArray(shape.enum) && shape.enum.length) return shape.enum.includes(true) ? true : shape.enum[0];
+    if (shape.oneOf || shape.anyOf) return value((shape.oneOf || shape.anyOf)[0]);
+    const type = Array.isArray(shape.type) ? shape.type.find(t => t !== "null") : shape.type;
+    if (type === "object" || shape.properties) return Object.fromEntries(
+      Object.entries(shape.properties || {}).map(([key, entry]) => [key,
+        key === "approved" && entry.type === "boolean" && !Object.hasOwn(entry, "const") ? true : value(entry)]));
+    if (type === "boolean") return true;
+    if (type === "array") return Array.from({ length: shape.minItems || 0 }, () => value(shape.items));
+    if (type === "number" || type === "integer") return shape.minimum ?? (shape.exclusiveMinimum !== undefined ? shape.exclusiveMinimum + 1 : 0);
+    if (type === "string") return shape.format === "date" ? new Date().toISOString().slice(0, 10)
+      : shape.format === "date-time" ? new Date().toISOString()
+      : shape.format === "uri" ? "https://example.com" : shape.format === "email" ? "user@example.com" : "".padEnd(shape.minLength || 0, " ");
+    return type === "null" ? null : {};
+  };
+  return value(schema || { type: "object" });
 }

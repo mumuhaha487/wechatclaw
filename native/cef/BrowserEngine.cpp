@@ -478,7 +478,7 @@ void CEF_CALLBACK created(cef_life_span_handler_t*, cef_browser_t* browser) {
   // C API callback arguments transfer one reference. Store that reference until
   // OnBeforeClose; callbacks may use different wrappers for the same browser.
   pages.emplace(key,Page{browser}); active=key;
-  if(closing || pages.size()>12) {auto* host=browser->get_host(browser);host->close_browser(host,1);release(host);}
+  if(closing) {auto* host=browser->get_host(browser);host->close_browser(host,1);release(host);}
   layout(); if(!creatingForUi) {queueSelection();publish();}
   // OnContextInitialized precedes asynchronous browser creation. Reporting
   // ready there allowed the next UI request to see an empty activeTab and
@@ -593,7 +593,6 @@ void createPage(const std::string& value) {
   if(!API(cef_browser_host_create_browser)(&info,owned(client),&url,&settings,nullptr,nullptr)) throw std::runtime_error("Could not create a browser tab");
 }
 int createUiPage(const std::string& value, bool select) {
-  if(pages.size()>=12)throw std::runtime_error("Close an unused tab first");
   const int previous=active;
   cef_window_info_t info{};info.size=sizeof(info);info.runtime_style=CEF_RUNTIME_STYLE_CHROME;
   cef_browser_settings_t settings{};settings.size=sizeof(settings);auto buffer=wide(value);auto url=text(buffer);

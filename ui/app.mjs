@@ -318,12 +318,12 @@ async function addAttachments(files, local = false) {
   const errors = [];
   try {
     for (const file of files) {
-      if (target.attachments.length >= 8) { errors.push("每条消息最多添加 8 个附件。"); break; }
+      if (target.attachments.length >= 32) { errors.push("每条消息最多添加 32 个附件。"); break; }
       try {
         let params;
         if (local) params = { path: file };
         else {
-          if (!file.size || file.size > 20 * 1024 * 1024) throw new Error("附件为空或超过 20 MiB。");
+          if (!file.size || file.size > 100 * 1024 * 1024) throw new Error("附件为空或超过 100 MiB。");
           const data = await new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(String(reader.result).split(",")[1]);
@@ -333,8 +333,8 @@ async function addAttachments(files, local = false) {
           params = { data, name: file.name || "粘贴的图片.png" };
         }
         const attachment = await rpc("attachment.import", params);
-        if (target.attachments.reduce((n, a) => n + a.size, 0) + attachment.size > 40 * 1024 * 1024)
-          throw new Error("每条消息的附件总大小不能超过 40 MiB。");
+        if (target.attachments.reduce((n, a) => n + a.size, 0) + attachment.size > 500 * 1024 * 1024)
+          throw new Error("每条消息的附件总大小不能超过 500 MiB。");
         target.attachments.push(attachment);
       } catch (error) { errors.push(error.message); }
     }
@@ -451,7 +451,7 @@ const permissionOptions = (selected) =>
     ["read-only", "只读", "只读取和分析文件，不写入工作区。"],
     ["ask", "需要批准", "读取工作区，需要额外权限时请求批准。"],
     ["accept-edits", "允许编辑", "允许工作区编辑，需要额外权限时询问。"],
-    ["auto", "自动编辑", "允许工作区读写和网络，不逐次询问。"],
+    ["auto", "自动编辑", "允许访问本机文件和网络，自动执行，不逐次询问。"],
     ...(selected === "workspace-write"
       ? [["workspace-write", "允许编辑（工作区）"]]
       : []),
@@ -2083,7 +2083,7 @@ async function action(name, element) {
       renderOverlay();
       try { preview.src = await previews.get(name === "preview-upload" ? `upload:${id}` : `${ui.active}:${message}:${attachment}:${item.path}`, params); }
       catch { preview.error = "文件已被移动、删除，或无法读取。"; }
-      if (!preview.src && !preview.error) preview.error = "图片超过 8 MiB 预览上限或格式不支持；仍可作为附件发送。";
+      if (!preview.src && !preview.error) preview.error = "图片超过 32 MiB 预览上限或格式不支持；仍可作为附件发送。";
       if (ui.attachmentPreview === preview && ui.overlay === "attachment-preview") renderOverlay();
       return;
     }

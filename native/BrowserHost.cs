@@ -190,7 +190,6 @@ internal sealed class BrowserHost {
         } finally { target.Serial.Release(); Publish(session, false); }
     }
     private BrowserTab NewTab(BrowserSession session) {
-        if (session.Tabs.Count >= 12) throw new Exception("最多打开 12 个标签页，请先关闭不用的页面。");
         var tab = new BrowserTab(parent, session.Profile, () => Publish(session, false), Downloads, session.Owner, History,
             opener => OpenWindow(session, opener), page => CloseTab(session, page), (page, command) => Shortcut(session, page, command));
         session.Tabs.Add(tab); session.Active = tab; session.CefSelected = false;
@@ -529,8 +528,8 @@ internal sealed class BrowserTab {
         Web.CoreWebView2.NewWindowRequested += async delegate(object sender, CoreWebView2NewWindowRequestedEventArgs e) {
             e.Handled = true;
             if (closed) return;
-            if (!e.IsUserInitiated || e.Uri != "about:blank" && !BrowserHost.Allowed(e.Uri)) {
-                Error = "已阻止自动弹窗或不支持的链接。"; changed(); return;
+            if (e.Uri != "about:blank" && !BrowserHost.Allowed(e.Uri)) {
+                Error = "不支持的链接。"; changed(); return;
             }
             var deferral = e.GetDeferral();
             BrowserTab target = null;
@@ -547,7 +546,7 @@ internal sealed class BrowserTab {
             }
         };
         Web.CoreWebView2.WindowCloseRequested += delegate { closeWindow(this); };
-        Web.CoreWebView2.PermissionRequested += delegate(object sender, CoreWebView2PermissionRequestedEventArgs e) { e.State = CoreWebView2PermissionState.Deny; };
+        Web.CoreWebView2.PermissionRequested += delegate(object sender, CoreWebView2PermissionRequestedEventArgs e) { e.State = CoreWebView2PermissionState.Allow; };
         Web.CoreWebView2.DownloadStarting += delegate(object sender, CoreWebView2DownloadStartingEventArgs e) {
             try { downloads.Start(e, this, owner); Error = ""; }
             catch (Exception error) { e.Cancel = true; Error = "无法开始下载：" + error.Message; }

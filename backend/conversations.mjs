@@ -23,7 +23,7 @@ export class ConversationArchive {
         createdAt: s.createdAt, updatedAt: s.updatedAt,
         threadId: s.threadId || null, codexThreadPath: s.codexThreadPath || null,
         codexHome: codexHome(), providerId: s.providerId,
-        model: s.model, effort: s.effort,
+        model: s.model, effort: s.effort, permission: s.permission,
         ...(s.goal ? { goal: goalSnapshot(s.goal, s.threadId) } : {}),
         ...(s.goal && Number.isInteger(s.goalMessageIndex) ? { goalMessageIndex: s.goalMessageIndex } : {}),
         messages: s.messages.map((m) => ({

@@ -163,7 +163,7 @@ internal sealed class DesktopWindow : Form {
     private Process backend;
     private BackendPipeWriter backendInput;
     private Task backendStarting;
-    private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = 32 * 1024 * 1024, RecursionLimit = 150 };
+    private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = 256 * 1024 * 1024, RecursionLimit = 150 };
     private readonly Label fallback;
     private readonly Dictionary<string, TaskCompletionSource<Dictionary<string, object>>> internalRequests = new Dictionary<string, TaskCompletionSource<Dictionary<string, object>>>();
     private readonly Dictionary<string, Process> internalOwners = new Dictionary<string, Process>();
@@ -238,7 +238,7 @@ internal sealed class DesktopWindow : Form {
         if (IsDisposed || !IsHandleCreated || exiting) return;
         if (InvokeRequired) { try { BeginInvoke(new Action<object>(Post), value); } catch { } return; }
         if (view == null || view.CoreWebView2 == null) return;
-        view.CoreWebView2.PostWebMessageAsJson(new JavaScriptSerializer { MaxJsonLength = 32 * 1024 * 1024, RecursionLimit = 150 }.Serialize(value));
+        view.CoreWebView2.PostWebMessageAsJson(new JavaScriptSerializer { MaxJsonLength = 256 * 1024 * 1024, RecursionLimit = 150 }.Serialize(value));
     }
     private async void OnWebMessage(object sender, CoreWebView2WebMessageReceivedEventArgs args) {
         if (!args.Source.StartsWith("https://qqclaw.local/", StringComparison.Ordinal)) return;
@@ -283,7 +283,7 @@ internal sealed class DesktopWindow : Form {
             } else if (method == "clipboard.read") {
                 if (Clipboard.ContainsFileDropList()) {
                     var files = Clipboard.GetFileDropList();
-                    if (files.Count > 8) throw new Exception("每条消息最多添加 8 个附件。");
+                    if (files.Count > 32) throw new Exception("每条消息最多添加 32 个附件。");
                     var paths = new List<string>(); foreach (string file in files) paths.Add(file);
                     result = new { files = paths.ToArray() };
                 } else if (Clipboard.ContainsText()) {
@@ -293,7 +293,7 @@ internal sealed class DesktopWindow : Form {
                 } else if (Clipboard.ContainsImage()) {
                     using (var image = Clipboard.GetImage()) using (var memory = new MemoryStream()) {
                         image.Save(memory, System.Drawing.Imaging.ImageFormat.Png);
-                        if (memory.Length > 20 * 1024 * 1024) throw new Exception("剪贴板图片超过 20 MiB。");
+                        if (memory.Length > 100 * 1024 * 1024) throw new Exception("剪贴板图片超过 100 MiB。");
                         result = new { image = new { data = Convert.ToBase64String(memory.ToArray()) } };
                     }
                 } else result = new { text = "" };
@@ -432,7 +432,7 @@ internal sealed class DesktopWindow : Form {
     private void WriteBackend(object value) {
         var writer = backendInput;
         if (backend == null || backend.HasExited || writer == null) throw new Exception("后台尚未启动。");
-        writer.Enqueue(new JavaScriptSerializer { MaxJsonLength = 32 * 1024 * 1024, RecursionLimit = 150 }.Serialize(value));
+        writer.Enqueue(new JavaScriptSerializer { MaxJsonLength = 256 * 1024 * 1024, RecursionLimit = 150 }.Serialize(value));
     }
     private Task<Dictionary<string, object>> BackendRequest(string method, object parameters) {
         var id = "host-" + Interlocked.Increment(ref internalId); var completion = new TaskCompletionSource<Dictionary<string, object>>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -473,7 +473,7 @@ internal sealed class DesktopWindow : Form {
     private void OnBackendLine(Process owner, string line) {
         Dictionary<string, object> message;
         try {
-            var serializer = new JavaScriptSerializer { MaxJsonLength = 32 * 1024 * 1024, RecursionLimit = 150 };
+            var serializer = new JavaScriptSerializer { MaxJsonLength = 256 * 1024 * 1024, RecursionLimit = 150 };
             message = serializer.DeserializeObject(line) as Dictionary<string, object>;
             if (message == null) { WarnBackendLine(); return; }
         } catch { WarnBackendLine(); return; }
@@ -585,7 +585,7 @@ internal sealed class BackendPipeWriter {
     private readonly object gate = new object();
     private long queuedCharacters;
     private bool completed;
-    private const long MaximumQueuedCharacters = 32 * 1024 * 1024;
+    private const long MaximumQueuedCharacters = 256 * 1024 * 1024;
 
     internal BackendPipeWriter(Stream stream, Action failed) {
         Task.Factory.StartNew(delegate {

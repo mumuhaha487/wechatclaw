@@ -17,9 +17,7 @@ import { safeError, workspacePath } from "./store.mjs";
 import { planWeChatResult, cleanWeChatResult } from "./wechat-results.mjs";
 import { sameWorkspace, workspaceKey } from "../shared/workspace.mjs";
 
-export const PROGRESS_LIMIT = 6;
 export const REPLY_LIMIT = 10;
-export const PROGRESS_LIMIT_NOTICE = "后续推送将进行省略。任务完成之后，会将结果汇报。请耐心等待。";
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export const messageKey = (message) =>
@@ -41,6 +39,8 @@ export class WeChatBridge {
     this.typing = new Map();
     this.pollErrors = new Map();
     this.confirmations = new Map();
+    this.processing = new Set();
+    this.retryAfter = new Map();
     this.login = null;
     this.buffers = new PromptBuffer({ maxItems: 50, ttlMs: 10 * 60 * 1000 });
   }
@@ -50,6 +50,7 @@ export class WeChatBridge {
       account.senderSessions ||= {};
       account.allowedSenders ||= [];
       account.allowedWorkspaces ||= [account.workspace];
+      account.defaultWorkspace ||= account.workspace;
       for (const [senderId, sessionId] of Object.entries({ ...account.senderSessions, [account.user]: account.sessionId })) {
         const active = this.store.state.sessions.find((s) => s.id === sessionId);
         if (active && (!active.accountId || active.accountId === account.id))
@@ -336,8 +337,6 @@ export class WeChatBridge {
   }
   async update(id, changes) {
     const account = this.getAccount(id);
-    if (this.accountBusy(account) || account.pending.length)
-      throw new Error("账户还有运行中或待回复的消息，完成后再修改。");
     const previous = [
       workspaceKey(account.workspace),
       account.providerId,
@@ -348,7 +347,7 @@ export class WeChatBridge {
     const workspace = await workspacePath(
       changes.workspace || account.workspace,
     );
-    Object.assign(account, changes, { workspace });
+    Object.assign(account, changes, { workspace, defaultWorkspace: workspace });
     const next = [
       workspaceKey(account.workspace),
       account.providerId,
@@ -438,15 +437,16 @@ export class WeChatBridge {
     const session = this.store.state.sessions.find((s) => s.id === item.sessionId);
     text = String(text || "").trim();
     if (!this.running || session?.streamReplies === false || !text) return;
-    if (item.progressSuppressed) return this.flushProgress(account, item);
     const parsed = parseActionBlocksSafe(text);
     if (parsed.discarded) parsed.visibleText += `${parsed.visibleText ? "\n" : ""}（附件指令无法解析，相关文件未发送。）`;
     if (!parsed.visibleText) return;
     item.progressReports ||= [];
     const key = createHash("sha256").update(parsed.visibleText).digest("hex");
-    const queued = item.progressReports.reduce((count, report) => count + report.chunks.length, 0);
-    if (queued < PROGRESS_LIMIT && !item.progressReports.some((report) => report.key === key))
-      item.progressReports.push({ key, chunks: splitText(parsed.visibleText, 1700).slice(0, PROGRESS_LIMIT - queued), sent: 0 });
+    if (item.progressLastKey === key) return this.flushProgress(account, item);
+    item.progressLastKey = key;
+    // Keep the latest status while the platform's reply quota is exhausted.
+    // A new incoming WeChat message supplies fresh quota, without a task-wide cap.
+    item.progressReports = [{ key, chunks: splitText(parsed.visibleText, 1700), sent: 0 }];
     await this.store.save();
     await this.flushProgress(account, item);
   }
@@ -459,10 +459,9 @@ export class WeChatBridge {
       code, consent: request.consent ?? null, kind: request.kind, respond,
       summary: [request.params.reason, request.params.command].filter(Boolean).join("\n").slice(0, 1000) };
     this.confirmations.set(`${sessionId}:${request.requestId}`, record);
-    const simple = request.kind !== "form" || record.consent !== null;
     const notice = ["【需要确认】", String(request.params.reason || "Codex 请求确认操作。").slice(0, 900),
       request.params.command ? String(request.params.command).slice(0, 500) : "",
-      simple ? `允许本次：/allow ${code}\n拒绝：/deny ${code}` : `此确认需要填写表单，请在 QQClaw 中填写。\n拒绝：/deny ${code}`].filter(Boolean).join("\n");
+      `允许本次：/allow ${code}\n拒绝：/deny ${code}`].filter(Boolean).join("\n");
     // A consent request is a real reply, too. Preserve two result slots and
     // bundle the final answer/files when needed. /status can show the pending
     // consent using a fresh user-message context if the old context is full.
@@ -479,52 +478,47 @@ export class WeChatBridge {
   async respondApproval(account, senderId, code, allow) {
     const record = this.pendingApprovals(account.id, senderId).find(value => value.code === String(code).toLowerCase());
     if (!record) return "确认编号无效或已结束，请发送 /status 查看当前状态。";
-    if (allow && record.kind === "form" && record.consent === null) return "这项确认需要填写内容，请在 QQClaw 中完成；微信可以使用 /deny 拒绝。";
     try { await record.respond(allow, allow ? record.consent ?? undefined : undefined); }
     catch (error) { this.confirmations.delete(`${record.sessionId}:${record.requestId}`); throw error; }
     this.confirmations.delete(`${record.sessionId}:${record.requestId}`);
     return allow ? "已允许本次操作，任务将继续。" : "已拒绝本次操作。";
   }
   async flushProgress(account, item) {
-    const session = this.store.state.sessions.find((s) => s.id === item.sessionId);
+    const session = this.store.state.sessions.find(s => s.id === item.sessionId);
     if (session?.streamReplies === false) return;
-    let count = (item.progressReports || []).reduce((total, report) => total + report.sent, 0);
-    const noticeId = `qc-p-limit-${item.key.slice(0, 32)}`;
-    const notifyLimit = async () => {
-      if (!this.running || item.progressNoticeSent) return;
-      // Always leave three slots for the result. Other urgent command replies
-      // may already have consumed slots in the latest sender context.
-      if (this.replySlots(account, item.message) <= 3 && !this.replyBudget(account, item.message).ids.includes(noticeId)) return;
-      if (await this.sendReply(account, item, noticeId, PROGRESS_LIMIT_NOTICE)) {
-        item.progressNoticeSent = true;
-        await this.store.save();
-      }
-    };
-    if (count >= PROGRESS_LIMIT || item.progressSuppressed) {
-      item.progressSuppressed = true;
-      await notifyLimit();
-      return;
-    }
+    delete item.progressSuppressed;
+    delete item.progressNoticeSent;
     for (const report of item.progressReports || []) {
       while (this.running && report.sent < report.chunks.length) {
         const id = `qc-p-${item.key.slice(0, 20)}-${report.key.slice(0, 12)}-${report.sent}`;
-        if (count >= PROGRESS_LIMIT || (this.replySlots(account, item.message) <= 4 && !this.replyBudget(account, item.message).ids.includes(id))) {
-          item.progressSuppressed = true;
-          await this.store.save();
-          await notifyLimit();
-          return;
-        }
+        // Tencent allows 10 replies per user-message context. Reserve only the
+        // final summary and result/file bundle; fresh contexts resume progress.
+        if (this.replySlots(account, item.message) <= 2 && !this.replyBudget(account, item.message).ids.includes(id)) return;
         if (!await this.sendReply(account, item, id, `【进度】${report.chunks[report.sent]}`)) return;
         report.sent++;
-        count++;
-        if (count >= PROGRESS_LIMIT) item.progressSuppressed = true;
         await this.store.save();
-        if (item.progressSuppressed) { await notifyLimit(); return; }
       }
     }
+    item.progressReports = [];
+  }
+  async applyControls(account, item, controls) {
+    if (!controls.length) return;
+    const sender = item.message.from_user_id;
+    const origin = this.store.state.sessions.find(s => s.id === item.sessionId) || this.sessionFor(account, sender);
+    account.defaultWorkspace ||= origin.workspace;
+    let workspace = origin.workspace;
+    for (const action of controls) {
+      if (action.type === "workspace.set") workspace = await workspacePath(action.path);
+      if (action.type === "workspace.reset") workspace = await workspacePath(account.defaultWorkspace || account.workspace);
+    }
+    const current = this.sessionFor(account, sender);
+    this.createSession(account, sender, { ...origin, workspace });
+    // A completed older task must not undo a more recent /new, /bind or /resume.
+    if (current.id !== origin.id) this.activateSession(account, sender, current);
   }
   async processNext(account, item = account.pending[0], urgent = false) {
-    if (!item) return;
+    if (!item || this.processing.has(item)) return;
+    this.processing.add(item);
     if (!urgent) { this.busy.add(account.id); this.emit("wechat", this.status()); }
     const stopTyping = urgent ? async () => {} : this.startTyping(account, item.message);
     try {
@@ -534,6 +528,12 @@ export class WeChatBridge {
           const command = commandOf(item.message);
           if (command && !item.promptItems) reply = await handleCommand(this, account, item, command);
           else reply = null;
+          if (urgent && reply === null && item.promptItems) {
+            item.deferToQueue = true;
+            item.sessionId = this.sessionFor(account, item.message.from_user_id).id;
+            await this.store.save();
+            return;
+          }
           if (reply === null) {
             const normalized = normalizeWeixinMessage(item.message);
             if (!item.promptItems && !normalized.attachments.length)
@@ -545,7 +545,7 @@ export class WeChatBridge {
               reply = "已加入合并内容，发送 /prompt done 提交。";
             } else if (!inputs.length) reply = "这条消息没有可处理的内容，请发送文字、图片、视频或文件。";
             else {
-              const session = this.sessionFor(account, item.message.from_user_id);
+              const session = this.store.state.sessions.find(s => s.id === item.sessionId) || this.sessionFor(account, item.message.from_user_id);
               item.sessionId = session.id;
               item.running = true;
               const saved = this.store.save();
@@ -557,6 +557,7 @@ export class WeChatBridge {
             }
           }
           const parsed = parseActionBlocksSafe(String(reply || ""));
+          await this.applyControls(account, item, parsed.actions.control);
           if (parsed.discarded) parsed.visibleText += `${parsed.visibleText ? "\n" : ""}（附件指令无法解析，相关文件未发送。）`;
           item.chunks = splitText(parsed.visibleText);
           item.media = parsed.actions.send;
@@ -620,8 +621,9 @@ export class WeChatBridge {
       this.changed();
       if (item.bundled) await cleanWeChatResult(this.store.directory, account.id, item.key).catch(() => {});
     } finally {
+      this.processing.delete(item);
       await stopTyping();
-      if (!urgent) { this.busy.delete(account.id); this.emit("wechat", this.status()); }
+      if (!urgent && !account.pending.some(pending => this.processing.has(pending))) { this.busy.delete(account.id); this.emit("wechat", this.status()); }
     }
   }
   startTyping(account, message) {
@@ -686,8 +688,11 @@ export class WeChatBridge {
         }
         await this.ingest(account, result);
         // Keep receiving while Codex runs so /stop and progress controls work.
-        for (const item of account.pending.filter((item) => urgentCommand(item.message) && !this.waitingForContext(account, item)))
-          await this.processNext(account, item, true);
+        for (const item of [...account.pending]) {
+          const buffered = !commandOf(item.message) && !item.running && this.buffers.isActive(`${account.id}:${item.message.from_user_id}`);
+          if (!item.deferToQueue && (urgentCommand(item.message) || buffered) && !this.waitingForContext(account, item))
+            await this.processNext(account, item, true);
+        }
         if (!(result.msgs ?? result.messages ?? result.message_list)?.length) await wait(300);
         failures = 0;
       } catch (error) {
@@ -705,21 +710,25 @@ export class WeChatBridge {
     let failures = 0;
     while (this.running && this.store.state.accounts.includes(account)) {
       if (account.paused || account.expired) { await wait(500); continue; }
-      const item = account.pending.find((item) => !urgentCommand(item.message) && !this.waitingForContext(account, item));
+      const item = account.pending.find((item) => {
+        if (this.processing.has(item) || (this.retryAfter.get(item) || 0) > Date.now() || urgentCommand(item.message) && !item.deferToQueue || this.waitingForContext(account, item)) return false;
+        const sessionId = item.sessionId || this.sessionFor(account, item.message.from_user_id).id;
+        return !account.pending.some(other => this.processing.has(other) && other.sessionId === sessionId);
+      });
       if (!item) { await wait(200); continue; }
-      try {
-        await this.processNext(account, item);
-        failures = 0;
-      } catch (error) {
+      // Each conversation can run independently. Polling and control commands
+      // remain available while another conversation is executing or waiting.
+      void this.processNext(account, item).then(() => { failures = 0; this.retryAfter.delete(item); }).catch(async (error) => {
         this.pollErrors.delete(account.id);
         account.error = error.ret === -2 || error.code === -2
           ? "微信回复上下文已过期，请在微信发送一条新消息，待回复内容会继续投递。"
           : safeError(error, [account.token]);
         if (error.code === -14) account.expired = true;
+        this.retryAfter.set(item, Date.now() + Math.min(30000, 1000 * 2 ** Math.min(++failures, 5)));
         await this.store.save();
         this.changed();
-        await wait(Math.min(30000, 1000 * 2 ** Math.min(++failures, 5)));
-      }
+      });
+      await wait(200);
     }
   }
   close() {

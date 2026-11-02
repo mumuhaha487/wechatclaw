@@ -11,13 +11,8 @@ export function browserUrl(value) {
   return url.href;
 }
 
-// Never inherit a parent worker's browser services. A prepared QQClaw-owned
-// official runtime may explicitly override node_repl after these arguments.
 export function browserIsolationArguments() {
-  return ["browser", "unified-computer-use", "chrome", "computer-use"]
-    .flatMap((name) => ["-c", `plugins.${name}@openai-bundled.enabled=false`])
-    .concat(["-c", 'mcp_servers.node_repl={enabled=false,command="node"}',
-      "-c", 'mcp_servers.qqclaw_browser={enabled=false,command="node"}']);
+  return [];
 }
 
 // This viewer is called only by explicit UI actions. It is not exposed to Codex

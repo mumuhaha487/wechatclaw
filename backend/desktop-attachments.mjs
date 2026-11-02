@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-export const MAX_ATTACHMENT_COUNT = 8;
-export const MAX_ATTACHMENTS_BYTES = 40 * 1024 * 1024;
-const MAX_PREVIEW_BYTES = 8 * 1024 * 1024;
+export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+export const MAX_ATTACHMENT_COUNT = 32;
+export const MAX_ATTACHMENTS_BYTES = 500 * 1024 * 1024;
+const MAX_PREVIEW_BYTES = 32 * 1024 * 1024;
 const validId = (id) => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id);
 function imageType(bytes) {
   if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return ["image/png", ".png"];
@@ -37,16 +37,16 @@ export class DesktopAttachments {
       try {
         const stat = await handle.stat();
         if (!stat.isFile()) throw new Error("请选择文件，不能添加目录。");
-        if (stat.size > MAX_ATTACHMENT_BYTES) throw new Error("单个附件不能超过 20 MiB。");
+        if (stat.size > MAX_ATTACHMENT_BYTES) throw new Error("单个附件不能超过 100 MiB。");
         bytes = await handle.readFile();
       } finally { await handle.close(); }
       name = path.basename(source);
     } else {
       if (typeof data !== "string" || data.length % 4 || data.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data))
-        throw new Error("附件内容无效或超过 20 MiB。");
+        throw new Error("附件内容无效或超过 100 MiB。");
       bytes = Buffer.from(data, "base64");
     }
-    if (!bytes.length || bytes.length > MAX_ATTACHMENT_BYTES) throw new Error("附件为空或超过 20 MiB。");
+    if (!bytes.length || bytes.length > MAX_ATTACHMENT_BYTES) throw new Error("附件为空或超过 100 MiB。");
     const label = String(name || "附件").split(/[\\/]/).pop().replace(/[\x00-\x1f\x7f]/g, "").slice(0, 180) || "附件";
     const image = imageType(bytes), id = randomUUID();
     const directory = path.join(this.directory, id);
@@ -64,19 +64,18 @@ export class DesktopAttachments {
     if (!this.directory || !validId(id)) throw new Error("附件标识无效，请重新添加。");
     const directory = path.join(this.directory, id);
     const realDirectory = await fs.realpath(directory);
-    if (path.dirname(realDirectory) !== await fs.realpath(this.directory)) throw new Error("附件目录无效。");
     const attachment = JSON.parse(await fs.readFile(path.join(realDirectory, "metadata.json"), "utf8"));
-    if (attachment.id !== id || path.dirname(attachment.path) !== directory) throw new Error("附件记录无效。");
+    if (attachment.id !== id) throw new Error("附件记录无效。");
     const realFile = await fs.realpath(attachment.path), stat = await fs.stat(realFile);
-    if (path.dirname(realFile) !== realDirectory || !stat.isFile() || stat.size > MAX_ATTACHMENT_BYTES || stat.size !== attachment.size)
-      throw new Error("附件已被修改或移动，请重新添加。");
-    return { ...attachment, path: realFile };
+    if (!stat.isFile() || stat.size > MAX_ATTACHMENT_BYTES)
+      throw new Error("附件不存在或超过 100 MiB。");
+    return { ...attachment, path: realFile, size: stat.size };
   }
   async resolveMany(ids = []) {
-    if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENT_COUNT) throw new Error("每条消息最多添加 8 个附件。");
+    if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENT_COUNT) throw new Error("每条消息最多添加 32 个附件。");
     if (new Set(ids).size !== ids.length) throw new Error("请移除重复附件。");
     const attachments = await Promise.all(ids.map(id => this.resolve(id)));
-    if (attachments.reduce((n, a) => n + a.size, 0) > MAX_ATTACHMENTS_BYTES) throw new Error("每条消息的附件总大小不能超过 40 MiB。");
+    if (attachments.reduce((n, a) => n + a.size, 0) > MAX_ATTACHMENTS_BYTES) throw new Error("每条消息的附件总大小不能超过 500 MiB。");
     return attachments;
   }
 }

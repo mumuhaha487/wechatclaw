@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { Store, safeError, workspacePath } from "./store.mjs";
-import { CodexClient } from "./codex.mjs";
+import { CodexClient, permissionPolicy } from "./codex.mjs";
 import { resolveCodex, CODEX_SOURCES } from "./codex-runtime.mjs";
 import { WeChatBridge } from "./bridge.mjs";
 import { validateBaseUrl } from "./adapter.mjs";
@@ -484,7 +484,7 @@ export class App {
           modelProvider: config.model_provider || "openai",
           model,
           ...(effort ? { config: { model_reasoning_effort: effort } } : {}),
-          approvalPolicy: "on-request", sandbox: "workspace-write",
+          ...permissionPolicy(session.permission || this.store.state.settings.defaultPermission || "auto"),
           developerInstructions: "这是从 QQClaw 接续到 Codex Desktop 的独立对话副本。请保留已有对话上下文，按用户在 Desktop 中的新指令继续。浏览器与其他桌面工具由 Desktop 提供。QQClaw 与微信不会自动收到此副本的后续回复；无需自行向微信发送消息。",
         });
         threadId = result.thread.id;
@@ -530,7 +530,7 @@ export class App {
         ? { Authorization: `Bearer ${profile.apiKey}` }
         : {},
       signal: AbortSignal.timeout(15000),
-      redirect: "error",
+      redirect: "follow",
     });
     if (!response.ok)
       throw new Error(
@@ -620,12 +620,6 @@ export class App {
       case "workspace.reveal":
       case "workspace.diff": {
         const root = await workspacePath(p.workspace);
-        const known = [
-          ...state.projects,
-          ...state.sessions,
-          ...state.accounts,
-        ].some((item) => sameWorkspace(item.workspace, root));
-        if (!known) throw new Error("请先添加这个工作目录。");
         if (method === "workspace.diff") {
           try {
             const { stdout } = await promisify(execFile)(
@@ -652,28 +646,21 @@ export class App {
         );
         const realRoot = await fs.realpath(root);
         const relative = path.relative(realRoot, target);
-        if (
-          relative === ".." ||
-          relative.startsWith(`..${path.sep}`) ||
-          path.isAbsolute(relative)
-        )
-          throw new Error("只能查看工作目录内的文件。");
         if (method === "workspace.reveal") return await this.native("shell.reveal", { path: target });
         if (method === "workspace.read") {
           const stat = await fs.stat(target);
-          if (!stat.isFile() || stat.size > 512 * 1024)
-            throw new Error("预览支持 512 KB 以内的文本文件。");
+          if (!stat.isFile() || stat.size > 20 * 1024 * 1024)
+            throw new Error("预览支持 20 MiB 以内的文本文件。");
           const buffer = await fs.readFile(target);
           if (buffer.includes(0)) throw new Error("这个文件不是文本文件。");
           return { name: path.basename(target), relative, text: buffer.toString("utf8") };
         }
-        const entries = (await fs.readdir(target, { withFileTypes: true }))
-          .filter((entry) => !entry.isSymbolicLink())
-          .map((entry) => ({
+        const entries = (await Promise.all((await fs.readdir(target, { withFileTypes: true }))
+          .map(async (entry) => ({
             name: entry.name,
-            directory: entry.isDirectory(),
+            directory: entry.isSymbolicLink() ? (await fs.stat(path.join(target, entry.name)).catch(() => null))?.isDirectory() || false : entry.isDirectory(),
             relative: path.relative(realRoot, path.join(target, entry.name)),
-          }))
+          }))))
           .sort(
             (a, b) =>
               Number(b.directory) - Number(a.directory) ||
@@ -721,7 +708,7 @@ export class App {
           state.sessions.push({
             id: entry.id, title: String(entry.title || "恢复的会话").slice(0, 100), workspace: entry.workspace,
             source: "desktop", providerId: provider?.id || "local", model: provider ? String(entry.model || "") : "",
-            effort: provider ? String(entry.effort || "") : "", permission: "ask", busy: false, queued: 0,
+            effort: provider ? String(entry.effort || "") : "", permission: entry.permission || state.settings.defaultPermission || "auto", busy: false, queued: 0,
             createdAt: entry.createdAt, updatedAt: entry.updatedAt, threadId: entry.threadId || undefined,
             codexThreadPath: entry.codexThreadPath || null,
             goal: goalSnapshot(entry.goal, entry.threadId),

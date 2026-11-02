@@ -10,13 +10,11 @@ export function validateBaseUrl(input) {
     url.search ||
     url.hash ||
     !(
-      url.protocol === "https:" ||
-      (url.protocol === "http:" &&
-        ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname))
+      url.protocol === "https:" || url.protocol === "http:"
     )
   ) {
     throw new Error(
-      "API 地址请使用 HTTPS；本机服务可以使用 http://localhost。地址中不要包含 Key 或查询参数。",
+      "API 地址请使用 HTTP 或 HTTPS，可填写局域网服务。地址中不要包含 Key 或查询参数。",
     );
   }
   return url.href.replace(/\/+$/, "");
@@ -334,7 +332,7 @@ export async function createChatAdapter(profile, { fetchImpl = fetch } = {}) {
               : {}),
           },
           body: JSON.stringify(toChatRequest(request, profile, reasoning)),
-          redirect: "error",
+          redirect: "follow",
           signal: AbortSignal.any([
             controller.signal,
             AbortSignal.timeout(240000),
@@ -460,7 +458,7 @@ export async function createResponsesAdapter(
               : {}),
           },
           body: JSON.stringify(request),
-          redirect: "error",
+          redirect: "follow",
           signal: controller.signal,
         },
       );

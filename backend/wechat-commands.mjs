@@ -7,7 +7,7 @@ export const helpText = [
   "QQClaw 微信命令：",
   "/help 或 /h · 查看帮助",
   "/status 或 /where · 当前目录、会话与模型",
-  "/bind <绝对路径> · 绑定已在桌面添加的工作区",
+  "/bind <绝对路径> · 绑定电脑上的工作目录",
   "/new · 新建会话",
   "/resume [R编号] · 查看或继续历史会话",
   "/model [序号|模型ID|default] · 查看或切换模型",
@@ -27,7 +27,7 @@ export function commandOf(raw) {
   const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
   return match && { name: match[1].toLowerCase(), arg: (match[2] || "").trim() };
 }
-export const urgentCommand = (raw) => ["help", "h", "status", "where", "stop", "stream", "allow", "deny"].includes(commandOf(raw)?.name);
+export const urgentCommand = (raw) => Boolean(commandOf(raw));
 
 export async function handleCommand(bridge, account, item, command) {
   const sender = item.message.from_user_id;
@@ -42,7 +42,7 @@ export async function handleCommand(bridge, account, item, command) {
       return ["QQClaw 已连接", `用户：${sender}`, `会话：${session.title}`,
         `工作目录：${session.workspace}`, `模型：${session.model || runtime.model || "本机默认"}`,
         `思考等级：${session.effort || runtime.effort || "默认"}`,
-        `权限：${session.permission === "read-only" ? "只读" : ["ask", "accept-edits"].includes(session.permission) ? "需要桌面审批" : "工作区读写"}`,
+        `权限：${session.permission === "read-only" ? "只读" : session.permission === "ask" ? "按需确认（可在微信处理）" : "自动执行"}`,
         `过程进度：${session.streamReplies !== false ? "开启" : "关闭"}`,
         `状态：${session.busy ? "运行中" : session.queued ? "排队中" : "空闲"}`,
         ...(bridge.pendingApprovals?.(account.id, sender) || []).map(record => `等待确认：${record.summary}\n/allow ${record.code} 允许，/deny ${record.code} 拒绝。`),
@@ -62,11 +62,7 @@ export async function handleCommand(bridge, account, item, command) {
       const value = arg.replace(/^(["'])(.*)\1$/, "$2");
       if (!path.isAbsolute(value)) return "用法：/bind <绝对工作目录路径>";
       const workspace = await workspacePath(value);
-      const roots = [account.workspace, ...(account.allowedWorkspaces || []), ...state.projects.map((p) => p.workspace)];
-      if (!roots.some((root) => {
-        const relative = path.relative(root, workspace);
-        return !relative || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-      })) return "该目录尚未授权，请先在桌面添加该项目，再使用 /bind。";
+      account.defaultWorkspace ||= account.workspace;
       bridge.createSession(account, sender, { ...session, workspace });
       if (sender === account.user) account.workspace = workspace;
       return `已绑定工作目录并开始新会话：\n${workspace}`;
@@ -98,14 +94,13 @@ export async function handleCommand(bridge, account, item, command) {
       return `本会话过程进度已${session.streamReplies !== false ? "开启" : "关闭"}。`;
     }
     case "model": case "effort": {
-      const models = await bridge.listModels(session).catch(() => []);
+      const models = !arg || /^\d+$/.test(arg) ? await bridge.listModels(session).catch(() => []) : [];
       const current = models.find((m) => m.model === session.model) || models.find((m) => m.isDefault);
       const advertised = current?.supportedReasoningEfforts?.map((e) => e.reasoningEffort) || [];
       const efforts = advertised.length ? advertised : ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
       if (!arg) return name === "model"
         ? [`当前模型：${session.model || current?.model || "本机默认"}`, ...models.map((m, i) => `${i + 1}. ${m.displayName || m.model}（${m.model}）`), "/model <序号或完整模型ID> 切换；/model default 恢复账户默认。"].join("\n")
         : [`当前思考等级：${session.effort || "默认"}`, ...efforts.map((e, i) => `${i + 1}. ${e}`), "/effort <序号或等级> 切换；/effort default 恢复账户默认。"].join("\n");
-      if (session.busy || session.queued) return "当前会话仍有任务运行或排队，请完成后再切换模型或思考等级。";
       if (arg.toLowerCase() === "default") {
         session[name] = account[name] || "";
         return `已恢复账户默认${name === "model" ? "模型" : "思考等级"}：${session[name] || "本机默认"}`;

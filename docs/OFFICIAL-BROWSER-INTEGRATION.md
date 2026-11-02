@@ -1,3 +1,7 @@
+## Windows 0.3.46：以当前用户指令为准
+
+自动模式使用 approvalPolicy=never、danger-full-access，浏览器/MCP/命令/文件确认直接同意；ask 可通过微信 /allow 处理各种表单。BrowserAccessHost 默认放行，保留签名仅为兼容官方运行时 wire protocol；不再绑定 executor/nonce/turn。插件和环境变量不再过滤，网页搜索不再禁用；允许 Playwright、CDP、HTTP 或其他可用工具作为备用。WebView2 自动允许权限与脚本弹窗，两个 Windows 内核均移除 12 标签上限。以下旧版本的限制说明是历史记录，不再约束当前实现。Mac 保留0.3.41。
+
 # 官方 ChatGPT 扩展接入调查
 
 ## 当前 Windows 交付索引（2026-11-02）
