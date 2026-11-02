@@ -15,7 +15,7 @@ set(BUNDLE_ID_SUFFIX "")
 add_library(QQClawCefBridge SHARED CefBridge.mm)
 SET_LIBRARY_TARGET_PROPERTIES(QQClawCefBridge)
 target_compile_options(QQClawCefBridge PRIVATE -fobjc-arc)
-target_compile_definitions(QQClawCefBridge PRIVATE CEF_API_VERSION=15400)
+target_compile_definitions(QQClawCefBridge PRIVATE CEF_API_VERSION=15600)
 target_link_libraries(QQClawCefBridge PRIVATE libcef_dll_wrapper ${CEF_STANDARD_LIBS} "-framework WebKit" "-framework QuartzCore")
 set_target_properties(QQClawCefBridge PROPERTIES INSTALL_NAME_DIR "@rpath" BUILD_WITH_INSTALL_NAME_DIR TRUE)
 

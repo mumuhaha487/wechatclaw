@@ -11,10 +11,10 @@ import { fileURLToPath } from "node:url";
 
 const run = promisify(execFile);
 const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const version = "154.0.34+g14c5a08+chromium-154.0.8037.98";
+const version = "156.0.15+gcf671c0+chromium-156.0.8078.80";
 const pins = {
-  arm64: { platform: "macosarm64", size: 132210884, sha1: "b7081f6609e5edccf07be96b5d7977329fbe1bdf" },
-  x64: { platform: "macosx64", size: 138623289, sha1: "51d90349e24360b8e0daecc2d026ad150c620db5" },
+  arm64: { platform: "macosarm64", size: 135024501, sha1: "bcdd1877edb300b0fb91d8f71c0b14aae256cd0f" },
+  x64: { platform: "macosx64", size: 141647289, sha1: "13756e3029307720fe00898d54aef8a64c9b4043" },
 };
 const option = name => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
 const digest = async (file, algorithm) => { const hash = createHash(algorithm); for await (const bytes of createReadStream(file)) hash.update(bytes); return hash.digest("hex"); };
@@ -39,7 +39,7 @@ await fs.mkdir(sdk, { recursive: true });
 await run("/usr/bin/tar", ["-xjf", archive, "-C", sdk, "--strip-components", "1"], { maxBuffer: 1024 * 1024 });
 const sdkBuild = path.join(sdk, "CMakeLists.txt");
 const extra = `\nadd_subdirectory("${path.join(project, "native/cef/macos")}" "\${CMAKE_BINARY_DIR}/qqclaw-macos")\n`;
-await fs.writeFile(sdkBuild, "add_compile_definitions(CEF_API_VERSION=15400)\n" + await fs.readFile(sdkBuild, "utf8") + extra);
+await fs.writeFile(sdkBuild, "add_compile_definitions(CEF_API_VERSION=15600)\n" + await fs.readFile(sdkBuild, "utf8") + extra);
 const execute = async (exe, args) => {
   try { const { stdout, stderr } = await run(exe, args, { maxBuffer: 16 * 1024 * 1024 }); if (stdout.trim()) console.log(stdout.trim()); if (stderr.trim()) console.log(stderr.trim()); }
   catch (error) { throw new Error([error.stdout, error.stderr, error.message].filter(Boolean).join("\n")); }

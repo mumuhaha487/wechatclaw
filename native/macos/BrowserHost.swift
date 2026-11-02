@@ -66,7 +66,7 @@ import CryptoKit
         }
         if event == "browser-closed" { errors.removeValue(forKey: id); navigation.removeValue(forKey: id) }
         publish(owner)
-        if event == "browser-closed", visible && owner == visibleOwner { selectVisible() }
+        if ["browser-closed", "tab-retired"].contains(event), visible && owner == visibleOwner { selectVisible() }
     }
     func setView(_ p: [String: Any]) {
         visibleOwner = p["owner"] as? String ?? ""

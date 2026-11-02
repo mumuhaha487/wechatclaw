@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { iconPNG } from "./macos-icon.mjs";
 import { bundleMacNode } from "./macos-node-runtime.mjs";
-import { bundleMacOfficialMcp } from "./macos-browser-runtime.mjs";
+import { bundleMacOfficialMcp, unpackMacBrowserRuntime } from "./macos-browser-runtime.mjs";
 
 const exec = promisify(execFile);
 const project = path.resolve(import.meta.dirname, "..");
@@ -34,7 +34,7 @@ export async function macPayload(root, resources) {
   await fs.writeFile(path.join(resources, "THIRD-PARTY-LICENSES.txt"), notices.join("\n\n========================================\n\n"));
 }
 
-export async function buildMac(root = project) {
+export async function buildMac(root = project, { browserBuild, runtimeCache, output: requestedOutput } = {}) {
   if (process.platform !== "darwin") throw new Error("macOS 原生构建需要 macOS 和 Xcode Command Line Tools。当前平台不能生成经过原生编译的 .app；请在 Mac 或 macOS CI 执行 npm run build:mac。");
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "qqclaw-macos-build-"));
   const imageRoot = path.join(temporary, "image");
@@ -45,6 +45,14 @@ export async function buildMac(root = project) {
   };
   try {
     await fs.mkdir(binaries, { recursive: true });
+    let browser;
+    if (browserBuild) {
+      browser = JSON.parse(await fs.readFile(browserBuild, "utf8"));
+      if (browser.platform !== (process.arch === "arm64" ? "macosarm64" : "macosx64")) throw Error("CEF 构建架构与本次应用打包架构不一致。");
+      if (!runtimeCache) throw Error("内置官方浏览器需要提供已经校验的原版运行库目录。");
+      await exec("/usr/bin/ditto", [path.join(browser.app, "Contents/Frameworks"), path.join(contents, "Frameworks")]);
+      await unpackMacBrowserRuntime({ cache: runtimeCache, destination: path.join(resources, "official-browser", process.arch) });
+    }
     await macPayload(root, resources);
     await bundleMacNode(root, resources);
     const { version } = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
@@ -53,13 +61,14 @@ export async function buildMac(root = project) {
     await run("/usr/bin/plutil", ["-lint", path.join(contents, "Info.plist")]);
     const sdk = await run("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"]);
     const compiled = [];
-    for (const target of macTargets) {
+    const targets = browser ? macTargets.filter(target => target.startsWith(process.arch === "arm64" ? "arm64-" : "x86_64-")) : macTargets;
+    for (const target of targets) {
       const binary = path.join(temporary, target.split("-")[0]); compiled.push(binary);
       await run("/usr/bin/xcrun", ["swiftc", "-swift-version", "5", "-parse-as-library", "-O", "-whole-module-optimization", "-sdk", sdk, "-target", target, "-framework", "AppKit", "-framework", "WebKit", "-framework", "Security", "-framework", "CryptoKit", path.join(root, "native/macos/QQClaw.swift"), path.join(root, "native/macos/BrowserHost.swift"), path.join(root, "native/macos/CefRuntime.swift"), "-o", binary]);
     }
     const executable = path.join(binaries, "QQClaw");
     await run("/usr/bin/lipo", ["-create", ...compiled, "-output", executable]);
-    await run("/usr/bin/lipo", [executable, "-verify_arch", "arm64", "x86_64"]);
+    await run("/usr/bin/lipo", [executable, "-verify_arch", ...targets.map(target => target.split("-")[0])]);
     await fs.chmod(executable, 0o755);
     const icons = path.join(temporary, "AppIcon.iconset"); await fs.mkdir(icons);
     for (const size of [16, 32, 128, 256, 512]) for (const scale of [1, 2]) await fs.writeFile(path.join(icons, `icon_${size}x${size}${scale === 2 ? "@2x" : ""}.png`), iconPNG(size * scale));
@@ -79,7 +88,7 @@ export async function buildMac(root = project) {
         ? "3. 首次打开时，如系统询问是否打开，请确认。"
         : "3. 初次打开若被系统拦截，请先尝试打开一次，再到“系统设置 → 隐私与安全性”中选择“仍要打开”。当前版本尚未经过 Apple 公证。",
       "4. 已内置 Node.js 24 和 npm，无需另行安装 Node.js。首次进入软件，按照“前往配置”提示安装或选择 Codex 并登录。",
-      "", "支持 macOS 13.5 及更新版本，兼容 Apple Silicon 和 Intel。",
+      "", browser ? `支持 macOS 13.5 及更新版本；此包适用于 ${process.arch === "arm64" ? "Apple Silicon" : "Intel"}。已内置原版官方浏览扩展及其运行库。` : "支持 macOS 13.5 及更新版本，兼容 Apple Silicon 和 Intel。",
       "安装完成后可以推出此磁盘映像。删除应用不会主动删除对话数据。", ""
     ].join("\n"));
     const archive = path.join(temporary, "QQClaw.dmg");
@@ -96,9 +105,9 @@ export async function buildMac(root = project) {
       await run("/usr/bin/xcrun", ["stapler", "validate", archive]);
     }
     await run("/usr/bin/hdiutil", ["verify", archive]);
-    const output = path.join(root, "release/macos/QQClaw.dmg");
+    const output = requestedOutput ? path.resolve(requestedOutput) : path.join(root, "release/macos/QQClaw.dmg");
     await fs.mkdir(path.dirname(output), { recursive: true }); await fs.copyFile(archive, output);
-    console.log(`已构建 ${output} · macOS 13.5+ · Apple Silicon / Intel Universal · ${identity === "-" ? "本地签名，尚未公证" : process.env.MACOS_NOTARY_PROFILE ? "Developer ID 已签名并公证" : "Developer ID 已签名，未公证"} · 已内置 Node / npm，Codex 按需安装`);
+    console.log(`已构建 ${output} · macOS 13.5+ · ${browser ? process.arch : "Apple Silicon / Intel Universal"} · ${identity === "-" ? "本地签名，尚未公证" : process.env.MACOS_NOTARY_PROFILE ? "Developer ID 已签名并公证" : "Developer ID 已签名，未公证"} · 已内置 Node / npm${browser ? " / 官方浏览运行库" : ""}，Codex 按需安装`);
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
 }
 

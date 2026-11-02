@@ -428,6 +428,12 @@ int QQClawCefStart(int argc, char** argv, const char* json, QQClawCefEvent event
   [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
   CefMainArgs args(argc, argv);
   CefSettings settings;
+  // CEF 156 provides a separate real Keychain item per application. Sharing
+  // "Chromium Safe Storage" with other CEF apps can wait for their ACL prompt
+  // and block shutdown. Keep this name stable across this application's updates.
+  NSString* service = [(NSBundle.mainBundle.bundleIdentifier ?: @"com.qqclaw.desktop") stringByAppendingString:@".browser.safe-storage"];
+  CefString(&settings.keychain_service_name) = service.UTF8String;
+  CefString(&settings.keychain_account_name) = "QQClaw Browser";
   settings.no_sandbox = false;
   settings.use_views_default_popup = true;
   NSString* helperPath = options[@"helperPath"];

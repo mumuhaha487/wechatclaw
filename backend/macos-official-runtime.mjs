@@ -14,7 +14,7 @@ export async function openMacOfficialRuntime({ cli, nodeRepl, cwd, env, onEvent 
   if (![cli, nodeRepl, cwd, env?.CODEX_HOME].every(value => typeof value === "string" && path.isAbsolute(value)))
     throw new Error("Mac 官方浏览运行库路径不完整。");
   await fs.mkdir(env.CODEX_HOME, { recursive: true });
-  const child = spawn(cli, ["app-server"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(cli, ["app-server"], { cwd, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
   const runtime = new EventEmitter(), pending = new Map();
   runtime.stdout = new PassThrough(); runtime.stderr = new PassThrough();
   runtime.serverPid = child.pid;
@@ -96,7 +96,14 @@ export async function openMacOfficialRuntime({ cli, nodeRepl, cwd, env, onEvent 
     if (!ended && !serverExited) { try { await rpc("process/kill", { processHandle }); } catch {} }
     if (!serverExited) { child.stdin.end(); await waitBriefly(serverDone); }
     if (!serverExited) { child.kill("SIGTERM"); await waitBriefly(serverDone); }
-    if (!serverExited) child.kill("SIGKILL");
+    if (!serverExited) { child.kill("SIGKILL"); await serverDone; }
+    // The original CLI may start plugin discovery children. They share this
+    // private process group and must stop before its temporary home is removed.
+    try { process.kill(-child.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+    let timer;
+    await new Promise(resolve => { timer = setTimeout(resolve, 100); });
+    clearTimeout(timer);
+    try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
   })();
   try {
     await rpc("initialize", { clientInfo: { name: "qqclaw_browser_runtime", version: "1" }, capabilities: { experimentalApi: true } });

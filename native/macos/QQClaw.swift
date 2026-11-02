@@ -665,9 +665,10 @@ final class Backend: @unchecked Sendable {
         launchVaultIfRequested()
         signal(SIGPIPE, SIG_IGN)
         let host = Host()
-        // The CEF integration stays opt-in until native tabs, ownership and
-        // product checks pass. It does not advertise browser automation.
-        if ProcessInfo.processInfo.environment["QQCLAW_MAC_CEF_PREVIEW"] == "1" {
+        // Browser packages include their native framework. The existing
+        // universal package has no framework and keeps its original startup.
+        let hasCef = Bundle.main.privateFrameworksURL.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("libQQClawCefBridge.dylib").path) } ?? false
+        if hasCef || ProcessInfo.processInfo.environment["QQCLAW_MAC_CEF_PREVIEW"] == "1" {
             do {
                 try host.prepareEnvironment()
                 let runtime = try MacCefRuntime(frameworks: Bundle.main.privateFrameworksURL!)

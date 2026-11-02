@@ -12,10 +12,12 @@ import Darwin
     typealias Shell = @convention(c) (UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?
     typealias Bounds = @convention(c) (Int32, Int32, Int32, Int32, Int32) -> Void
     typealias Control = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+    typealias State = @convention(c) () -> UnsafePointer<CChar>?
     static var active: MacCefRuntime?
     private let library: UnsafeMutableRawPointer
     private let startFunction: Start, runFunction: Run, shutdownFunction: Run, closeFunction: Run
     private let windowFunction: Window, shellFunction: Shell, boundsFunction: Bounds, controlFunction: Control
+    private let stateFunction: State
     var onEvent: (([String: Any]) -> Void)?
     private var started = false
 
@@ -37,6 +39,7 @@ import Darwin
             shellFunction = try symbol("QQClawCefCreateShell", Shell.self)
             boundsFunction = try symbol("QQClawCefBrowserBounds", Bounds.self)
             controlFunction = try symbol("QQClawCefControl", Control.self)
+            stateFunction = try symbol("QQClawCefState", State.self)
         } catch { dlclose(handle); throw error }
         library = handle
     }
@@ -58,6 +61,10 @@ import Darwin
     }
     func close() { if started { closeFunction() } }
     var window: NSWindow? { windowFunction().map { Unmanaged<NSWindow>.fromOpaque($0).takeUnretainedValue() } }
+    var state: [String: Any] {
+        guard let pointer = stateFunction(), let bytes = String(cString: pointer).data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return [:] }; return value
+    }
     func shell(configuration: WKWebViewConfiguration) throws -> WKWebView {
         guard let pointer = shellFunction(Unmanaged.passUnretained(configuration).toOpaque()) else { throw failure("内置浏览器窗口未准备好。") }
         return Unmanaged<WKWebView>.fromOpaque(pointer).takeRetainedValue()

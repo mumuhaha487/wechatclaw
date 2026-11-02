@@ -107,7 +107,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           node --input-type=module <<'NODE'
-          import fs from 'node:fs/promises';import path from 'node:path';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+          import fs from 'node:fs/promises';import path from 'node:path';import http from 'node:http';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
           import {macPayload} from './scripts/build-macos.mjs';
           import {bundleMacNode} from './scripts/macos-node-runtime.mjs';
           const run=promisify(execFile),root=process.cwd(),base=path.join(process.env.RUNNER_TEMP,'host-preview');
@@ -118,6 +118,7 @@ jobs:
           const resources=path.join(app,'Contents/Resources'),binary=path.join(app,'Contents/MacOS/QQClaw');
           await macPayload(root,resources);
           await bundleMacNode(root,resources);
+          await run('/usr/bin/ditto',[path.join(process.env.RUNNER_TEMP,'official-runtime/runtime'),path.join(resources,'official-browser/arm64')]);
           const plist=(await fs.readFile('native/macos/Info.plist','utf8')).replaceAll('__VERSION__',JSON.parse(await fs.readFile('package.json','utf8')).version);
           await fs.writeFile(path.join(app,'Contents/Info.plist'),plist);
           const source=await fs.readFile('native/macos/QQClaw.swift','utf8'),offset=source.indexOf('@main struct QQClawMain');if(offset<0)throw Error('Host entry missing');
@@ -149,6 +150,47 @@ jobs:
                         let snapshot=try await host.call(backend,"snapshot") as! [String:Any]
                         guard let accounts=snapshot["accounts"] as? [Any],accounts.isEmpty else { throw failure("The isolated Host did not have an empty account store") }
                         _=try await host.call(backend,"settings.save",params:["fontSize":15])
+                        let owner=UUID().uuidString.lowercased(),fixture=ProcessInfo.processInfo.environment["QQCLAW_HOST_FIXTURE"]!
+                        func control(_ action:String,_ params:[String:Any]=[:]) async throws -> [String:Any] {
+                          var request=params;request["action"]=action;request["owner"]=owner
+                          guard let result=try await host.handle("browser.control",request) as? [String:Any] else { throw failure("Native browser returned no state") };return result
+                        }
+                        _=try await control("state")
+                        _=try await control("open",["url":fixture])
+                        var page:[String:Any]=[:]
+                        for _ in 0..<200 {
+                          page=try await control("state")
+                          if page["title"] as? String == "QQClaw Host browser fixture",page["loading"] as? Bool == false { break }
+                          try await Task.sleep(nanoseconds:100_000_000)
+                        }
+                        guard page["title"] as? String == "QQClaw Host browser fixture",let tab=page["activeTab"] as? String,
+                          let tabs=page["tabs"] as? [[String:Any]],let revision=tabs.first(where:{$0["id"] as? String == tab})?["navigationRevision"] as? String else { throw failure("The product browser did not load its own fixture") }
+                        _=try await host.handle("browser.view",["owner":owner,"visible":true,"viewportWidth":host.web.bounds.width,"viewportHeight":host.web.bounds.height,"x":650,"y":80,"width":400,"height":550])
+                        guard runtime.state["browserWindowMatchesRoot"] as? Bool == true,runtime.state["shellWindowMatchesRoot"] as? Bool == true,
+                          runtime.state["hasHoleMask"] as? Bool == true else { throw failure("The product browser is not embedded with its existing UI") }
+                        let found=try await control("find",["tabId":tab,"navigationRevision":revision,"operation":"search","query":"fixture"])
+                        guard found["found"] as? Bool == true,(found["total"] as? Int ?? 0)>0 else { throw failure("Native page find returned no actual match") }
+                        _=try await control("find",["tabId":tab,"navigationRevision":revision,"operation":"clear","query":""])
+                        let created=try await control("newTab");let extra=created["activeTab"] as! String
+                        _=try await control("closeTab",["tabId":extra])
+                        for _ in 0..<100 {
+                          page=try await control("state")
+                          if !(page["tabs"] as? [[String:Any]] ?? []).contains(where:{$0["id"] as? String == extra}) { break }
+                          try await Task.sleep(nanoseconds:50_000_000)
+                        }
+                        guard !(page["tabs"] as? [[String:Any]] ?? []).contains(where:{$0["id"] as? String == extra}) else { throw failure("Closed product tab is still present") }
+                        _=try await control("selectTab",["tabId":tab])
+                        _=try await control("open",["tabId":tab,"url":fixture+"download"])
+                        var downloaded:[String:Any]?
+                        for _ in 0..<200 {
+                          let state=try await host.handle("browser.downloads",["action":"state"]) as! [String:Any]
+                          downloaded=(state["items"] as? [[String:Any]])?.first(where:{$0["status"] as? String == "completed"})
+                          if downloaded != nil { break };try await Task.sleep(nanoseconds:100_000_000)
+                        }
+                        guard let path=downloaded?["path"] as? String,try String(contentsOfFile:path,encoding:.utf8)=="QQClaw native download fixture" else { throw failure("Product CEF download did not save the actual fixture content") }
+                        let history=try await host.handle("browser.history",["action":"state"]) as! [String:Any]
+                        guard (history["items"] as? [[String:Any]] ?? []).contains(where:{$0["url"] as? String == fixture}) else { throw failure("Product browser history did not preserve the actual page") }
+                        print("HOST_BROWSER_UI_PASS: actual page, embedding, find, new/select/close, download content and encrypted history")
                         let image: NSImage = try await withCheckedThrowingContinuation { continuation in
                           host.web.takeSnapshot(with:nil) { image,error in
                             if let image { continuation.resume(returning:image) }
@@ -162,8 +204,8 @@ jobs:
                     }
                   }
                 }
-                try runtime.start(options:["profile":host.data.appendingPathComponent("browser-profiles").path,"helperPath":Bundle.main.privateFrameworksURL!.appendingPathComponent("QQClawBrowser Helper.app/Contents/MacOS/QQClawBrowser Helper").path])
-                DispatchQueue.main.asyncAfter(deadline:.now()+45) { if !host.allowQuit { errorText="Product Host verification timed out";host.backend?.killGroup();runtime.close() } }
+                try runtime.start(options:host.cefOptions())
+                DispatchQueue.main.asyncAfter(deadline:.now()+100) { if !host.allowQuit { errorText="Product Host verification timed out";host.backend?.killGroup();runtime.close() } }
                 print("HOST_RUN");runtime.run();print("HOST_LOOP_ENDED")
                 if errorText.isEmpty {
                   guard host.allowQuit else { throw failure("The product quit path did not acknowledge saved data") }
@@ -189,12 +231,14 @@ jobs:
           for(const arch of ['arm64','x64'])await run('/usr/bin/codesign',['--force','--sign','-',path.join(resources,'node',arch,'bin/node')]);
           await run('/usr/bin/codesign',['--force','--sign','-',app]);
           await run('/usr/bin/codesign',['--verify','--deep','--strict',app]);
-          const running=run(binary,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(base,'data'),CODEX_HOME:path.join(base,'codex'),QQCLAW_HOST_IMAGE:path.join(proof,'host-preview.png'),QQCLAW_HOST_RESULT:path.join(proof,'host-preview.json')},timeout:60000,maxBuffer:2*1024*1024});
+          const fixture=http.createServer((request,response)=>{if(request.url==='/download'){response.writeHead(200,{'content-type':'application/octet-stream','content-disposition':'attachment; filename="native-proof.txt"'});response.end('QQClaw native download fixture');}else{response.writeHead(200,{'content-type':'text/html; charset=utf-8'});response.end('<!doctype html><meta charset="utf-8"><title>QQClaw Host browser fixture</title><h1>QQClaw native browser fixture</h1><p>Second fixture match.</p>');}});
+          await new Promise(resolve=>fixture.listen(0,'127.0.0.1',resolve));
+          const running=run(binary,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(base,'data'),CODEX_HOME:path.join(base,'codex'),QQCLAW_HOST_FIXTURE:'http://127.0.0.1:'+fixture.address().port+'/',QQCLAW_DOWNLOADS_DIR:path.join(base,'downloads'),QQCLAW_HOST_IMAGE:path.join(proof,'host-preview.png'),QQCLAW_HOST_RESULT:path.join(proof,'host-preview.json')},timeout:120000,maxBuffer:2*1024*1024});
           let sampling;
           const timer=setTimeout(()=>{if(running.child?.pid)sampling=run('/usr/bin/sample',[String(running.child.pid),'1','1','-file',path.join(proof,'host-native-sample.log')],{timeout:10000,maxBuffer:1024*1024}).catch(error=>fs.writeFile(path.join(proof,'host-sample-error.log'),error.message));},12000);
           try {const result=await running;await fs.writeFile(path.join(proof,'host-preview.log'),result.stdout+result.stderr);}
           catch(error){await fs.writeFile(path.join(proof,'host-preview.log'),(error.stdout||'')+(error.stderr||'')+'\n'+error.message);throw error;}
-          finally {clearTimeout(timer);if(sampling)await sampling;const log=path.join(base,'data/logs/backend.log');await fs.copyFile(log,path.join(proof,'host-backend.log')).catch(()=>{});}
+          finally {fixture.closeAllConnections();await new Promise(resolve=>fixture.close(resolve));clearTimeout(timer);if(sampling)await sampling;const log=path.join(base,'data/logs/backend.log');await fs.copyFile(log,path.join(proof,'host-backend.log')).catch(()=>{});}
 
           NODE
       - name: Preserve crash diagnostics from the owned native components
@@ -206,6 +250,20 @@ jobs:
           const output=path.join(process.env.RUNNER_TEMP,'official-browser-proof');await fs.mkdir(output,{recursive:true});
           for(const name of await fs.readdir(reports).catch(()=>[]))if(/^QQClaw(?:Browser)?[-_].*\.ips$/.test(name))await fs.copyFile(path.join(reports,name),path.join(output,name));
           NODE
+      - name: Build the self-contained Apple Silicon browser candidate
+        if: success()
+        run: |
+          node --input-type=module <<'NODE'
+          import path from 'node:path';import {buildMac} from './scripts/build-macos.mjs';
+          await buildMac(process.cwd(),{browserBuild:path.join(process.env.RUNNER_TEMP,'browser-build/mac-browser-build.json'),runtimeCache:path.join(process.env.RUNNER_TEMP,'official-runtime'),output:path.join(process.env.RUNNER_TEMP,'mac-browser-candidate/QQClaw.dmg')});
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: mac-official-browser-candidate
+          path: ${{ runner.temp }}/mac-browser-candidate/QQClaw.dmg
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: always()
         with:

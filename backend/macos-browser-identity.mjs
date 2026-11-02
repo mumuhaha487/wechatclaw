@@ -97,6 +97,6 @@ export async function inspectMacBrowserIdentity({ installation, transport, ident
     active = false; rejectPending(new Error("浏览会话识别已结束。"));
     if (runtime) await runtime.close();
     await access.close();
-    await fs.rm(probeHome, { recursive: true, force: true });
+    await fs.rm(probeHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
