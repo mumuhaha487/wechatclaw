@@ -1,0 +1,58 @@
+name: Inspect owned macOS Chrome windows
+on:
+  push:
+    branches: [probe/macos-native-window]
+    paths:
+      - scripts/inspect-macos-default-window.mjs
+      - .github/workflows/macos-native-window-inspect.yml
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: mac-native-window-inspection
+  cancel-in-progress: true
+jobs:
+  inspect:
+    runs-on: macos-26
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@v4
+        with:
+          name: mac-official-browser-candidate
+          run-id: 41382706673
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/package
+      - name: Mount the existing 0.3.41 application without changing the release
+        run: |
+          mkdir "$RUNNER_TEMP/qqclaw-mount"
+          hdiutil attach "$RUNNER_TEMP/package/QQClaw.dmg" -nobrowse -readonly -mountpoint "$RUNNER_TEMP/qqclaw-mount"
+      - name: Prepare a disposable keychain for the real native Host
+        run: |
+          node --input-type=module <<'NODE'
+          import {execFile}from'node:child_process';import{promisify}from'node:util';import{randomBytes}from'node:crypto';import path from'node:path';
+          const run=promisify(execFile),file=path.join(process.env.RUNNER_TEMP,'qqclaw-inspection.keychain-db'),password=randomBytes(32).toString('hex');
+          await run('/usr/bin/security',['create-keychain','-p',password,file]);await run('/usr/bin/security',['set-keychain-settings','-lut','7200',file]);await run('/usr/bin/security',['unlock-keychain','-p',password,file]);await run('/usr/bin/security',['default-keychain','-d','user','-s',file]);await run('/usr/bin/security',['list-keychains','-d','user','-s',file]);
+          NODE
+      - name: Inspect the original extension-created window and retain failures
+        env:
+          QQCLAW_INSPECTION_APP: ${{ runner.temp }}/qqclaw-mount/QQClaw.app
+        run: node scripts/inspect-macos-default-window.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-native-window-inspection
+          path: |
+            ${{ runner.temp }}/official-browser-proof
+            .inspect-macos-default-window.generated.mjs
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Unmount the existing installer
+        if: always()
+        run: hdiutil detach "$RUNNER_TEMP/qqclaw-mount"
