@@ -476,7 +476,9 @@ final class Backend: @unchecked Sendable {
             let node = Runtime.node(data) ?? ""; var version = "", error = ""
             if !node.isEmpty { do { version = try await Runtime.version(node) } catch let e { error = e.localizedDescription } }
             else { error = "未检测到 Node.js，请安装 22.13 或更新版本。" }
-            return ["nodeReady": !version.isEmpty, "nodePath": node, "nodeVersion": version, "nodeError": error, "dataDir": data.path, "platform": "darwin", "desktop": DesktopIntegration.status(), "webview": "系统 WebKit"] as [String: Any]
+            let bundledRoot = Bundle.main.resourceURL?.appendingPathComponent("node").path
+            let bundled = bundledRoot.map { node.hasPrefix($0 + "/") } ?? false
+            return ["nodeReady": !version.isEmpty, "nodePath": node, "nodeVersion": version, "nodeBundled": bundled, "nodeError": error, "dataDir": data.path, "platform": "darwin", "desktop": DesktopIntegration.status(), "webview": "系统 WebKit"] as [String: Any]
         case "system.nodePath":
             _ = try await Runtime.version(path); try path.write(to: data.appendingPathComponent("node-path.txt"), atomically: true, encoding: .utf8); return true
         case "system.reload":

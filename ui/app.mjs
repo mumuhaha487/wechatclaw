@@ -1106,12 +1106,12 @@ function browserPanel() {
     ${panelTabsBar()}
     <div class="browser-toolbar"><div class="browser-navigation">${ib("browser-back", "后退", "back", b.canGoBack ? "" : "disabled")}${ib("browser-forward", "前进", "chevron", b.canGoForward ? "" : "disabled")}${ib(b.loading ? "browser-stop" : "browser-reload", b.loading ? "停止加载" : "刷新网页", b.loading ? "close" : "refresh", b.url ? "" : "disabled")}</div>
     <form id="browser-form" class="browser-address">${icon(b.url?.startsWith("https:") ? "shield" : "search")}<input id="browser-address" name="url" data-owner="${esc(panelOwner())}" data-key="${esc(tab?.key)}" aria-label="网页地址或搜索" placeholder="${creating ? "正在创建标签页…" : "搜索或输入网址"}" autocomplete="off" spellcheck="false" maxlength="8192" ${creating ? "disabled" : ""} value="${esc(tab?.addressDraft ?? b.url ?? "")}"></form>
-    ${ib("browser-downloads", "下载", "download")}${ib("browser-more", "网页更多操作", "more")}</div>
-    <div class="browser-connection-note" role="status"><span>${ui.browserConnections.get(session()?.id)?.connected ? "官方 ChatGPT 扩展已连接" : ui.browserConnections.get(session()?.id)?.available ? "官方扩展已准备 · 等待连接验证" : "手动预览 · 官方扩展待配置"}</span><button data-action="runtime">配置</button></div>
+    ${ib("browser-downloads", "下载", "download")}${ib("browser-more", "网页更多操作", "more")}
+    ${b.loading ? '<div class="browser-loading-line" aria-hidden="true"></div>' : ""}</div>
     ${browserFind.html()}
     ${b.error ? `<div class="browser-error" role="status">${icon("info")}<span>${esc(b.error)}</span></div>` : ""}
     <div id="browser-viewport" class="browser-viewport">${!b.url ? `<div class="browser-start">${icon("browser")}<strong>内置浏览器</strong><span>${ui.browserConnections.get(session()?.id)?.available ? "输入网址，或在对话及微信中提出浏览任务。" : "输入网址或搜索内容。自动操作需先配置官方 ChatGPT 扩展。"}</span><button class="outline" data-action="browser-google">${icon("search")}Google 搜索</button></div>` : ""}</div>
-    ${b.loading ? '<div class="browser-loading-line"></div>' : ""}</aside>`;
+    </aside>`;
 }
 function updateBrowserState(data) {
   const target = state.sessions.find(session => session.id === data?.owner);
@@ -1387,9 +1387,9 @@ function runtimeSettings() {
     environmentReady() ? "Codex 环境配置成功，可以开始使用。" :
     r?.nodeReady ? "NodeJS 环境配置成功，Codex 未检测到配置" :
     r?.nodePath ? "NodeJS 版本不符合要求，请安装 Node.js 22.13 或更新版本。" : "请先安装 NodeJS，再安装 Codex。";
-  return `<h1>运行环境</h1><p class="modal-description">QQClaw 使用系统${isMac ? " WebKit" : " WebView2"}，不内置 Node.js 与 Codex。安装一次后，桌面编程和微信连接共用本机环境。</p>
+  return `<h1>运行环境</h1><p class="modal-description">正式安装包包含 Node.js、npm 与浏览组件。配置 Codex 后，桌面编程和微信连接即可共用；也可以手动选择已有的运行环境。</p>
     <div class="runtime-setup-status" role="status">${icon(environmentReady() ? "check" : "info")}<span>${notice}</span></div>
-    <h2>1. NodeJS</h2><div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">${r?.nodeReady ? `已检测到 Node.js ${esc(r.nodeVersion)}` : "尚未配置可用的 NodeJS"}</div><p class="setting-description">${esc(r?.nodeError || r?.nodePath || "需要 Node.js 22.13 或更新版本，包含 npm。下载安装后会自动检测。")}</p></div>${button("install-node", "前往官网下载", "external", "outline", installing ? "disabled" : "")}${ib("choose-node", isMac ? "手动选择 node" : "手动选择 node.exe", "folder", installing ? "disabled" : "")}</div></div>
+    <h2>1. NodeJS</h2><div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">${r?.nodeReady ? `${r.nodeBundled ? "正在使用内置" : "已检测到"} Node.js ${esc(r.nodeVersion)}` : "尚未配置可用的 NodeJS"}</div><p class="setting-description">${esc(r?.nodeError || r?.nodePath || "需要 Node.js 22.13 或更新版本，包含 npm。下载安装后会自动检测。")}</p></div>${button("install-node", r?.nodeReady ? "官网下载" : "前往官网下载", "external", "outline", installing ? "disabled" : "")}${ib("choose-node", isMac ? "手动选择 node" : "手动选择 node.exe", "folder", installing ? "disabled" : "")}</div></div>
     <h2>2. Codex</h2><div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">${e?.codexPath ? `Codex 已就绪 · ${sourceName}` : "尚未检测到 Codex"}</div><p class="setting-description">${esc(e?.codexPath || e?.error || (r?.nodeReady ? "可以使用 Desktop 附带的程序，也可以一键安装独立 CLI。" : "请先完成 NodeJS 安装，然后配置 Codex。"))}</p></div>${button("install-codex", installing ? "正在安装…" : "一键安装 CLI", "plus", "primary", !r?.nodeReady || installing ? "disabled" : "")}</div><div style="margin-top:19px" class="code-command">npm install -g @openai/codex</div><div class="row" style="margin-top:15px">${button("login-codex", "登录 Codex", "external", "outline", !e?.codexPath || installing ? "disabled" : "")}${button("codex-docs", "安装说明", "info", "outline")}</div></div>
     <div class="settings-card"><label class="field"><span class="field-label">Codex 来源</span><select id="codex-source" ${!r?.nodeReady || installing || ui.savingCodexSource ? "disabled" : ""}>${[["auto", "自动检测（Desktop 优先，CLI 回退）"], ["desktop", "Desktop 附带的运行程序"], ["cli", "独立 Codex CLI"], ["custom", "手动指定程序"]].map(([value, label]) => `<option value="${value}" ${source === value ? "selected" : ""}>${label}</option>`).join("")}</select><small>运行程序来源不等于官方浏览器授权。官方扩展连接状态见下方。</small></label>${source === "custom" ? `<label class="field"><span class="field-label">Codex 程序路径</span><div class="field-row"><input id="codex-path" value="${esc(ui.codexPathDraft ?? state.settings.codexPath ?? "")}" placeholder="选择可用的 Codex 程序" ${installing || ui.savingCodexSource ? "disabled" : ""}>${button("choose-codex", "选择", "folder", "outline", installing || ui.savingCodexSource ? "disabled" : "")}</div></label>` : ""}${button("save-codex-source", ui.savingCodexSource ? "正在保存…" : "保存来源", "check", "outline", !r?.nodeReady || installing || ui.savingCodexSource ? "disabled" : "")}</div>
     <div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">Codex Desktop · ${desktop?.installed ? "已检测到" : "未安装或未注册"}</div><p class="setting-description">可选：将对话副本接续到 Desktop；后续回复不会同步回微信。此入口不等于微信自动调用官方扩展。</p></div>${button("open-desktop", "打开 Desktop", "external", "outline", !desktop?.installed ? "disabled" : "")}${button("install-desktop", "安装入口", "external", "outline")}</div></div>
@@ -1406,7 +1406,7 @@ function aboutSettings() {
 }
 function settings() {
   if (!environmentReady())
-    return `<div class="settings-shell"><aside class="settings-nav setup-nav"><h2>配置运行环境</h2><p>按顺序完成以下两步</p><div class="settings-nav-item ${ui.runtime?.nodeReady ? "" : "active"}">${icon("check")}安装 NodeJS</div><div class="settings-nav-item ${ui.runtime?.nodeReady ? "active" : ""}">${icon("monitor")}安装 Codex</div></aside><div class="settings-main"><div class="settings-titlebar" data-drag>${navigationButtons()}${windowButtons()}</div><main class="settings-content"><div class="settings-inner">${runtimeSettings()}</div></main></div></div>`;
+    return `<div class="settings-shell"><aside class="settings-nav setup-nav"><h2>配置运行环境</h2><p>按顺序完成以下两步</p><div class="settings-nav-item ${ui.runtime?.nodeReady ? "" : "active"}">${icon("check")}Node.js 运行环境</div><div class="settings-nav-item ${ui.runtime?.nodeReady ? "active" : ""}">${icon("monitor")}配置 Codex</div></aside><div class="settings-main"><div class="settings-titlebar" data-drag>${navigationButtons()}${windowButtons()}</div><main class="settings-content"><div class="settings-inner">${runtimeSettings()}</div></main></div></div>`;
   let group = "";
   return `<div class="settings-shell"><aside class="settings-nav"><div class="settings-search">${icon("search")}<input id="settings-search" placeholder="搜索设置…" value="${esc(ui.search)}" aria-label="搜索设置"></div>${pages
     .filter(
@@ -1891,12 +1891,15 @@ async function action(name, element) {
       if (name === "website-external") return rpc("shell.open", { url });
       await copyText(url); return toast("链接已复制。");
     }
-    case "browser-more":
+    case "browser-more": {
+      const connection = ui.browserConnections.get(session()?.id);
       return showContext(element, [
         ...(browserFind.context() ? [{ label: "查找网页内容", icon: "search", action: "find-browser" }] : []),
         { label: "浏览记录", icon: "clock", action: "browser-history" },
         ...(browserStates.get(session()?.id)?.url ? [{ label: "在系统浏览器打开", icon: "external", action: "browser-external" }] : []),
+        { label: connection?.connected ? "官方扩展已连接 · 查看配置" : connection?.available ? "官方扩展待验证 · 查看配置" : connection ? "官方扩展待配置" : "官方扩展与运行环境", icon: connection?.connected ? "check" : "settings", action: "runtime" },
       ]);
+    }
     case "find-current":
       if (!canFindCurrent()) return;
       return action(findRegion() === "chat" ? "find-message" : ui.panelPage === "file" ? "find-file" : "find-browser");

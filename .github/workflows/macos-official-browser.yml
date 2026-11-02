@@ -4,9 +4,14 @@ on:
   push:
     branches: [work/official-browser-integration]
     paths:
-      - backend/macos-browser-identity.mjs
-      - backend/macos-browser-transport.mjs
-      - backend/macos-official-runtime.mjs
+      - backend/**
+      - ui/**
+      - shared/**
+      - native/macos/**
+      - package.json
+      - package-lock.json
+      - scripts/build-macos.mjs
+      - scripts/macos-node-runtime.mjs
       - scripts/macos-official-mcp.mjs
       - scripts/check-macos-official-browser.mjs
       - scripts/macos-browser-runtime.mjs
@@ -160,6 +165,10 @@ jobs:
                         }
                         guard ready,host.window === runtime.window,host.web.window === runtime.window else { throw failure("The product frontend did not load in the CEF root") }
                         print("HOST_FRONTEND_READY");let backend=try await host.startBackend()
+                        let runtimeStatus=try await host.handle("system.status",[:]) as! [String:Any]
+                        guard runtimeStatus["nodeBundled"] as? Bool == true,runtimeStatus["nodeReady"] as? Bool == true,
+                          (runtimeStatus["nodePath"] as? String ?? "").hasPrefix(Bundle.main.resourceURL!.appendingPathComponent("node").path + "/") else { throw failure("The product did not report its actual bundled Node runtime") }
+                        print("HOST_BUNDLED_NODE_STATUS_PASS")
                         let snapshot=try await host.call(backend,"snapshot") as! [String:Any]
                         guard let accounts=snapshot["accounts"] as? [Any],accounts.isEmpty else { throw failure("The isolated Host did not have an empty account store") }
                         _=try await host.call(backend,"settings.save",params:["fontSize":15])

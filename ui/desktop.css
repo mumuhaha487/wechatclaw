@@ -1804,7 +1804,7 @@ select:focus-visible {
 .browser-tabs-bar > .icon-button { width: 28px; height: 28px; min-width: 28px; }
 .browser-idle-tab { display: flex; align-items: center; gap: 8px; padding: 0 9px; font-size: 12px; }
 .browser-idle-tab .icon { width: 15px; height: 15px; }
-.browser-toolbar { display: flex; align-items: center; gap: 7px; min-height: 55px; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+.browser-toolbar { position: relative; display: flex; align-items: center; gap: 7px; min-height: 48px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
 .browser-navigation { display: flex; align-items: center; gap: 1px; }
 .browser-toolbar .icon-button { width: 28px; min-width: 28px; height: 30px; border-radius: 50%; }
 .browser-toolbar .icon { width: 17px; height: 17px; }
@@ -1822,7 +1822,7 @@ select:focus-visible {
 .browser-start button { margin-top: 8px; font-size: 12px; }
 .browser-error { display: flex; align-items: center; gap: 7px; padding: 8px 12px; font-size: 12px; color: var(--muted); background: var(--tile); }
 .browser-error .icon { width: 15px; height: 15px; flex-shrink: 0; }
-.browser-loading-line { position: absolute; top: 98px; left: 0; right: 0; height: 2px; pointer-events: none; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: browser-loading 1.4s ease-in-out infinite; }
+.browser-loading-line { position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; pointer-events: none; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: browser-loading 1.4s ease-in-out infinite; }
 .work-panel.browser-panel.maximized { width: auto; max-width: none; }
 .browser-tab .spinning { animation: browser-spin 1s linear infinite; }
 @keyframes browser-spin { to { transform: rotate(360deg); } }
@@ -1854,9 +1854,6 @@ select:focus-visible {
 .context-usage.unknown .context-ring { opacity: .4; }
 .context-menu button:disabled { opacity: 1; cursor: default; color: var(--muted); }
 .context-menu button:disabled:hover { background: transparent; }
-.browser-connection-note { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 12px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line); }
-.browser-connection-note span { flex: 1; min-width: 0; }
-.browser-connection-note button { border: 0; padding: 2px 4px; font-size: 11px; font-weight: 400; background: transparent; color: var(--text); }
 .browser-loading-line { top: 128px; }
 .message-actions time { font-size: 11px; color: var(--muted); }
 .message-actions .message-model { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; opacity: .7; }

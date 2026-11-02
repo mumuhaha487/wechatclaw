@@ -378,7 +378,8 @@ internal sealed class DesktopWindow : Form {
                 }
             } catch (Exception failure) { error = failure.Message; }
         }
-        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeError = error, dataDir = Program.DataDirectory, version = BuildInfo.Version, desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
+        bool bundled = String.Equals(node, Path.Combine(Program.RuntimeDirectory, "official-browser", "node", "bin", "node.exe"), StringComparison.OrdinalIgnoreCase);
+        return new { nodePath = node, nodeVersion = version, nodeReady = ready, nodeBundled = bundled, nodeError = error, dataDir = Program.DataDirectory, version = BuildInfo.Version, desktop = DesktopIntegration.Status(), webview = view.CoreWebView2.Environment.BrowserVersionString };
     }
     private Task<string> ReadNodeVersion(string node) { return ReadNodeVersion(node, 5); }
     private async Task<string> ReadNodeVersion(string node, int timeoutSeconds) {
@@ -530,6 +531,9 @@ internal sealed class DesktopWindow : Form {
         var process = new Process { StartInfo = new ProcessStartInfo(node, Quote(npm) + " install -g @openai/codex") {
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true } };
         process.StartInfo.EnvironmentVariables["PATH"] = Path.GetDirectoryName(node) + ";" + FullPathEnvironment();
+        // The bundled Node directory is replaced during application upgrades.
+        // Keep installed Codex in the persistent user npm directory instead.
+        process.StartInfo.EnvironmentVariables["npm_config_prefix"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm");
         process.StartInfo.WorkingDirectory = Program.DataDirectory;
         process.Start(); if (job != IntPtr.Zero) AssignProcessToJobObject(job, process.Handle);
         var output = process.StandardOutput.ReadToEndAsync(); var errors = process.StandardError.ReadToEndAsync();
