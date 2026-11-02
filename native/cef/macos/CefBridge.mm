@@ -58,6 +58,7 @@ struct Download {
 };
 std::map<uint32_t, Download> downloads;
 std::set<int> retiredPages;
+std::set<int> finalizingPages;
 std::unique_ptr<CefScopedLibraryLoader> loader;
 bool closing = false;
 CefRect requestedBounds;
@@ -187,6 +188,7 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
     return true;
   }
   void OnDownloadUpdated(CefRefPtr<CefBrowser> page, CefRefPtr<CefDownloadItem> item, CefRefPtr<CefDownloadItemCallback> callback) override {
+    if (!pages.count(page->GetIdentifier()) || finalizingPages.count(page->GetIdentifier())) { if (item->IsInProgress()) callback->Cancel(); return; }
     const uint32_t id = item->GetId();
     auto& value = downloads[id]; value.tab = page->GetIdentifier(); value.owner = ownerFor(page).UTF8String; value.callback = callback;
     const bool ended = !item->IsInProgress();
@@ -220,6 +222,7 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
     if (closing) value->GetHost()->CloseBrowser(true);
   }
   void OnBeforeClose(CefRefPtr<CefBrowser> value) override {
+    finalizingPages.insert(value->GetIdentifier());
     stopFind(value); finding.erase(value->GetIdentifier());
     retiredPages.erase(value->GetIdentifier());
     for (auto it = downloads.begin(); it != downloads.end();) {
@@ -233,6 +236,7 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
     NSString* owner = @(owners[value->GetIdentifier()].c_str());
     views.erase(value->GetIdentifier()); owners.erase(value->GetIdentifier());
     titles.erase(value->GetIdentifier()); markers.erase(value->GetIdentifier());
+    finalizingPages.erase(value->GetIdentifier());
     if (!closing && browserView && browserView->GetBrowser() && browserView->GetBrowser()->IsSame(value)) {
       shell.browserVisible = NO; [shell updateMask];
     }
@@ -279,8 +283,9 @@ class BrowserViewDelegate final : public CefBrowserViewDelegate {
     auto value = popup->GetBrowser();
     if (!value) return false;
     views[value->GetIdentifier()] = popup;
-    openBrowserWindow(popup, browserView && opener->IsSame(browserView));
-    emit(@{@"event": @"popup-adopted", @"tabId": @(value->GetIdentifier()), @"owner": ownerFor(value)});
+    const bool activate = browserView && opener->IsSame(browserView);
+    openBrowserWindow(popup, activate);
+    emit(@{@"event": @"popup-adopted", @"tabId": @(value->GetIdentifier()), @"owner": ownerFor(value), @"active": @(activate)});
     return true;
   }
  private:

@@ -43,7 +43,15 @@ jobs:
           console.log('Using a real encrypted disposable keychain in this ephemeral CI runner.');
           NODE
       - name: Typecheck the production Swift runtime adapter
-        run: xcrun swiftc -swift-version 5 -parse-as-library -typecheck native/macos/QQClaw.swift native/macos/BrowserHost.swift native/macos/CefRuntime.swift
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';import path from 'node:path';import {execFileSync} from 'node:child_process';
+          const source=await fs.readFile('native/macos/QQClaw.swift','utf8'),workflow=await fs.readFile('.github/workflows/macos-official-browser.yml','utf8');
+          const marker='const main=String.raw'+String.fromCharCode(96),start=workflow.indexOf(marker)+marker.length,end=workflow.indexOf('\n          '+String.fromCharCode(96)+';',start);
+          if(start<marker.length||end<0)throw Error('Native check entry not found');
+          const file=path.join(process.env.RUNNER_TEMP,'HostTypecheck.swift');await fs.writeFile(file,source.slice(0,source.indexOf('@main struct QQClawMain'))+workflow.slice(start,end));
+          execFileSync('/usr/bin/xcrun',['swiftc','-swift-version','5','-parse-as-library','-typecheck',file,'native/macos/BrowserHost.swift','native/macos/CefRuntime.swift'],{stdio:'inherit'});
+          NODE
       - name: Package the product MCP entry
         run: |
           node --input-type=module <<'NODE'
@@ -111,6 +119,10 @@ jobs:
           import {macPayload} from './scripts/build-macos.mjs';
           import {bundleMacNode} from './scripts/macos-node-runtime.mjs';
           import {prepareOfficialBrowser,discoverOfficialBrowser} from './backend/official-browser.mjs';
+          import {openMacOfficialRuntime} from './backend/macos-official-runtime.mjs';
+          import {BrowserAccessHost} from './backend/browser-access.mjs';
+          import {elicitationForm,simpleConsent,validateForm} from './backend/codex-approvals.mjs';
+          import {randomUUID} from 'node:crypto';
           const run=promisify(execFile),root=process.cwd(),base=path.join(process.env.RUNNER_TEMP,'host-preview');
           const proof=path.join(process.env.RUNNER_TEMP,'official-browser-proof');await fs.mkdir(base,{recursive:true});
           const built=JSON.parse(await fs.readFile(path.join(process.env.RUNNER_TEMP,'browser-build/mac-browser-build.json'),'utf8'));
@@ -189,6 +201,31 @@ jobs:
                           if downloaded != nil { break };try await Task.sleep(nanoseconds:100_000_000)
                         }
                         guard let path=downloaded?["path"] as? String,try String(contentsOfFile:path,encoding:.utf8)=="QQClaw native download fixture" else { throw failure("Product CEF download did not save the actual fixture content") }
+                        let slowTab=(try await control("newTab"))["activeTab"] as! String
+                        _=try await control("open",["tabId":slowTab,"url":fixture+"slow"])
+                        var started=false
+                        for _ in 0..<100 {
+                          let state=try await host.handle("browser.downloads",["action":"state"]) as! [String:Any]
+                          if (state["items"] as? [[String:Any]] ?? []).contains(where:{$0["url"] as? String == fixture+"slow" && $0["status"] as? String == "running" && (($0["received"] as? NSNumber)?.int64Value ?? 0)>0}) { started=true;break }
+                          try await Task.sleep(nanoseconds:50_000_000)
+                        }
+                        guard started else { throw failure("Slow fixture did not actually start downloading") }
+                        _=try await control("closeTab",["tabId":slowTab])
+                        var slowDownload:[String:Any]?
+                        for _ in 0..<200 {
+                          let state=try await host.handle("browser.downloads",["action":"state"]) as! [String:Any]
+                          slowDownload=(state["items"] as? [[String:Any]] ?? []).first(where:{$0["url"] as? String == fixture+"slow" && $0["status"] as? String == "completed"})
+                          if slowDownload != nil { break };try await Task.sleep(nanoseconds:50_000_000)
+                        }
+                        guard let slowPath=slowDownload?["path"] as? String,try Data(contentsOf:URL(fileURLWithPath:slowPath)) == Data(repeating:120,count:64*4096),
+                          !(try await control("state")["tabs"] as? [[String:Any]] ?? []).contains(where:{$0["id"] as? String == slowTab}) else { throw failure("Closing the tab interrupted or corrupted its download") }
+                        _=try await control("selectTab",["tabId":tab])
+                        _=try await control("open",["tabId":tab,"url":fixture])
+                        for _ in 0..<100 {
+                          let state=try await control("state")
+                          if state["url"] as? String == fixture,state["loading"] as? Bool == false { break }
+                          try await Task.sleep(nanoseconds:50_000_000)
+                        }
                         let history=try await host.handle("browser.history",["action":"state"]) as! [String:Any]
                         guard (history["items"] as? [[String:Any]] ?? []).contains(where:{$0["url"] as? String == fixture}) else { throw failure("Product browser history did not preserve the actual page") }
                         print("HOST_BROWSER_UI_PASS: actual page, embedding, find, new/select/close, download content and encrypted history")
@@ -204,6 +241,16 @@ jobs:
                         }
                         guard acknowledged else { throw failure("The actual product's official browser binding timed out") }
                         print("HOST_OFFICIAL_BINDING_PASS")
+                        var popup:[String:Any]=[:]
+                        for _ in 0..<200 {
+                          popup=try await control("state")
+                          if popup["title"] as? String == "QQClaw popup fixture",popup["url"] as? String == fixture+"popup" { break }
+                          try await Task.sleep(nanoseconds:50_000_000)
+                        }
+                        guard popup["title"] as? String == "QQClaw popup fixture",popup["url"] as? String == fixture+"popup",let popupId=popup["activeTab"] as? String,popupId != tab,
+                          runtime.state["browserWindowMatchesRoot"] as? Bool == true,runtime.state["shellWindowMatchesRoot"] as? Bool == true else { throw failure("The actual official popup and the application's selected tab diverged") }
+                        _=try await control("closeTab",["tabId":popupId])
+                        print("HOST_POPUP_AND_DOWNLOAD_CLOSE_PASS")
                         let image: NSImage = try await withCheckedThrowingContinuation { continuation in
                           host.web.takeSnapshot(with:nil) { image,error in
                             if let image { continuation.resume(returning:image) }
@@ -244,7 +291,11 @@ jobs:
           for(const arch of ['arm64','x64'])await run('/usr/bin/codesign',['--force','--sign','-',path.join(resources,'node',arch,'bin/node')]);
           await run('/usr/bin/codesign',['--force','--sign','-',app]);
           await run('/usr/bin/codesign',['--verify','--deep','--strict',app]);
-          const fixture=http.createServer((request,response)=>{if(request.url==='/download'){response.writeHead(200,{'content-type':'application/octet-stream','content-disposition':'attachment; filename="native-proof.txt"'});response.end('QQClaw native download fixture');}else{response.writeHead(200,{'content-type':'text/html; charset=utf-8'});response.end('<!doctype html><meta charset="utf-8"><title>QQClaw Host browser fixture</title><h1>QQClaw native browser fixture</h1><p>Second fixture match.</p>');}});
+          const fixture=http.createServer((request,response)=>{
+            if(request.url==='/download'){response.writeHead(200,{'content-type':'application/octet-stream','content-disposition':'attachment; filename="native-proof.txt"'});response.end('QQClaw native download fixture');}
+            else if(request.url==='/slow'){response.writeHead(200,{'content-type':'application/octet-stream','content-disposition':'attachment; filename="slow-proof.txt"','content-length':64*4096});let count=0;const timer=setInterval(()=>{response.write(Buffer.alloc(4096,120));if(++count===64){clearInterval(timer);response.end();}},50);response.once('close',()=>clearInterval(timer));}
+            else {response.writeHead(200,{'content-type':'text/html; charset=utf-8'});response.end(request.url==='/popup'?'<title>QQClaw popup fixture</title><h1>Actual popup page</h1>':'<!doctype html><meta charset="utf-8"><title>QQClaw Host browser fixture</title><h1>QQClaw native browser fixture</h1><p>Second fixture match.</p><a href="/popup" target="_blank">Open owned popup</a>');}
+          });
           await new Promise(resolve=>fixture.listen(0,'127.0.0.1',resolve));
           const bindingRoot=path.join(base,'official-binding');
           const running=run(binary,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(base,'data'),CODEX_HOME:path.join(base,'codex'),QQCLAW_HOST_FIXTURE:'http://127.0.0.1:'+fixture.address().port+'/',QQCLAW_HOST_BINDING:bindingRoot,QQCLAW_DOWNLOADS_DIR:path.join(base,'downloads'),QQCLAW_HOST_IMAGE:path.join(proof,'host-preview.png'),QQCLAW_HOST_RESULT:path.join(proof,'host-preview.json')},timeout:180000,maxBuffer:2*1024*1024});
@@ -259,7 +310,32 @@ jobs:
               const configuration=await prepareOfficialBrowser({session:{id:record.owner},executable:installation.paths.codexCliPath,directory:path.join(base,'data'),discovery:async()=>installation,
                 native:async(method,params)=>{if(method!=='browser.control'||params.action!=='prepareOfficial'||params.owner!==record.owner)throw Error('Unexpected product native request');return record.native;}});
               if(!configuration.available||configuration.platform!=='darwin')throw Error('The product official browser configuration is unavailable');
-              await fs.writeFile(path.join(proof,'host-official-binding.json'),JSON.stringify({passed:true,owner:record.owner,engine:configuration.engine,platform:configuration.platform,tabCreation:configuration.tabCreation,scope:'Production prepareOfficialBrowser with the actual Swift Host profile, packaged original runtime, copied original host and original user.openTabs identity API. No model or WeChat.'},null,2));
+              const turnId=randomUUID();
+              const access=await new BrowserAccessHost({authorize:request=>request.sessionId===record.owner&&request.turnId===turnId}).start();
+              let runtime;
+              try {
+                runtime=await openMacOfficialRuntime({cli:installation.paths.codexCliPath,nodeRepl:installation.paths.nodeReplPath,cwd:base,env:{...process.env,...configuration.env,...access.environment}});
+                runtime.stderr.resume();runtime.stdout.setEncoding('utf8');let buffer='',next=0;const requests=new Map();
+                runtime.stdout.on('data',chunk=>{buffer+=chunk;while(buffer.includes('\n')){const at=buffer.indexOf('\n'),line=buffer.slice(0,at);buffer=buffer.slice(at+1);if(!line.trim())continue;const message=JSON.parse(line),request=requests.get(message.id);
+                  if(request){clearTimeout(request.timer);requests.delete(message.id);message.error?request.reject(Error(JSON.stringify(message.error))):request.resolve(message.result);}
+                  else if(message.id!==undefined&&message.method){const meta=message.params?._meta||message.params?.meta||{},form=elicitationForm({...message.params,mode:message.params?.mode||'form'}),content=form?simpleConsent(form):null;
+                    const allowed=message.method==='elicitation/create'&&meta.connector_id==='browser-use'&&meta.tool_name==='access_browser_origin'&&meta.origin==='http://127.0.0.1:'+fixture.address().port&&meta.tool_params?.origin===meta.origin&&content!==null;
+                    if(allowed)validateForm(form,content);
+                    runtime.stdin.write(JSON.stringify(message.method==='elicitation/create'?{jsonrpc:'2.0',id:message.id,result:{action:allowed?'accept':'decline',content:allowed?content:null,_meta:null}}:{jsonrpc:'2.0',id:message.id,error:{code:-32601,message:'Outside the owned fixture'}})+'\n');
+                  }
+                }});
+                const request=(method,params)=>new Promise((resolve,reject)=>{const id=++next,timer=setTimeout(()=>{requests.delete(id);reject(Error('Official product popup request timed out'))},45000);requests.set(id,{resolve,reject,timer});runtime.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+                await request('initialize',{protocolVersion:'2025-06-18',capabilities:{elicitation:{form:{}}},clientInfo:{name:'qqclaw_owned_product_popup_check',version:'1'}});
+                runtime.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+                const call=async code=>{const result=await request('tools/call',{name:'js',arguments:{code,timeout_ms:30000},_meta:{'x-codex-turn-metadata':{session_id:record.owner,turn_id:turnId,thread_source:'qqclaw_product_popup_check'}}});if(result.isError)throw Error((result.content||[]).filter(x=>x.type==='text').map(x=>x.text).join('\n'));return result;};
+                await call('var {setupBrowserRuntime}=await import('+JSON.stringify(configuration.clientUrl)+');var agent=await setupBrowserRuntime()');
+                await call('var browsers=await agent.browsers.list();if(browsers.length!==1)throw Error("Expected one bound browser");var browser=await agent.browsers.get(browsers[0].id);nodeRepl.write(await browser.documentation())');
+                const address='http://127.0.0.1:'+fixture.address().port+'/';
+                await call('await browser.nameSession("🔎 QQClaw 弹窗检查");var pages=await browser.user.openTabs();var own=pages.find(page=>page.url==='+JSON.stringify(address)+');if(!own)throw Error("The actual product fixture page was not found");var tab=await browser.user.claimTab(own);nodeRepl.write(await tab.playwright.domSnapshot())');
+                const popupResult=await call('await tab.playwright.getByRole("link",{name:"Open owned popup",exact:true}).click();nodeRepl.write(await browser.tabs.list())');
+                await fs.writeFile(path.join(proof,'host-official-popup.json'),JSON.stringify(popupResult,null,2));
+              } finally {if(runtime)await runtime.close();await access.close();}
+              await fs.writeFile(path.join(proof,'host-official-binding.json'),JSON.stringify({passed:true,owner:record.owner,engine:configuration.engine,platform:configuration.platform,tabCreation:configuration.tabCreation,approvalSource:'isolated-fixture-owner',scope:'Production prepareOfficialBrowser with the actual Swift Host profile, packaged original runtime, copied original host, original identity API and actual link click opening a popup. No model or WeChat.'},null,2));
               await fs.writeFile(bindingRoot+'.ack.json',JSON.stringify({passed:true}));
             }catch(error){await fs.writeFile(path.join(proof,'host-official-binding.json'),JSON.stringify({passed:false,error:error.message},null,2));await fs.writeFile(bindingRoot+'.ack.json',JSON.stringify({passed:false}));throw error;}
           })();
@@ -280,7 +356,7 @@ jobs:
           const output=path.join(process.env.RUNNER_TEMP,'official-browser-proof');await fs.mkdir(output,{recursive:true});
           for(const name of await fs.readdir(reports).catch(()=>[]))if(/^QQClaw(?:Browser)?[-_].*\.ips$/.test(name))await fs.copyFile(path.join(reports,name),path.join(output,name));
           NODE
-      - name: Build the self-contained Apple Silicon browser candidate
+      - name: Build the self-contained universal browser candidate
         if: success()
         run: |
           node --input-type=module <<'NODE'

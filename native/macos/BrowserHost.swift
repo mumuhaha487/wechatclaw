@@ -55,6 +55,7 @@ import CryptoKit
         }
         if event == "profile-ready" { ready.insert(owner) }
         let id = value["tabId"] as? Int ?? 0
+        if event == "popup-adopted", value["active"] as? Bool == true { selected[owner] = id }
         if event == "navigation" { navigation[id, default: 0] += 1; errors.removeValue(forKey: id) }
         if event == "load-error" { errors[id] = value["error"] as? String ?? "网页加载失败。" }
         if event == "load-end", let url = value["url"] as? String, BrowserHost.allowed(url) {
