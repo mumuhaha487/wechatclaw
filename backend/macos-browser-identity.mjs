@@ -8,7 +8,7 @@ import { BrowserAccessHost } from "./browser-access.mjs";
 import { macOfficialTransports } from "./macos-browser-transport.mjs";
 
 export async function matchMacBrowserProfile({ installation, identityUrl, sessionId, directory, browserPid, applicationPid, nativeHost, observe = () => {} }) {
-  const deadline = Date.now() + 22000;
+  const deadline = Date.now() + 60000;
   do {
     const candidates = await macOfficialTransports({ browserPid, applicationPid, nativeHost, timeoutMs: Math.max(1, deadline - Date.now()) });
     const matches = [];
@@ -71,14 +71,14 @@ export async function inspectMacBrowserIdentity({ installation, transport, ident
     void runtime.done.then(() => rejectPending(new Error("官方浏览识别进程已退出。")));
     const request = (method, params) => new Promise((resolve, reject) => {
       const id = ++sequence;
-      const timer = setTimeout(() => { pending.delete(id); reject(new Error("官方浏览会话识别超时。")); }, 20000);
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error("官方浏览会话识别超时。")); }, 45000);
       pending.set(id, { resolve, reject, timer });
       runtime.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
     });
     await request("initialize", { protocolVersion: "2025-06-18", capabilities: { elicitation: { form: {} } }, clientInfo: { name: "qqclaw_profile_discovery", version: "1" } });
     runtime.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
     const call = async code => {
-      const result = await request("tools/call", { name: "js", arguments: { code, timeout_ms: 15000 },
+      const result = await request("tools/call", { name: "js", arguments: { code, timeout_ms: 30000 },
         _meta: { "x-codex-turn-metadata": { session_id: sessionId, turn_id: turnId, thread_source: "qqclaw_profile_discovery" } } });
       if (result.isError) throw new Error("官方浏览接口无法确认会话归属：" + (result.content || []).filter(item => item.type === "text").map(item => item.text).join("\n"));
       return result;
