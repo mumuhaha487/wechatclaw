@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #include <memory>
 #include <map>
+#include <set>
 #include <string>
 #include <algorithm>
 #include "include/cef_app.h"
@@ -34,6 +35,7 @@ std::map<std::string, CefRefPtr<CefRequestContext>> profiles;
 std::map<int, std::string> owners;
 std::map<int, CefRefPtr<CefBrowserView>> views;
 std::map<int, NSString*> titles;
+std::set<int> markers;
 std::unique_ptr<CefScopedLibraryLoader> loader;
 bool closing = false;
 CefRect requestedBounds;
@@ -113,12 +115,14 @@ namespace {
 class BrowserClient final : public CefClient, public CefLifeSpanHandler,
                             public CefLoadHandler, public CefDisplayHandler {
  public:
+  explicit BrowserClient(bool marker = false) : marker_(marker) {}
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   void OnAfterCreated(CefRefPtr<CefBrowser> value) override {
     if (pages.empty()) browser = value;
     pages[value->GetIdentifier()] = value;
+    if (marker_) markers.insert(value->GetIdentifier());
     NSString* owner = ownerFor(value);
     owners[value->GetIdentifier()] = owner.UTF8String;
     auto view = CefBrowserView::GetForBrowser(value);
@@ -132,7 +136,7 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
     pages.erase(value->GetIdentifier());
     NSString* owner = @(owners[value->GetIdentifier()].c_str());
     views.erase(value->GetIdentifier()); owners.erase(value->GetIdentifier());
-    titles.erase(value->GetIdentifier());
+    titles.erase(value->GetIdentifier()); markers.erase(value->GetIdentifier());
     if (!closing && browserView && browserView->GetBrowser() && browserView->GetBrowser()->IsSame(value)) {
       shell.browserVisible = NO; [shell updateMask];
     }
@@ -160,6 +164,7 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
     if (frame->IsMain()) emit(@{@"event": @"address", @"tabId": @(value->GetIdentifier()), @"url": @(url.ToString().c_str())});
   }
  private:
+  bool marker_;
   IMPLEMENT_REFCOUNTING(BrowserClient);
 };
 class BrowserViewDelegate final : public CefBrowserViewDelegate {
@@ -414,9 +419,32 @@ const char* QQClawCefControl(const char* json) {
       auto context = CefRequestContext::CreateContext(settings, nullptr);
       profiles[owner.UTF8String] = context;
       CefBrowserSettings browserSettings;
-      auto view = CefBrowserView::CreateBrowserView(new BrowserClient, "about:blank", browserSettings, nullptr, context, new BrowserViewDelegate);
+      NSString* identity = [@"about:blank#qqclaw-profile-" stringByAppendingString:key];
+      NSString* initial = [@"about:blank#qqclaw-working-" stringByAppendingString:key];
+      auto marker = CefBrowserView::CreateBrowserView(new BrowserClient(true), identity.UTF8String, browserSettings, nullptr, context, new BrowserViewDelegate);
+      openBrowserWindow(marker, false);
+      auto view = CefBrowserView::CreateBrowserView(new BrowserClient, initial.UTF8String, browserSettings, nullptr, context, new BrowserViewDelegate);
       openBrowserWindow(view, request[@"activate"] == nil || [request[@"activate"] boolValue]);
-      result = @{@"created": @YES, @"owner": owner, @"profileDirectory": directory};
+      auto page = view->GetBrowser();
+      result = @{@"created": @YES, @"owner": owner, @"profileDirectory": directory,
+        @"identityUrl": identity, @"initialUrl": initial, @"tabId": page ? @(page->GetIdentifier()) : @0};
+    }
+  } else if ([action isEqual:@"newTab"]) {
+    auto context = [owner isKindOfClass:NSString.class] ? profiles.find(owner.UTF8String) : profiles.end();
+    if (context == profiles.end()) result = @{@"error": @"The browser profile is not prepared"};
+    else {
+      CefBrowserSettings settings;
+      auto view = CefBrowserView::CreateBrowserView(new BrowserClient, "about:blank", settings, nullptr, context->second, new BrowserViewDelegate);
+      openBrowserWindow(view, request[@"activate"] == nil || [request[@"activate"] boolValue]);
+      auto page = view->GetBrowser();
+      result = @{@"created": @YES, @"tabId": page ? @(page->GetIdentifier()) : @0};
+    }
+  } else if ([action isEqual:@"dispose"]) {
+    if (![owner isKindOfClass:NSString.class] || ![[NSUUID alloc] initWithUUIDString:owner]) result = @{@"error": @"Invalid browser owner"};
+    else {
+      const auto open = pages;
+      for (const auto& page : open) if (owners[page.first] == owner.UTF8String) page.second->GetHost()->CloseBrowser(true);
+      profiles.erase(owner.UTF8String); result = @{@"disposed": @YES};
     }
   } else {
     int identifier = [request[@"tabId"] intValue];
@@ -425,7 +453,7 @@ const char* QQClawCefControl(const char* json) {
     bool valid = found != pages.end() && [owner isKindOfClass:NSString.class] && owned != owners.end() && owned->second == owner.UTF8String;
     if ([action isEqual:@"tabs"]) {
       NSMutableArray* tabs = [NSMutableArray new];
-      for (const auto& page : pages) if (owners[page.first] == (owner ? owner.UTF8String : "")) {
+      for (const auto& page : pages) if (!markers.count(page.first) && owners[page.first] == (owner ? owner.UTF8String : "")) {
         auto frame = page.second->GetMainFrame();
         auto view = CefBrowserView::GetForBrowser(page.second);
         id handle = (__bridge id)(void*)page.second->GetHost()->GetWindowHandle();

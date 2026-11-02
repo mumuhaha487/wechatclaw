@@ -5,6 +5,24 @@ import { StringDecoder } from "node:string_decoder";
 import { pathToFileURL } from "node:url";
 import { openMacOfficialRuntime } from "./macos-official-runtime.mjs";
 import { BrowserAccessHost } from "./browser-access.mjs";
+import { macOfficialTransports } from "./macos-browser-transport.mjs";
+
+export async function matchMacBrowserProfile({ installation, identityUrl, sessionId, directory, browserPid, applicationPid, nativeHost, observe = () => {} }) {
+  const deadline = Date.now() + 22000;
+  do {
+    const candidates = await macOfficialTransports({ browserPid, applicationPid, nativeHost, timeoutMs: Math.max(1, deadline - Date.now()) });
+    const matches = [];
+    for (const transport of candidates) {
+      const result = await inspectMacBrowserIdentity({ installation, transport, identityUrl, sessionId, directory });
+      observe({ hostPid: transport.hostPid, ...result });
+      if (result.matched) matches.push(transport);
+    }
+    if (matches.length > 1) throw new Error("多个浏览配置包含同一个会话标记，无法确认账号归属。");
+    if (matches.length === 1) return { ...matches[0], identityVerified: true };
+    await new Promise(resolve => setTimeout(resolve, 250));
+  } while (Date.now() < deadline);
+  throw new Error("官方接口未找到本会话的浏览配置。");
+}
 
 // Read-only connection discovery through the original official MCP/API. A
 // profile is identified by the private marker page created by our native UI.

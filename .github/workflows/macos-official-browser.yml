@@ -80,6 +80,17 @@ jobs:
           const child=spawn(process.execPath,['scripts/check-macos-official-browser.mjs','--output',path.join(process.env.RUNNER_TEMP,'official-browser-proof'),'--runtime',path.join(root,'runtime'),'--cli',cli,'--build',path.join(process.env.RUNNER_TEMP,'browser-build'),'--mcp-entry',path.join(process.env.RUNNER_TEMP,'mcp-product/macos-official-mcp.cjs'),'--tab-mode','claim'],{stdio:'inherit'});
           const code=await new Promise(resolve=>child.on('exit',resolve));if(code!==0)throw Error('Official browser component check failed');
           NODE
+      - name: Verify independent official extension profiles
+        if: ${{ !cancelled() }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';import path from 'node:path';import {spawn} from 'node:child_process';
+          const root=path.join(process.env.RUNNER_TEMP,'official-runtime');
+          const manifest=JSON.parse(await fs.readFile(path.join(root,'runtime/runtime.json'),'utf8'));
+          const cli=path.join(root,'runtime',manifest.paths.codexCliPath);
+          const child=spawn(process.execPath,['scripts/check-macos-official-browser.mjs','--output',path.join(process.env.RUNNER_TEMP,'official-browser-profiles'),'--runtime',path.join(root,'runtime'),'--cli',cli,'--build',path.join(process.env.RUNNER_TEMP,'browser-build'),'--mcp-entry',path.join(process.env.RUNNER_TEMP,'mcp-product/macos-official-mcp.cjs'),'--tab-mode','claim','--profile-isolation'],{stdio:'inherit'});
+          const code=await new Promise(resolve=>child.on('exit',resolve));if(code!==0)throw Error('Official browser component check failed');
+          NODE
       - name: Run the product Swift Host with the packaged frontend and real empty backend
         if: ${{ !cancelled() }}
         run: |
@@ -102,6 +113,8 @@ jobs:
           @main struct HostPreview {
             @MainActor static func main() {
               launchBackendIfRequested(); signal(SIGPIPE,SIG_IGN); setbuf(stdout,nil);print("HOST_BEGIN")
+              func signingStatus() -> OSStatus { var code:SecCode?;let status=SecCodeCopySelf(SecCSFlags(rawValue:0),&code);return status == errSecSuccess ? SecCodeCheckValidity(code!,SecCSFlags(rawValue:0),nil) : status }
+              print("HOST_SIGNING_BEFORE_CEF " + String(signingStatus()))
               let host=Host(); var errorText="",checking=false
               do {
                 try host.prepareEnvironment()
@@ -109,6 +122,7 @@ jobs:
                 host.cef=runtime
                 runtime.onEvent={ value in
                   print("HOST_EVENT " + (value["event"] as? String ?? "unknown"));host.cefEvent(value)
+                  if value["event"] as? String == "root-created" { print("HOST_SIGNING_AFTER_CEF " + String(signingStatus())) }
                   if value["event"] as? String == "root-created", !checking {
                     checking=true
                     Task { @MainActor in
@@ -155,6 +169,8 @@ jobs:
           }
           `;
           const instrumented=source.slice(0,offset)
+            .replace('let status = SecItemCopyMatching(lookup as CFDictionary, &result)','print("HOST_VAULT_LOOKUP_BEGIN");let status = SecItemCopyMatching(lookup as CFDictionary, &result);print("HOST_VAULT_LOOKUP_STATUS "+String(status))')
+            .replace('let added = SecItemAdd(insert as CFDictionary, nil)','print("HOST_VAULT_ADD_BEGIN");let added = SecItemAdd(insert as CFDictionary, nil);print("HOST_VAULT_ADD_STATUS "+String(added))')
             .replace('guard backend === child else { return }','print("HOST_RECV " + String(describing:message["kind"]) + " " + String(describing:message["method"]) + " " + String(describing:message["id"]));guard backend === child else { return }')
             .replace('try child.process.run(); backend = child','try child.process.run();print("HOST_BACKEND_PID "+String(child.process.processIdentifier)); backend = child')
             .replace('while let chunk = try? readPipe(child.errors.fileHandleForReading), !chunk.isEmpty {}','while let chunk = try? readPipe(child.errors.fileHandleForReading), !chunk.isEmpty { print("HOST_BACKEND_STDERR "+String(decoding:chunk.prefix(2048),as:UTF8.self)) }');
@@ -163,8 +179,13 @@ jobs:
           for(const arch of ['arm64','x64'])await run('/usr/bin/codesign',['--force','--sign','-',path.join(resources,'node',arch,'bin/node')]);
           await run('/usr/bin/codesign',['--force','--sign','-',app]);
           await run('/usr/bin/codesign',['--verify','--deep','--strict',app]);
-          try {const result=await run(binary,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(base,'data'),CODEX_HOME:path.join(base,'codex'),QQCLAW_HOST_IMAGE:path.join(proof,'host-preview.png'),QQCLAW_HOST_RESULT:path.join(proof,'host-preview.json')},timeout:60000,maxBuffer:2*1024*1024});await fs.writeFile(path.join(proof,'host-preview.log'),result.stdout+result.stderr);}
+          const running=run(binary,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(base,'data'),CODEX_HOME:path.join(base,'codex'),QQCLAW_HOST_IMAGE:path.join(proof,'host-preview.png'),QQCLAW_HOST_RESULT:path.join(proof,'host-preview.json')},timeout:60000,maxBuffer:2*1024*1024});
+          let sampling;
+          const timer=setTimeout(()=>{if(running.child?.pid)sampling=run('/usr/bin/sample',[String(running.child.pid),'1','1','-file',path.join(proof,'host-native-sample.log')],{timeout:10000,maxBuffer:1024*1024}).catch(error=>fs.writeFile(path.join(proof,'host-sample-error.log'),error.message));},12000);
+          try {const result=await running;await fs.writeFile(path.join(proof,'host-preview.log'),result.stdout+result.stderr);}
           catch(error){await fs.writeFile(path.join(proof,'host-preview.log'),(error.stdout||'')+(error.stderr||'')+'\n'+error.message);throw error;}
+          finally {clearTimeout(timer);if(sampling)await sampling;const log=path.join(base,'data/logs/backend.log');await fs.copyFile(log,path.join(proof,'host-backend.log')).catch(()=>{});}
+
           NODE
       - name: Preserve crash diagnostics from the owned native components
         if: ${{ !cancelled() }}
@@ -180,6 +201,10 @@ jobs:
         with:
           name: mac-official-browser-evidence
           path: |
+            ${{ runner.temp }}/official-browser-profiles/*.json
+            ${{ runner.temp }}/official-browser-profiles/*.log
+            ${{ runner.temp }}/official-browser-profiles/*.png
+            ${{ runner.temp }}/official-browser-profiles/*.jpg
             ${{ runner.temp }}/official-browser-proof/*.ips
             ${{ runner.temp }}/official-browser-proof/*.json
             ${{ runner.temp }}/official-browser-proof/*.log

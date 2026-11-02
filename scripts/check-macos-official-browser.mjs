@@ -5,8 +5,8 @@ import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
-import { macOfficialTransport } from "../backend/macos-browser-transport.mjs";
-import { inspectMacBrowserIdentity } from "../backend/macos-browser-identity.mjs";
+import { macOfficialTransports, macOfficialTransport } from "../backend/macos-browser-transport.mjs";
+import { inspectMacBrowserIdentity, matchMacBrowserProfile } from "../backend/macos-browser-identity.mjs";
 import { BrowserAccessHost } from "../backend/browser-access.mjs";
 import { elicitationForm, simpleConsent, validateForm } from "../backend/codex-approvals.mjs";
 
@@ -20,6 +20,8 @@ if (!["create", "claim"].includes(tabMode)) throw Error("Unsupported official ta
 const hostProbes = [];
 const fixtureOwner = process.argv.includes("--profile-isolation") ? randomUUID() : "";
 const fixtureProfile = "68ee7e2f79164e3b914697018ee61b44";
+const markerUrl = "about:blank#qqclaw-profile-" + fixtureProfile;
+const workingUrl = "about:blank#qqclaw-working-" + fixtureProfile;
 const build = JSON.parse(await fs.readFile(path.join(path.resolve(option("--build")), "mac-browser-build.json"), "utf8"));
 const manifest = JSON.parse(await fs.readFile(path.join(runtime, "runtime.json"), "utf8"));
 const exec = promisify(execFile), delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -61,16 +63,19 @@ const access = await new BrowserAccessHost({ authorize: request => active && req
   observe: value => accessEvents.push(value) }).start();
 
 try {
-  // This base fixture has exactly one private profile and one exact copied
-  // host. Multiple-profile checks additionally require profile association.
-  const transport = await macOfficialTransport({ browserPid: browser.pid, applicationPid: browser.pid, nativeHost, profileDirectory: fixtureOwner ? path.join(profile, fixtureProfile) : undefined, onProbe: value => { if (!hostProbes.some(old => JSON.stringify(old) === JSON.stringify(value))) hostProbes.push(value); } });
-  await write("transport.json", transport);
   const installation = { paths: Object.fromEntries(Object.entries(manifest.paths).map(([key, value]) =>
     [key, Array.isArray(value) ? value.map(item => path.join(runtime, item)) : path.join(runtime, value)])) };
-  const identity = await inspectMacBrowserIdentity({ installation, transport, identityUrl: url, sessionId: task.sessionId, directory: output });
-  const otherIdentity = await inspectMacBrowserIdentity({ installation, transport, identityUrl: url + "?wrong-profile=" + randomUUID(), sessionId: task.sessionId, directory: output });
-  await write("profile-identity-proof.json", { identity, otherIdentity, scope: "Actual official user.openTabs response: own native fixture marker accepted, absent marker rejected; single profile only." });
-  if (!identity.matched || otherIdentity.matched) throw Error("The original browser API did not distinguish the actual native marker from an absent marker");
+  const ownership = { browserPid: browser.pid, applicationPid: browser.pid, nativeHost };
+  const transport = fixtureOwner ? await matchMacBrowserProfile({ installation, identityUrl: markerUrl, sessionId: task.sessionId,
+    directory: output, ...ownership, observe: value => hostProbes.push(value) }) : await macOfficialTransport(ownership);
+  await write("transport.json", transport);
+  const candidates = await macOfficialTransports(ownership);
+  if (fixtureOwner && candidates.length < 2) throw Error("The profile isolation check did not have two actual extension hosts");
+  const identity = await inspectMacBrowserIdentity({ installation, transport, identityUrl: fixtureOwner ? markerUrl : url, sessionId: task.sessionId, directory: output });
+  const otherIdentity = await inspectMacBrowserIdentity({ installation, transport, identityUrl: fixtureOwner ? url : url + "?wrong-profile=" + randomUUID(), sessionId: task.sessionId, directory: output });
+  await write("profile-identity-proof.json", { identity, otherIdentity, candidateCount: candidates.length,
+    scope: fixtureOwner ? "Actual original extension hosts in distinct CEF profiles: own marker accepted, the real other profile's initial page rejected." : "Actual official user.openTabs response: own native fixture marker accepted, absent marker rejected; single profile only." });
+  if (!identity.matched || otherIdentity.matched) throw Error("The original browser API did not distinguish the own profile marker from the other marker");
   const modules = manifest.paths.nodeModuleDirs.map(name => path.join(runtime, name));
   const env = { ...process.env, ...access.environment, CODEX_HOME: path.join(output, "codex"), CODEX_CLI_PATH: cli,
     NODE_REPL_TRACE_META: "1",
@@ -173,7 +178,7 @@ try {
   if (connected.length !== 1) throw Error("Official discovery did not return exactly one owned extension browser: " + JSON.stringify(available));
   await call("browser-documentation", `var browser=await agent.browsers.get(${JSON.stringify(connected[0].id)}); nodeRepl.write(await browser.documentation())`);
   const selectTab = tabMode === "create" ? 'var tab=await browser.tabs.new();' :
-    'var openTabs=await browser.user.openTabs(); var fixtureTab=openTabs.find(item=>item.url===' + JSON.stringify(url) + '); if(!fixtureTab) throw Error("The actual embedded fixture tab was not found"); var tab=await browser.user.claimTab(fixtureTab);';
+    'var openTabs=await browser.user.openTabs(); var fixtureTab=openTabs.find(item=>item.url===' + JSON.stringify(fixtureOwner ? workingUrl : url) + '); if(!fixtureTab) throw Error("The actual embedded fixture tab was not found"); var tab=await browser.user.claimTab(fixtureTab);';
   await call("tab-open", 'await browser.nameSession("🔎 Mac 浏览验证"); ' + selectTab + ' await tab.goto(' + JSON.stringify(createdUrl) + '); nodeRepl.write("QQCLAW_AX_AVAILABLE="+!!tab.ax); if(tab.ax) await tab.ax.write(); else nodeRepl.write(await tab.playwright.domSnapshot()); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
   const entered = "QQClaw Mac 输入验证";
   await call("tab-input", 'var axState=await tab.ax.get("state",{disableDiffing:true}); nodeRepl.write(axState); var inputMatch=axState.match(/^\\s*(\\d+)\\s+text field \\(settable\\) Verification input\\b/m); if(!inputMatch) throw Error("The actual AX state did not expose the fixture input"); await tab.ax.typeText(Number(inputMatch[1]),' + JSON.stringify(entered) + '); await tab.ax.write(); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');

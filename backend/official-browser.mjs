@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { bundledBrowser, bundledNativeHost } from "./bundled-browser.mjs";
-import { macOfficialTransport } from "./macos-browser-transport.mjs";
+import { matchMacBrowserProfile } from "./macos-browser-identity.mjs";
 
 const exec = promisify(execFile);
 export const officialExtensionId = "hehggadaopoacecdllhhajmbjkdcmajg";
@@ -83,9 +83,11 @@ export async function prepareOfficialBrowser({ session, executable, directory, n
   let transport;
   if (mac) {
     const expectedProfile = path.join(directory, "browser-profiles", profile);
-    if (page.nativeProfileDirectory !== expectedProfile) throw new Error("Mac 官方浏览器未确认本会话的独立配置目录。");
+    const identityUrl = "about:blank#qqclaw-profile-" + profile;
+    if (page.nativeProfileDirectory !== expectedProfile || page.identityUrl !== identityUrl) throw new Error("Mac 官方浏览器未确认本会话的独立配置目录。");
     const manifest = JSON.parse(await fs.readFile(nativeHostManifest, "utf8"));
-    transport = await macOfficialTransport({ browserPid: page.browserProcessId, applicationPid: page.applicationProcessId, nativeHost: manifest.path, profileDirectory: expectedProfile });
+    transport = await matchMacBrowserProfile({ installation, identityUrl, sessionId: session.id, directory: own,
+      browserPid: page.browserProcessId, applicationPid: page.applicationProcessId, nativeHost: manifest.path });
   } else {
   try {
     ({ stdout } = await execImpl(page.applicationPath, ["--official-browser-pipes", String(page.browserProcessId), String(page.applicationProcessId), paths.nodeReplPath, ...(nativeHostManifest ? [nativeHostManifest] : [])],

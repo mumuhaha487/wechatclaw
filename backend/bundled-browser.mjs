@@ -36,18 +36,30 @@ export async function bundledBrowser(runtimeDirectory, { platform = process.plat
   return { available: true, bundled: true, platform, root, paths, extension, host, version: manifest.vendorVersion };
 }
 
+const macNativeHosts = new Map();
 export async function bundledNativeHost(installation, executable, own) {
-  const directory = path.join(own, "native-host", installation.version);
+  const mac = installation.platform === "darwin";
+  const hostHome = mac ? path.dirname(own) : own;
+  const directory = path.join(hostHome, "native-host", installation.version);
+  if (!mac) return writeNativeHost(installation, executable, hostHome, directory);
+  let pending = macNativeHosts.get(directory);
+  if (!pending) {
+    pending = writeNativeHost(installation, executable, hostHome, directory).catch(error => { macNativeHosts.delete(directory); throw error; });
+    macNativeHosts.set(directory, pending);
+  }
+  return pending;
+}
+async function writeNativeHost(installation, executable, hostHome, directory) {
   await fs.mkdir(directory, { recursive: true });
   const mac = installation.platform === "darwin";
   const host = path.join(directory, mac ? "ChatGPT for Chrome" : "extension-host.exe");
   if (!await exists(host)) await fs.copyFile(installation.host, host);
-  if (mac) await fs.chmod(host, 0o755);
+  if (mac) { await fs.chmod(host, 0o755); await fs.mkdir(path.join(hostHome, "codex"), { recursive: true }); }
   // This is the upstream host's documented installManifest configuration,
   // containing only our paths. No Desktop identity, live pipe or login is copied.
   await fs.writeFile(path.join(directory, "extension-host-config.json"), JSON.stringify({
     schemaVersion: 1, channel: "prod", codexCliPath: mac ? installation.paths.codexCliPath : executable,
-    ...(mac ? { codexHome: path.join(own, "codex") } : {}),
+    ...(mac ? { codexHome: path.join(hostHome, "codex") } : {}),
     browserClientPath: installation.paths.browserClientPath, nodePath: installation.paths.nodePath,
     nodeReplPath: installation.paths.nodeReplPath, proxyHost: "127.0.0.1", proxyPort: 0,
   }));
