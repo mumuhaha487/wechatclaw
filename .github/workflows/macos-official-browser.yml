@@ -163,7 +163,6 @@ jobs:
           for(const arch of ['arm64','x64'])await run('/usr/bin/codesign',['--force','--sign','-',path.join(resources,'node',arch,'bin/node')]);
           await run('/usr/bin/codesign',['--force','--sign','-',app]);
           await run('/usr/bin/codesign',['--verify','--deep','--strict',app]);
-          console.log((await run('/usr/bin/security',['error','-67030'])).stdout);
           try {const result=await run(binary,[],{env:{...process.env,QQCLAW_DATA_DIR:path.join(base,'data'),CODEX_HOME:path.join(base,'codex'),QQCLAW_HOST_IMAGE:path.join(proof,'host-preview.png'),QQCLAW_HOST_RESULT:path.join(proof,'host-preview.json')},timeout:60000,maxBuffer:2*1024*1024});await fs.writeFile(path.join(proof,'host-preview.log'),result.stdout+result.stderr);}
           catch(error){await fs.writeFile(path.join(proof,'host-preview.log'),(error.stdout||'')+(error.stderr||'')+'\n'+error.message);throw error;}
           NODE
