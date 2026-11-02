@@ -166,7 +166,6 @@ const ui = {
   busyAccounts: [],
   environment: null,
   runtime: null,
-  officialBrowser: null,
   browserConnections: new Map(),
   startupError: "",
   environmentChecked: false,
@@ -1099,8 +1098,28 @@ function scheduleBrowserView() {
     rpc("browser.view", value).catch(() => { browserViewSignature = ""; });
   });
 }
+const browserConnectionChecks = new Map();
+function refreshBrowserConnection(owner = ui.active) {
+  if (browserConnectionChecks.has(owner)) return browserConnectionChecks.get(owner);
+  const previous = ui.browserConnections.get(owner);
+  const request = rpc("browser.officialStatus", { sessionId: owner }).then(status => {
+    if (owner && !state.sessions.some(s => s.id === owner)) return;
+    // A live connection event received during discovery is newer than this
+    // snapshot. Never replace it, or borrow another conversation's connection.
+    if (ui.browserConnections.get(owner) === previous)
+      ui.browserConnections.set(owner, { ...previous, ...status });
+    if (owner === ui.active && ui.environmentChecked) {
+      if (ui.page === "runtime") render();
+      else if (!ui.page && ui.panel && ui.panelPage === "browser") refreshBrowserPanel();
+    }
+    return ui.browserConnections.get(owner);
+  }).finally(() => browserConnectionChecks.delete(owner));
+  browserConnectionChecks.set(owner, request);
+  return request;
+}
 function browserPanel() {
   const b = browserStates.get(session()?.id) || {};
+  const connection = ui.browserConnections.get(session()?.id);
   const tab = panelTabs.selected(panelOwner()), creating = creatingBrowserTabs.has(session()?.id);
   return `<aside class="work-panel browser-panel${ui.panelMax ? " maximized" : ""}">
     ${panelTabsBar()}
@@ -1110,7 +1129,7 @@ function browserPanel() {
     ${b.loading ? '<div class="browser-loading-line" aria-hidden="true"></div>' : ""}</div>
     ${browserFind.html()}
     ${b.error ? `<div class="browser-error" role="status">${icon("info")}<span>${esc(b.error)}</span></div>` : ""}
-    <div id="browser-viewport" class="browser-viewport">${!b.url ? `<div class="browser-start">${icon("browser")}<strong>内置浏览器</strong><span>${ui.browserConnections.get(session()?.id)?.available ? "输入网址，或在对话及微信中提出浏览任务。" : "输入网址或搜索内容。自动操作需先配置官方 ChatGPT 扩展。"}</span><button class="outline" data-action="browser-google">${icon("search")}Google 搜索</button></div>` : ""}</div>
+    <div id="browser-viewport" class="browser-viewport">${!b.url ? `<div class="browser-start">${icon("browser")}<strong>内置浏览器</strong><span>${connection?.available ? "输入网址，或在对话及微信中提出浏览任务。" : connection ? "输入网址或搜索内容。自动浏览的连接状态可在更多菜单中查看。" : "输入网址或搜索内容，浏览任务会自动检测官方扩展。"}</span><button class="outline" data-action="browser-google">${icon("search")}Google 搜索</button></div>` : ""}</div>
     </aside>`;
 }
 function updateBrowserState(data) {
@@ -1177,6 +1196,7 @@ async function runBrowserCommand(command, params = {}) {
   if (command === "newTab" && creatingBrowserTabs.has(target.id)) return;
   if (command === "newTab") creatingBrowserTabs.add(target.id);
   const owner = panelOwner(), activate = command === "open" || command === "newTab";
+  if (activate || command === "state") refreshBrowserConnection(target.id).catch(() => {});
   const selected = panelTabs.selected(owner);
   const tabId = ["open", "back", "forward", "reload", "stop"].includes(command) && selected?.kind === "browser" ? selected.id : "";
   const intent = activate || ["back", "forward", "reload", "stop"].includes(command) ? ++ui.panelIntent : ui.panelIntent;
@@ -1208,6 +1228,7 @@ async function restoreBrowserPanel() {
   const target = session();
   if (!target || !environmentReady() || !ui.panel || ui.panelPage !== "browser") return;
   const owner = panelOwner(), intent = ui.panelIntent;
+  refreshBrowserConnection(target.id).catch(() => {});
   const group = panelTabs.group(owner);
   try {
     // A frontend reload keeps the native pages alive. Read their current IDs
@@ -1368,8 +1389,8 @@ function projectSettings() {
   return `<h1>项目</h1><p class="modal-description">选择本地目录供 Codex 工作。微信账户的目录可在左下角「连接到微信」中单独设置。</p>${state.projects.map((p) => `<div class="provider-card"><div class="provider-symbol">${icon("folder")}</div><div class="grow"><strong>${esc(p.name)}</strong><p>${esc(p.workspace)}</p></div>${ib("open-project-folder", "打开目录", "external", `data-id="${p.id}"`)}${ib("remove-project", "从列表移除", "trash", `data-id="${p.id}"`)}</div>`).join("") || '<div class="settings-card empty-note">还没有项目。添加目录后，即可开始编程。</div>'}${button("add-project", "添加项目", "plus", "outline")}`;
 }
 function officialBrowserSettings() {
-  const status = ui.officialBrowser;
-  const title = status?.connected ? "官方扩展已连接" : status?.available ? "官方扩展已准备" : "官方扩展尚未就绪";
+  const status = ui.browserConnections.get(ui.active);
+  const title = !status ? "官方扩展状态待检测" : status.connected ? "官方扩展已连接" : status.available ? "官方扩展已准备" : "官方扩展尚未就绪";
   return `<h2>内置浏览器</h2><div class="settings-card"><div class="setting-row"><div class="grow"><p class="setting-title">本机浏览记录与下载</p><p class="setting-description">浏览记录只包含本软件访问的网页；清除记录不会删除登录状态、下载文件或聊天。</p></div></div><div class="row">${button("browser-history", "浏览记录", "clock", "outline")}${button("browser-downloads", "下载", "download", "outline")}</div></div>
     <h2>官方浏览器扩展</h2>${browserComponentSettings({ status: browserComponent.status, installing: browserComponent.installing, progress: browserComponent.progress, operation: browserComponent.operation, isMac }, button)}<div class="settings-card"><p class="setting-title">${title}</p><p class="setting-description">${esc(status?.reason || "尚未检测当前会话的连接状态。")}</p>
     ${(status?.browsers || []).map(b => `<div class="setting-row"><span class="grow">${esc(b.name)}</span><span class="muted">${b.installed ? "检测到官方扩展文件" : b.detection === "unknown" ? "安装情况未知" : "未检测到官方扩展文件"}</span></div>`).join("")}
@@ -1749,7 +1770,7 @@ async function checkEnvironment(restart) {
         if (saved.warnings.length) toast(saved.warnings.join(" "));
       }
       ui.environment = await rpc("environment");
-      ui.officialBrowser = await rpc("browser.officialStatus", { sessionId: ui.active }).catch(() => null);
+      await refreshBrowserConnection().catch(() => null);
       ui.startupError = ui.environment.error || "";
       if (!nodeWasReady && !ui.environment.codexPath)
         toast("NodeJS 环境配置成功，Codex 未检测到配置");
@@ -2347,6 +2368,7 @@ async function action(name, element) {
       else ui.browserHidden.add(session()?.id);
       rememberPanel();
       render();
+      if (ui.panel && ui.panelPage === "browser") refreshBrowserConnection().catch(() => {});
       if (ui.panel && ui.panelPage === "browser" && !panelTabs.selected(panelOwner())) return restoreBrowserPanel();
       if (ui.panel && (ui.reviewTarget || ui.panelPage === "files") && !ui.panelData && !ui.panelLoading) return loadPanel();
       return;
@@ -2994,9 +3016,9 @@ function onEvent(event, data) {
     applyPanelTab(); ui.panel = true; ui.browserHidden.delete(data.sessionId);
     rememberPanel(); render();
   } else if (event === "browser-status") {
-    ui.browserConnections.set(data.sessionId, data);
+    if (!state.sessions.some(s => s.id === data.sessionId)) return;
+    ui.browserConnections.set(data.sessionId, { ...ui.browserConnections.get(data.sessionId), ...data });
     if (data.sessionId === session()?.id) {
-      ui.officialBrowser = { ...ui.officialBrowser, ...data };
       if (ui.page === "runtime") render();
       else if (ui.panelPage === "browser") refreshBrowserPanel();
     }

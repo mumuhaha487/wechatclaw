@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
+import manifest from "../package.json" with { type: "json" };
 import {
   createChatAdapter,
   createResponsesAdapter,
@@ -229,7 +230,7 @@ export class CodexClient extends EventEmitter {
     });
     try {
       await this.request("initialize", {
-        clientInfo: { name: "qqclaw_desktop", title: "QQClaw", version: "0.3.38" },
+        clientInfo: { name: "qqclaw_desktop", title: "QQClaw", version: manifest.version },
         capabilities: { experimentalApi: true },
       }, this.initializeTimeoutMs);
       this.send({ method: "initialized", params: {} });
