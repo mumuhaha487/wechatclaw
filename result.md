@@ -1,34 +1,22 @@
 # QQClaw 本轮需求、实现与验收记录
 
-## Mac 官方浏览连接已跑通；生产窗口集成进行中（2026-11-02）
+## 当前状态：0.3.38（2026-11-02）
 
-正式成品仍为0.3.37，`release/QQClaw.exe`与`release/macos/QQClaw.dmg`各一份。本轮新代码尚未编入正式DMG；完整目标保持active，不能称整体验收完成。
+同名EXE/DMG已更新，运行库内置，完整目标仍保持active。Windows307443712字节；Mac537152609字节，Universal主程序，官方浏览组件为arm64。摘要及安装入口见交付说明。旧Windows进程95560未停止，原微信账户未启动或发测试消息，原数据未清理。
 
-已下载并核对[41357576090](https://github.com/mumuhaha487/wechatclaw/actions/runs/41357576090)的真实Mac结果（源码597865e）：原版官方扩展新建标签、导航自建loopback页、读取AX树、中文输入`QQClaw Mac 输入验证`、实际网页input事件回传、截图、关闭及再次查询移除均通过；原生进程退出0。原先紧接关闭后在同一次工具调用中查询，约9ms仍看见标签；拆为前后两次原版工具调用后确认实际移除，未放宽“必须真的关闭”的断言。这是官方组件检查，不含模型、微信或完整产品GUI。
+最新构建源码be09963ecdec11fb9514dcf61aa2f020bfa8a689，云检查41372684855整体成功：官方DOM中文输入实际事件、截图/关闭/退出，两个真实配置归属，主程序实际官方prepare连接、原版工具点击链接打开弹窗并正确选中，网页查找/实际firstResponder，关闭下载页后262144字节完整保存，加密历史/设置落盘与正常退出。Universal双架构编译、签名/DMG检查通过。Windows0.3.38空数据/系统PATH包内Node与后台启动通过；不等于真实模型、微信或物理输入检查。
 
-[41358091737](https://github.com/mumuhaha487/wechatclaw/actions/runs/41358091737)（源码3508214）使用产品共用的`backend/macos-official-runtime.mjs`重复上述真实操作并成功退出0，artifact SHA256 `9a9d89745a4a06e765f7ea8c1ebab1be77a608ebd03b3ffd4b5cc1e9c1acf5b0`。完整原版CodexCLI.app通过官方app-server `process/spawn`启动原版Node REPL；Rust Node REPL的真实父进程为原签名CLI。这满足官方Mac宿主对socket真实对端及一层父进程的签名要求，没有改签或假冒身份。
+关键入口：backend/official-browser.mjs、macos-official-runtime.mjs、macos-browser-transport.mjs、macos-browser-identity.mjs；native/cef/macos/CefBridge.mm；native/macos/QQClaw.swift、CefRuntime.swift、BrowserHost.swift（CefBrowserController）；scripts/macos-browser-runtime.mjs、macos-official-mcp.mjs、build-macos.mjs；.github/workflows/macos-official-browser.yml。
 
-此前Mac握手失败的原因已纠正：`nativePipe`实际从Rust Node REPL主进程连接，直接从检查JS启动时父进程不符合官方宿主要求；只替换环境变量中的CLI路径无效。41355980053已有成功握手trace，但检查把`nodeRepl.write(object)`的格式化JS文本误当JSON导致假阴性；随后改为带标记的`JSON.stringify`单行解析。41356308107确认发现及文档，41356951384确认建页/截图，41357218657确认真实中文input事件。原始失败记录保留在项目外证据目录，不把解析错误称为网络故障。
+CEF固定156.0.15+gcf671c0+chromium156.0.8078.80，正式接口设置本应用独立浏览器钥匙串项；原Vault、mac1:AES-GCM及原数据目录不变。临时--vault-key子进程方案已删除。新配置等OnRequestContextInitialized完成后创建视图；每个Chrome视图保持自己的CefWindow生命周期，只移动现有WebKit应用界面。输入检查使用实际documentation提供的原版locator.fill，仍断言网页input事件，不依赖可选AX能力。
 
-新增产品入口`scripts/macos-official-mcp.mjs`与打包函数`bundleMacOfficialMcp`：只转发原版MCP字节流，不实现浏览器替代工具。官方`process/spawn`显式`timeoutMs:null, outputBytesCap:null`，依原版CLI生成的类型禁用进程超时和输出截断，不设置任务寿命。EOF/信号先结束原版REPL，再清理所拥有的app-server。`backend/macos-browser-transport.mjs`只选择精确宿主路径、实际所属进程树与该宿主唯一Unix socket。
+下一步：官方tabs.new新窗口嵌入、Intel原版浏览组件、线上微信完整闭环、Blob官方能力缺口和完整物理GUI/IME/DPI。不能因本轮组件通过宣布整体完成。不要借用开发聊天、Desktop、外部浏览器身份/管道或改用替代驱动。
 
-已核对后续失败：41358444450（76eb91e）因把`GetRequestContext()`调用在CefBrowser而非CefBrowserHost上编译失败，已修正。41358700416（0a93688）中，编译后的产品MCP入口实际完成原版工具输入和关闭，但原生清理SIGSEGV；另外新增嵌入检查错误地用相同URL匹配了初始页1，原始记录中真正官方新页3的`attached:false`，因此该次`embedded:true`字段不能当作嵌入通过。已改为新页专属随机URL，并移除关闭回调内不合适的视图移除；41359154564之后的原生退出为0。
+本轮证据根C:/Users/admin/AppData/Local/Temp/qqclaw-mac-official-link-20261102。集成证据artifact SHA256 4b33dc389ef1a23532d9b99d659d01ff10e3b073e25828d076796cade78583bb；最终包artifact SHA256 5f73a656e4b8ff0e960e59b9462f55941d2ffea3cf26e068efa01d9fe3a471be。源码主目录D:/project/QQclaw，Git副本C:/Users/admin/AppData/Local/Temp/qqclaw-cloud-mac-20261031/source。Git副本用户修改的docs/CODEX-WEIXIN-LICENSE.txt不得覆盖或提交，SHA256 BFCB86ACF7015CC4D7F76AB0C1E8B9450F293D259AE9BD051FD4ABAA795F7EBB。
 
-41359154564（8f37a28）与41359558907（e1e3170）未进入工具操作：新增配置目录匹配超时。后者实际宿主参数只有扩展origin，没有`--reconnect-command`；读取Chromium源码发现，清单的`supports_native_initiated_connections`只有启用正式`OnConnectNative`功能时才生效，不能只写清单便假定已有该参数。新源码3a50b2d已启用该正式功能，继续验证真实参数。没有填造profile信息或放松进程归属检查。
+以下是历史记录，不覆盖本节。
 
-CEF源码另明确：Views创建的Chrome浏览器被设为TYPE_POPUP，官方扩展新标签只在normal窗口里选择宿主；默认扩展新窗口因此可能是非Views窗口。`use_views_default_popup`为CEF146+的公开配置，当前尝试用它及公开Views重新挂接接口处理官方弹窗，不能在新检查通过前宣称修复。`native/macos/CefRuntime.swift`动态原生适配层已在Mac通过Swift类型检查，但尚未接入正式Host。新UI专用profile/tab接口仍需实际多账号及生命周期验证。
-
-41359782773（3a50b2d）及41360215072（e9e82da）仍在配置目录匹配阶段失败，原生退出均为0；最后一轮实际启动参数已明确包含OnConnectNative，依旧没有reconnect参数。继续核对固定Chromium154源码确认：该参数还要求原扩展声明natively_connectable、transientBackground及runtime.onConnectNative监听器。当前官方扩展不满足，不能通过修改其manifest伪造支持，已移除无效的功能开关及主机清单字段。单配置组件检查继续使用已证明的“独立复制宿主路径＋实际进程树＋唯一socket”归属；多配置检查保留额外目录绑定要求，生产Mac分支也必须确认目录，尚不启用。
-
-最新Swift Host源码已新增受`QQCLAW_MAC_CEF_PREVIEW=1`控制的CEF root接入，沿用原前端、菜单、数据锁和后台保存确认；默认启动路径不变，未向模型宣告官方浏览可用。没有覆盖CEF原生窗口内部delegate。新的云步骤将运行真实Host＋打包前端＋空账户后台，验证同窗、截图、设置加密落盘和保存后退出；它仍是隔离组件检查，不是完整安装包、微信或模型验收。该新增步骤与官方claim模式的结果待核对。现有检查保留create/claim两个明确模式，claim只证明官方接管既有页面，不代表`tabs.new()`嵌入能力；没有改官方功能代码或引入替代驱动。
-
-项目内唯一Apple Silicon原版资源为`runtime/macos/official-browser/runtime-darwin-arm64.tar.gz`，226931853字节，SHA256 `8f1df2ce75043880693128467d16f5224344cf1d043638bf5281d735fab6fc52`。含原Node v24.22.1、Node REPL、官方扩展/宿主和完整CodexCLI.app，复制项目会带走资源。来源是官方`https://persistent.oaistatic.com/codex-app-prod/Codex.dmg`，实际外层ChatGPT.app，bundle `com.openai.codex`，26.1027.51404。原生签名Team `2DC432GLL2`保持不变；官方扩展ID `hehggadaopoacecdllhhajmbjkdcmajg`、版本1.26.1020.11845，CRX3签名与ID已核对，未修改功能代码。插件附带独立签名文件未另行验签，不能写为通过。
-
-`backend/bundled-browser.mjs`已新增Mac清单/架构/路径识别与原宿主配置，`official-browser.mjs`新增Mac传输及MCP参数分支。Mac生产自动浏览仍未启用，发现入口保留`QQCLAW_MAC_BROWSER_READY`能力门槛；没有在原生接口尚未接通时向模型宣称可用。现有BrowserHost仍提供手动WebKit网页，CEF根窗口接入仅用于后续隔离验证。
-
-剩余：接通生产Swift窗口/菜单/退出保存、多会话/标签归属并实测，再编译同名DMG。Intel官方primary办公运行库已下载但缺少浏览宿主与REPL，不能冒充Intel浏览组件；其他官方资源还需查证。完整原生GUI/IME/DPI、微信浏览闭环、Blob官方下载和参考主页全部操作一致性仍未完成。自建检查页的精确origin授权是夹具自己的策略，记录为`isolated-fixture-owner`，不是人类确认；生产确认流程未改。原微信账户未启动或发消息，旧正式进程未停止，用户数据未清理。
-
-证据根：`C:/Users/admin/AppData/Local/Temp/qqclaw-mac-official-link-20261102`。下方为历史记录，其“握手未通过/未内置”等旧描述不覆盖本节。
+本轮修复源于实际失败：多配置空指针、BrowserView析构时序、共享Chromium钥匙串授权等待、清理原版CLI子进程与临时目录的竞争，以及检查错误假定可选AX接口必有。所有原始失败仍在项目外证据根，最终检查没有放宽真实输入、标签移除、文件内容或退出0断言。GitHub草稿更新状态由交付说明记录，项目目录保持只有同名成品各一份。
 
 ## Mac后续源码：CEF Views与WebKit同窗验证（未集成正式软件）
 

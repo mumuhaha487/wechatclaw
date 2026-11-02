@@ -1,235 +1,70 @@
 # QQClaw
 
-源码为 **0.3.37**，修复实时刷新时的侧栏滚动、焦点和拖动，补齐侧栏右键及普通会话展开/收起，默认白色为主、黑色为辅。Windows 包含 Node/npm、CEF 和原版官方 ChatGPT 浏览组件；Mac 支持 macOS 13.5+，包含两种架构的 Node/npm，官方扩展自动浏览尚未接通。Codex 提供安装入口。
+QQClaw 是独立的 Windows / macOS Codex 与微信工作台，默认白色为主、黑色为辅。当前源码 **0.3.38**；Windows 同名 EXE 与 Mac Universal 安装包均已更新。交付状态以 [交付说明](交付说明.md) 为准。
 
-后续Mac适配新增CEF Views/WebKit原生桥，云端8项组件检查通过；原版官方浏览运行库已缓存到项目，独立REPL执行与客户端导入通过。正在核验扩展连接，尚未接入生产Host，不包含在0.3.37成品中。详情见result.md最新节。
+## 使用
 
-安装、成品与待完成项见[交付说明.md](交付说明.md)，代码索引见[开发交接.md](开发交接.md)，实际检查记录见[result.md](result.md)。编译成功不等于原始目标整体验收通过。
+- Windows：双击 release/QQClaw.exe。内置 Node/npm、CEF、原版官方 ChatGPT 扩展和官方浏览运行库。
+- Mac：打开 release/macos/QQClaw.dmg，把 QQClaw 拖入 Applications。macOS 13.5+，主程序兼容 Apple Silicon / Intel，内置双架构 Node/npm。
+- 首次进入设置安装或选择 Codex，并登录或填写第三方 API 服务。无需另外安装 CodexHost。
+- 点击左下角「连接到微信」扫码，给每个账户绑定项目目录、模型服务、模型和思考等级。项目菜单也提供「绑定微信账号」。
 
-## 历史版本记录
+## 功能
 
-0.3.32 已发布功能：助手回复的独立网站链接显示为亮色卡片，支持手动预览、系统浏览器和复制链接；原消息、行内链接及文件预览不变。输入栏保留单一访问权限入口，模型服务/模型/思考等级收进同一个菜单。支持动态刷新、手填模型 ID，以及没有模型列表接口的第三方服务；选择新服务的模型后一起保存，取消不会误改原配置。Codex 原生持续目标可以从输入区开启，或把已有用户消息设为目标。支持暂停/继续、可选 Token 预算及真实用量；设目标和继续不会重复发送原用户指令。全部阶段的附件汇总到最终结果，保持微信过程推送预算与桌面/微信通道归属。按最新要求采用白色为主、黑色为辅的整体亮色界面，侧栏和选中状态使用浅灰；两端原生窗口同步主题。旧外观一次迁移至亮色，之后主动选择的主题会保留。图片预览按可用空间等比缩放。长用户消息可展开/收起，顶部会话目录支持搜索并跳到历史提问，会话切换和普通状态刷新保留阅读位置。文件与手动网页共用右侧标签栏，可打开消息中的本地文本链接，支持 Markdown/源码、指定行号、刷新与关闭。保留真实文件更改卡片、无 Git 审阅、带冲突检查的撤销/重新应用，以及跨重启的当前任务审阅恢复。**官方 ChatGPT 扩展接入尚未完成，当前 Codex/微信自动操作浏览器不可用。** 不用自建浏览器 MCP 代替官方扩展。成品状态、验收范围及阻碍见 [result.md](result.md)。
+- 桌面聊天与微信任务通过底层 Codex 在各自工作目录执行；同目录任务排队，不同目录可并行。桌面发起的结果不会发送到微信。
+- 模型目录来自当前 Codex 或服务接口，支持刷新、任意手填模型 ID、Responses / Chat Completions 服务、自定义 URL / Key，以及不发送思考参数。
+- 微信支持正在输入、过程进度、最终总结和原生附件。过程最多 6 条，第 6 条后提示省略后续过程；保留最终结果额度，多附件按额度打包，待投递内容跨重启保存。
+- 常用微信命令：/help、/status、/bind、/new、/resume、/model、/effort、/stream、/prompt、/stop。详细行为见 [微信功能核对](docs/WECHAT-PARITY.md)。
+- 项目/聊天侧栏支持菜单、搜索和展开收起；右侧文件/浏览器共用工作面板，支持拖宽、展开还原、收起、关闭、标签排序和关闭标签恢复。
+- 保留加密草稿与导入附件、真实上下文用量、持续目标、文件更改审阅和撤销/重新应用。
 
-0.3.29：慢网页不再占用整个会话的浏览器队列。切换、关闭、新建、后台恢复和其他标签导航及时响应；同一页的新网址取消旧加载，迟到回调不能污染新页。界面操作绑定发起时的标签，待加载地址与真实浏览历史分开。Mac 完成40项云检查，Windows候选和实际组件已检查；正式Windows尚未替换。官方扩展自动浏览仍未接通，详见result.md文末。
+## 官方浏览器
 
-0.3.28：Ctrl/⌘+F 按当前焦点查找聊天、文件或网页；文件支持中文、字面符号及跨行内格式，网页调用两端真实原生 Find。提供前后匹配、关闭及编辑菜单，网页历史和外部打开收进“更多”。查找按会话/标签/URL 隔离，关闭或新查询会结束旧请求；修复关闭查找原本等待 30 秒超时的问题。Mac 公共 API 不提供总数，只显示“找到匹配”，不编造计数。此功能为用户手动操作，官方扩展自动浏览仍未接通。实测和交付边界见 result.md 文末。
+自动浏览通过未修改的官方 ChatGPT 扩展、原版 Node REPL/browser runtime 和原签名宿主完成。应用自己的原生浏览接口只供用户界面使用，不向模型提供替代浏览工具。
 
-0.3.27：可从文件菜单、标签右键菜单、标签栏加号或 Ctrl/⌘+Shift+T 重新打开关闭的文件/网页，按会话及目录分别保留最近 20 次。文件重新读取磁盘，并保留阅读位置和显示模式；网页按地址创建新页。恢复期间切换会话、关闭面板或打开菜单，迟到结果不会抢回当前选择。修复失败关闭打乱顺序、主界面重载后网页未选中及初始化期间停止无效。关闭恢复记录仅在本次运行内保留，不保存网页表单、POST 请求体或整段导航历史。
+Windows 原版官方组件已内置。Mac 新增 CEF 156 与原版官方运行库：Apple Silicon 已通过真实官方接口、双配置归属、主程序实际绑定、中文输入、网页/标签/查找、下载内容、加密历史/设置保存及退出检查。Intel 目前保留聊天与手动网页功能，官方自动浏览尚未接通。
 
-0.3.26：修复原生网页获得焦点后应用快捷键失效的问题。Windows 可从网页输入框使用 Ctrl+T/W/L、Ctrl+Tab/Shift+Tab、Ctrl+B/Shift+B、Ctrl+N/K/逗号；Mac 增加对应菜单与 ⌘T/W/L、Control+Tab/Shift+Tab。关闭/切换后把焦点交给实际选择，空组回到聊天输入框；历史联想和状态刷新不会主动抢网页输入。菜单会根据面板、网页、标签数量及模态状态启用。Windows 不接管网页自身 Ctrl+A/C/V/Z/F；Mac 原有 ⌘F 仍查找会话，网页内查找尚有差异。普通网页键盘事件无法调用应用命令。
+Mac 官方 tabs.new 新窗口的实际内嵌仍有限制，当前使用官方 claimTab 接管本会话预备页面；应用不会宣称该 API 已通过。官方 Blob 自动下载、微信线上完整浏览、全部主页操作一致性及物理 GUI/输入法/DPI仍未整体通过。完整证据与边界见 [result.md](result.md)，不把组件检查称为整体验收。
 
-0.3.25：网页中的“新窗口”链接现在创建真实新标签，保留来源页、POST 表单、opener、命名窗口复用与页面自行关闭。修复开发候选中的 `0x8000000E` 异常：WebView2 请求只结束一次，不再被显式 Complete 和 using Dispose 重复结束。Windows 原生 COM 堆栈记录至独立数据目录 `logs/native.log`（1 MiB 轮换），便于定位原生故障；不改变默认异常处理。浏览器网页仍无法调用应用消息桥。
+可选的「在 Codex Desktop 中继续」会创建对话副本并打开 Desktop。它不用于上述自动浏览，也不会把 Desktop 后续消息自动同步回微信。
 
-0.3.24 修正参考截图中的网页框比例：会话标题和 Desktop 提示条仅占左侧，右侧网页/文件面板从工作区顶部延伸到底部。默认宽度随窗口变化（28.7%，受最小宽度和聊天可用空间约束），主动拖动后的宽度跨重启保存；双击分隔线恢复默认比例。保留调宽、收起、关闭和展开还原，窄窗口采用可关闭覆盖面板。
+## 对话与数据
 
-新增地址栏历史联想与浏览记录管理。只记录本软件成功打开的 HTTP(S) 网页，同一网址保留最近一次，最多 500 个；可按标题/网址搜索、重新打开、单条删除或确认清除最近一小时/一天/全部记录。记录在本机独立加密保存，属于当前系统用户在 QQClaw 内跨会话共用的历史，不按微信账户隔离；不会导入 Chrome 历史或自动发送给模型。清记录不删除网页登录状态、下载文件或聊天。完整 SPA 导航及网站权限/Cookie 管理仍有差异。
+Codex 保存真实原生会话，QQClaw 保留 threadId 继续使用。默认另外保存 JSON/Markdown 对话副本到 ~/.codex/qqclaw/conversations；设置 CODEX_HOME 时跟随该目录，QQCLAW_CONVERSATIONS_DIR 可指定其他位置。
 
-Mac 唯一安装包已更新为 0.3.27；Windows 候选已编译，正式 EXE 仍为 0.3.26，等待用户正常退出后替换。 本轮 25 项隔离前端/原生组件检查、最终正常恢复检查、11 项 Windows 原生接口、7 项恢复状态及 119 项核心回归通过；Mac 云端实际 31 条 PASS。检查层级和失败记录见 [result.md](result.md)，不代表整套 EXE GUI、官方扩展或线上微信验收。
+账户、设置、草稿和导入附件在 Windows 的 %LOCALAPPDATA%/QQClaw 或 Mac 的 ~/Library/Application Support/QQClaw；QQCLAW_DATA_DIR 可覆盖。Windows 用当前用户 DPAPI，Mac 用系统钥匙串密钥与 AES-GCM。删除应用不会主动删除这些目录、Codex 历史或项目文件。跨系统账户迁移前应导出对话并备份项目和附件本体，密文不能保证在另一账户解密。
 
-0.3.23：原生下载管理显示真实字节进度，支持取消、打开、在文件夹显示及清除终态记录。文件保存在系统 Downloads/QQClaw，元数据独立加密；关闭标签后已开始的下载继续，退出整个应用会中断，不假装自动续传。
-
-0.3.22：文件/网页标签支持拖动排序、鼠标中键关闭和右键菜单（关闭、关闭其他、关闭右侧、复制路径/地址、文件夹显示或系统浏览器打开）。Shift+F10打开菜单，方向键/Home/End选项，Escape/Tab关闭并恢复焦点。关闭其他会包含当前文件管理器/审阅工具页；异步关闭始终绑定原会话和实际标签对象，不会误关另一会话。
-
-修复新建原生网页标签时完整刷新清空地址输入的竞争：创建期间禁用地址输入，完成后恢复；每个网页标签单独保留未提交地址草稿，后台刷新和切回标签不丢失，提交后显示真实URL。地址草稿、标签顺序和菜单状态仅在进程内保存。
-
-0.3.21：Ctrl/⌘+K（侧栏搜索入口）查找会话名称、目录、全部已保存消息及附件名；结果直接定位具体消息并展开折叠区。Ctrl/⌘+F、编辑菜单或顶部省略菜单打开当前会话内查找；Enter/F3或Ctrl/⌘+G前进，Shift反向，Escape关闭。支持跨Markdown行内文本节点的高亮与准确计数，段落和附件之间不会拼出假匹配。结果每次展开60条并显示完整总数；查询和高亮仅在进程内保留，不检索未发送草稿、未完成实时流或网页内容。
-
-0.3.18 将当前会话、项目折叠、侧栏及工作面板的宽度/开关保存到加密数据，重启后恢复；关闭未响应网页会定向取消加载，移除会话会释放其网页。文件/网页标签和未发送草稿仍只在进程内保留。
-
-0.3.19 的会话目录可搜索完整提问和附件名称，使用方向键/Home/End/Enter 定位，Escape 关闭。长消息展开状态和阅读位置按会话在进程内保留；不会改变已保存的消息，也不跨应用重启保存这些阅读偏好。窄窗口保留顶部面板图标，网页预览文字收为带提示的图标。
-
-轻量 Windows / macOS Codex 工作台。在桌面上编程，也可以通过腾讯 iLink / ClawBot 从微信操作各自的项目目录。
-
-界面保留 PI-Desktop 的项目侧栏、会话区、输入栏、自定义弹出菜单、整页设置与右侧工作面板。当前视觉样式采用白色工作区、浅灰侧栏、黑色文字及主要按钮；首页直接展示工作目录和任务起点。默认亮色（设置中可切换），外侧导航栏底部的微信图标为「连接到微信」，使用线条图标。后台使用独立的 Codex 与微信连接实现。
-
-## 直接使用
-
-Windows：双击 **`release/QQClaw.exe`** 即可打开。只保留这一个 Windows 程序，后续更新直接替换同名文件。Windows x64 便携版，无需安装本应用。EXE 小于 1 MB，不携带 Node.js、Codex CLI 或浏览器运行时。更新时先退出程序，账户和设置会继续沿用。
-
-Mac：把 **`release/macos/QQClaw.dmg`** 传到 Mac，双击打开，将 QQClaw 拖到旁边的 Applications（应用程序）。以后直接在「应用程序」中双击 QQClaw 即可启动，不需要自行编译或运行终端命令。支持 macOS 13.3+。首次若被系统拦截，先尝试打开一次，再到「系统设置 → 隐私与安全性 → 仍要打开」确认；当前版本尚未 Apple 公证。首次使用仍需按软件内引导安装 Node.js 和 Codex。
-
-1. 在「设置 → 运行环境」检测环境。需要 Node.js **22.13+**、Codex CLI，以及系统 WebView2 Runtime。界面提供 Node.js/WebView2 官方安装入口和 Codex CLI 安装按钮，也能手动选择程序路径。
-2. 使用本机配置时，可沿用现有 Codex 登录与 Provider；尚未登录可点击「登录 Codex」。使用自定义 API 时不需要另行登录 ChatGPT。
-3. 添加项目目录，输入任务，选择模型与思考等级，即可在桌面编程。权限菜单提供「每次询问 / 允许编辑 / 全自动」，工作模式中可切换只读。需要确认的命令在电脑上显示审批卡片，允许后执行；全自动在工作目录的沙箱内运行。
-4. 点击外侧导航栏底部的微信线条图标，为账户选择目录、服务、模型、思考等级与权限，然后生成二维码。使用自己的微信扫码确认；如有数字验证码，在面板内填写。
-5. 后续点击同一个图标可查看所有账户，分别配置目录、查看会话、暂停接收、重新扫码或断开连接。
-
-首次启动若未配置 Codex，会显示「当前环境未配置 Codex 环境，请在设置中进行配置」，只能通过「前往配置」进入安装引导。先从官网安装 NodeJS，程序会自动重新检测；随后点击「一键安装 CLI」执行 `npm install -g @openai/codex`，成功后自动重启并识别环境。
-
-微信会话也能在桌面直接输入。两端共用同一会话和工作目录，同时到达的消息按顺序执行；桌面发起的任务只在桌面回复。处理微信消息时显示微信原生「正在输入」状态，回复完成或任务结束后取消。
-
-输入框的加号可选择多个文件，也可直接拖入文件或粘贴剪贴板图片。发送前可移除附件，图片可点击缩略图放大查看；发送后仍可在历史消息中预览。每条消息最多 8 个附件，单个不超过 20 MiB，总计不超过 40 MiB；图片预览支持 PNG/JPEG/GIF/WebP，预览上限 8 MiB。附件会复制到用户数据目录，不依赖原文件继续存在。图片识别使用 Codex 原生图片输入，第三方模型是否支持图像取决于服务能力。
-
-切换会话、项目或进入设置时，当前进程内的文字草稿和待发送附件分别保留；尚未发送的草稿不跨应用重启保存。顶部前进/后退按钮可返回之前的会话、工作区和设置页，Windows 使用 Alt+←/→，Mac 使用 ⌘[/]。这是应用导航，与手动网页预览的前进/后退分别维护。
-
-Windows 顶部提供文件、编辑、视图和帮助菜单，支持 Alt+F/E/V/H、F10 和方向键。Mac 使用系统菜单栏。外侧导航栏可进入工作台、会话历史、通知、微信账户和设置。侧栏收起后仍可访问这些入口。菜单提供当前输入的撤销、重做、系统剪贴板操作，以及面板开关和字号调整。当前编辑器在后台刷新、字号及侧栏变化时保持连接，保留原生撤销记录；切换会话、设置页面或重启后不承诺保留撤销历史。中文合成输入期间延迟整体刷新。
-
-长任务不设置总运行时长上限，不会因达到 30 分钟而自动停止；渲染、导出等任务会继续等待 Codex 返回结果。可在桌面点击停止或在微信发送 `/stop` 手动停止。
-
-空闲会话的 Codex 连接在 15 分钟无任务、排队和审批时自动回收，下次输入会恢复会话；不会中断运行中的长任务。主题、字体、字号与状态显示偏好可在任务运行期间保存，默认模型/权限及 Codex 路径仍需等待任务结束。
-
-微信需要本机和应用保持运行；关闭窗口会停止接收，下一次启动会恢复已保存的账户。支持文字、语音转写、图片、视频、文件，以及未转写语音的原始音频附件。附件下载并解密后交给 Codex 读取；生成的图片、视频和文件通过腾讯 CDN 加密上传，以微信原生卡片发送。单附件上限 100 MiB。不处理群聊。
-
-侧栏宽度/开关、项目折叠、当前会话/工作目录和普通面板的类型/宽度/开关/展开状态现保存到加密用户数据，Windows 和 Mac 均不依赖网页存储；旧网页偏好只迁入一次，后续以后台为准。混合标签及未发送草稿仍只保留在当前进程。关闭正在加载的网页标签会定向取消其导航；移除会话会释放所属原生网页，其他会话保持运行。
-
-## 网页预览与官方扩展状态
-
-右侧同一标签栏可共存文本文件与网页，按会话及工作目录隔离。文件管理器、消息的工作区文件链接和文本附件可打开独立文件标签；Markdown 支持预览/源码及文档相对链接，`#L30` 可跳到源码行。文件仍受工作区边界和 512 KiB 文本限制，二进制文件会显示限制。可刷新、在文件夹显示，Ctrl/⌘+W 关闭当前标签，Ctrl+Tab 切换，标签获得焦点后可用方向键及 Home/End。每个会话最多同时打开 16 个文件及 12 个网页；标签和文件阅读位置仅在当前进程内保留，不承诺跨重启恢复。已发送对话及当前任务审阅仍按原有机制持久保存。
-
-右上角「网页预览」可手动打开网站：支持标签新建/选择/关闭、地址/搜索、前进后退、刷新/停止。右侧面板默认宽 340 CSS 像素，可拖动分隔线、用方向键调整、双击还原、展开/还原、收起及关闭；窄窗口使用可关闭的覆盖面板，避免挤压聊天。收起和关闭面板保留网页，标签上的叉销毁对应网页；关闭最后标签后保持空组，查看状态不创建标签。
-
-下载由 Windows WebView2 / Mac WKDownload 执行，未知总长度时不伪造百分比，完整收齐字节后仍等待原生完成事件。文件已移动或删除会禁用打开；保存历史失败会保留原记录并提示错误，仍可取消在途下载。下载记录独立于会话，原对话及 Codex 原生历史存储机制不变。
-
-Windows 使用系统 WebView2，Mac 使用系统 WebKit；外部网页不拥有应用消息桥。Windows 网站登录态保存在应用数据目录并按账户/会话隔离，Mac 当前网站登录态不跨重启保存。
-
-**自动操作浏览器必须通过 OpenAI 官方 ChatGPT 扩展，本版本尚未接通。** 设置 → 运行环境提供官方安装/说明入口和扩展文件检测；检测到安装文件不等于已经授权连接。本版本已移除旧的 `qqclaw_browser` HTTP MCP 和自动调用指令，不会把自建 MCP、Playwright、CDP 或 HTTP 抓取冒充官方扩展。在微信中要求自动浏览时，应如实报告功能未完成，不能声称已经搜索。
-
-已读取的官方文档描述通过官方桌面应用连接扩展的流程；本次尚未找到适用于 QQClaw 独立 app-server 的宿主接入与授权契约。安装、native transport、可信 runtime、任务授权及站点许可的分层证据见 [官方扩展接入调查](docs/OFFICIAL-BROWSER-INTEGRATION.md)，当前交付范围见 [result.md](result.md)。
-
-## 在 Codex Desktop 中继续（可选）
-
-1. 从会话菜单选择 **在 Codex Desktop 中继续**。
-2. 已有原生历史会保存为独立的 Codex 对话副本，并通过官方深链接打开 Desktop；空会话直接打开当前工作目录。草稿保留在 QQClaw，请在 Desktop 中发送下一条任务。
-3. 在 Desktop 使用其内置浏览器及可用工具。Desktop 副本的后续消息不会自动同步回 QQClaw 或微信；原会话仍可继续使用。
-
-QQClaw 后台与 Desktop 的工具相互独立。接续入口只保存并打开副本，不会让 QQClaw/微信自动使用 Desktop 的浏览器；这条链路仍未完成。不会借用 Desktop 的私有浏览器连接与权限。
-
-副本使用本机 Codex 配置和动态默认模型，避免继续依赖 QQClaw 的临时第三方 API 转发进程。Desktop 的模型、登录和工具需在 Desktop 中配置。同一历史重复点击会复用已有副本；QQClaw 有新历史后会创建新副本。目录中有运行或排队任务时，先等待任务结束。两端编辑同一目录时请协调操作。
-
-「设置 → 运行环境 → Codex 来源」提供自动检测、Desktop 附带程序、独立 CLI 和手动指定四个选项。自动模式优先采用通过版本检测的 Desktop 程序，不可用时回退 CLI；明确指定的来源不可用时会提示重新配置。选择后点击「保存来源」，模型目录随之刷新。Desktop 安装入口和一键安装 CLI 仍在运行环境页。
-
-接续原生历史要求两端使用相同的 Codex 用户目录。Windows 检查系统/用户环境中配置的 Desktop 目录；macOS 按 Launch Services 启动时的标准 `~/.codex` 检查，QQClaw 使用其他 `CODEX_HOME` 时拒绝生成可能无法读取的会话链接。功能通过官方 [Desktop 深链接](https://learn.chatgpt.com/docs/reference/commands) 和 [App Server](https://learn.chatgpt.com/docs/app-server) 实现。
-
-## 自定义 API 与模型
-
-「设置 → 模型与 API → 添加 API 服务」支持填写名称、基础地址、Key。模型 ID 可留空自动发现，也可每行填写任意自定义 ID。
-
-| 接口协议 | 工作方式 |
-| --- | --- |
-| Responses | Codex 直接调用配置的 `/responses`；选择「不发送思考参数」时通过本地转发层移除该参数 |
-| Chat Completions | 本地兼容层将 Codex Responses 请求转换为 `/chat/completions`，包括工具调用及工具结果 |
-
-模型需要支持工具调用，才能修改代码和运行命令。Chat Completions 适配层兼容普通 function 工具和 freeform 工具；它等待上游单次回复完成后再输出 Codex 事件，因此没有上游逐字流式效果。模型能力和第三方服务的协议实现仍决定最终兼容性。
-
-API 基础地址示例：`https://api.example.com/v1`。本机服务也支持 `http://127.0.0.1:端口/v1`。不要把 `/responses`、`/chat/completions` 或 Key 拼进基础地址。
-
-「读取模型并测试连接」使用模型列表接口；服务未提供 `/models` 时，可直接填写模型 ID 保存。列表读取成功只表示该接口可用，不代表模型已经完成编程请求。
-
-本机模型列表通过当前 Codex `model/list` 获取，自动发现当前桌面版运行程序，避免读到旧安装目录的过时列表。第三方同时支持 `{ data: [{ id }] }` 与 Codex `{ models: [{ slug }] }` 目录。启动、打开模型菜单、切换服务、窗口重新获得焦点及每五分钟都会读取更新（遵守 60 秒缓存；定时仅刷新当前与默认服务）；菜单也提供刷新按钮。更新替换旧目录，保留当前选择；失败时保留上次结果并显示状态。模型 ID 和接口返回的思考等级都不设固定白名单。
-
-Responses 本地转发层使用 240 秒空闲超时：等待响应头或连续 240 秒没有新数据才中断，每收到数据重置计时，总时长不限。Chat Completions 非流式单次调用仍使用 240 秒上限。
-
-服务不接受思考参数时可选择「不发送」；接受时按输入框或账户选择传入。新会话默认值、现有桌面会话与每个微信账户分别保存。
-
-## 工作目录与数据
-
-- 项目右侧「…」→「绑定微信账号」，选择账号即可将该工作区分配给它；没有账号时可直接扫码连接。
-- 每个微信账户绑定独立的配置与 Codex 会话。更换目录、模型服务或思考配置会创建新的微信会话，旧会话保留在历史中。
-- Codex 的 `cwd` 和 `workspaceWrite.writableRoots` 设置为会话的真实目录，排除系统临时目录的额外写入授权。全自动不会自行申请更高权限；只读拒绝写入。每次询问与允许编辑模式可把 Codex 的操作请求交给桌面审批，微信账户使用这两种模式时也需要回到电脑确认。
-- 同一工作目录的多个任务会顺序执行，避免桌面与微信同时编辑；不同目录可以并行处理。
-- 微信命令：`/help`、`/status`（`/where`）、`/bind`、`/new`、`/resume R编号`、`/model`、`/effort`、`/stream`、`/prompt start`、`/prompt done`、`/stop`。模型列表动态读取，也允许直接填写第三方模型 ID。`/bind` 限制在桌面已添加的项目或已授权目录中。
-- 过程进度默认开启，每个微信任务最多发送 6 条「【进度】」（长消息按实际分段计数）；第 6 条后发送一次“后续推送将进行省略。任务完成之后，会将结果汇报。请耐心等待。”，然后等待任务结束再发总结和附件。完整过程仍保存在桌面历史中。`/stream off` 关闭过程消息；任务运行时仍可接收 `/stop`。桌面发起的过程消息和结果不会发送到微信。
-- 微信每个回复上下文最多使用 10 个消息额度，预留至少 3 个给最终结果。总结过长或附件过多时自动合并为 ZIP 结果包，保留完整总结、全部有效附件和原文件名（重名加编号），每包不超过 100 MiB；少量附件继续直接发原生卡片。极大量附件仍超额度时，保留未发送内容，微信再发一条消息后继续投递，不重新执行任务。重试与重启保留计数，输入状态不占消息额度。
-- 窗口与后台之间的消息通过独立线程按顺序写入，UI 和读取后台输出的回调不进行同步管道写入，避免历史记录或加密快照变大后产生双向管道死锁，导致微信和桌面同时无响应。
-- `/prompt start` 后可连续发送文字、图片、视频和文件，`/prompt done` 合并执行；最多 50 项，闲置十分钟过期，`/prompt cancel` 可取消。未转写音频交给 Codex 及其可用工具处理，不假定模型自带语音识别。
-- 「配置账户 → 其他授权用户」可填写额外用户 ID，各用户的会话、消息上下文、模型覆盖和历史切换相互隔离。
-- 账户忙碌检查覆盖号主与所有授权用户；正在绑定或等待投递的会话不能删除。修改账户的目录或模型配置后，各授权用户下次发消息会使用新配置创建会话，原有历史保留。
-- 登录过期时可重新扫码。断开连接会清除该账户凭证和待回复队列，保留历史会话；同一微信账户再次扫码后可通过 `/resume` 继续。运行中的任务需要先停止或完成。
-- Windows 应用数据默认位于 `%LOCALAPPDATA%\QQClaw`，`state.json` 整体使用 Windows DPAPI 当前用户加密。Key 不返回界面，不写入项目，也不修改 `~/.codex/config.toml`。Codex 自己的会话记录仍由本机 Codex 管理。0.3.6 明确使用持久化会话，并将 JSON/Markdown 对话备份保存到 Codex 用户目录下的 `qqclaw/conversations`；设置中提供恢复入口，删除程序不主动清理数据。
-- 后台日志位于数据目录的 `logs\backend.log`，1 MiB 轮换，总共保留 3 份（当前、.1、.2）；只记录脱敏错误、有限堆栈和启停信息，写入失败不影响运行。未处理 rejection 记日志后继续，未捕获异常尽力清理后非零退出。
-- 程序通过标准输入输出调用后台，不开放管理网页端口。Chat Completions 兼容层和可选的 Responses 转发层仅监听随机本机端口，并使用临时令牌。
+未发送草稿不混入 Codex 已发送历史。独立对话副本中的附件保存原路径，迁移时需另行保留原文件。详细恢复说明见 [Mac 与数据](docs/MACOS-AND-DATA.md)。
 
 ## 二次开发
 
-```powershell
+安装构建依赖后执行：
+
+~~~powershell
 npm ci
 npm run build
-```
+~~~
 
-构建使用 Windows 自带 .NET Framework 编译器和下载的 WebView2 SDK；不需要 Visual Studio、C++、Rust 或 .NET SDK。SDK 固定版本、下载后必须通过固定 SHA-512 校验，并缓存到系统临时目录。WebView2 SDK 的控制库会嵌入 EXE，WebView2 Runtime 使用系统安装版本。
+Windows 构建使用系统 .NET Framework 编译器，默认内置 runtime/windows 中的运行资源，只输出 release/QQClaw.exe。修改 CEF 客户端后需先重新编译对应引擎。开发候选请使用 scripts/build-windows.mjs --output 指定项目外目录。
 
-Windows 构建始终只输出 `release/QQClaw.exe`。构建前请关闭程序；不会另存带版本号的程序。第三方许可证已经嵌入 EXE，临时构建文件写入系统临时目录。
+Mac 需要 macOS 与 Xcode Command Line Tools；默认 npm run build:mac 编译 Universal 主程序和双架构 Node/npm。内置官方浏览资源的打包入口是 buildMac(root,{browserBuild,runtimeCache,output})，由 [.github/workflows/macos-official-browser.yml](.github/workflows/macos-official-browser.yml) 使用已验证 CEF 组件和原版运行库打包。原版浏览接入检查见 [macos-official-browser.yml](.github/workflows/macos-official-browser.yml)。
 
-项目内 `runtime/windows` 是 Windows 运行资源，默认构建直接内置；复制本地项目时一起保留。Git 不跟踪这些大文件，从 Git 单独取源码需要先收集官方组件（`node scripts/vendor-official-runtime.mjs`）及对应 CEF/客户端。资源索引见 `runtime/README.md`。修改 C++ 客户端后用 `npm run build:browser -- --cef-sdk "C:\cef-sdk" --output "C:\outside-project\browser-build"` 重新编译，构建参数 `--browser-engine`、`--official-runtime`、`--cef-runtime` 可指定资源目录。
-
-`npm run dev` 编译并打开桌面应用。源码和成品目录不包含测试文件、测试截图或旧版程序。
+复制本地项目时保留 runtime 文件夹。Git 不跟踪大型运行资源，从 Git 单独获取源码后需按 [运行资源索引](runtime/README.md) 备齐；不得用开发电脑现有 CodexHost、浏览器连接或登录身份冒充内置资源。
 
 | 路径 | 责任 |
 | --- | --- |
-| `backend/wechat.mjs` | 从旧项目提取的腾讯 iLink 协议传输 |
-| `backend/bridge.mjs` | 多账户扫码、持续轮询、持久收件箱与投递、过程进度、重连和去重 |
-| `backend/wechat-results.mjs` | 最终结果整合、完整总结与多附件 ZIP 打包、100 MiB 分包 |
-| `backend/wechat-*.mjs` | codex-weixin 的媒体加解密、消息解析、发送动作、提示词、合并缓冲与微信命令 |
-| `backend/codex.mjs` | Codex App Server JSON-RPC、模型列表、流式事件与权限 |
-| `backend/codex-runtime.mjs` | Desktop / CLI 来源发现、真实版本验证、自动回退与环境隔离 |
-| `backend/browser.mjs` | 用户手动网页预览、独立 Codex 的浏览器隔离、官方扩展安装文件检测；不注册自建浏览器 MCP |
-| `shared/browser-page.js` | 原生网页组件的内容/元素读取辅助，供内部手动预览和隔离组件检查使用；不向模型开放 |
-| `native/BrowserHost.cs` / `native/macos/BrowserHost.swift` | 独立 WebView2 / WKWebView 浏览器窗口 |
-| `backend/adapter.mjs` | 第三方 Chat Completions 与 Responses 兼容层 |
-| `backend/app.mjs` | 项目、会话、模型服务、目录任务队列和操作路由 |
-| `backend/store.mjs` | 合并尾随保存、快照时序保证、原子替换、凭证过滤与 DPAPI 桥接 |
-| `backend/log.mjs` | 数据目录内的脱敏滚动日志，失败静默 |
-| `native/Program.cs` | Windows 窗口、WebView2、文件夹选择、依赖安装与进程生命周期 |
-| `ui/` | 独立实现的桌面界面 |
-| `shared/workspace.mjs` | Windows 与 POSIX 路径身份比较，保留大小写敏感卷中的不同目录 |
-| `scripts/build.mjs` | 按本机平台选择构建流程 |
-| `scripts/build-windows.mjs` | Windows 前后端打包、SDK 获取、单 EXE 编译与许可证收集 |
-| `native/macos/` / `scripts/build-macos.mjs` | Mac 原生宿主、两种架构编译/合并、签名和唯一 DMG 安装包 |
-| `backend/conversations.mjs` | 独立对话备份、Codex 历史关联和恢复格式校验 |
+| backend/app.mjs | 项目、聊天、账户、模型配置、任务队列和操作路由 |
+| backend/codex.mjs / codex-answer.mjs | Codex app-server、真实回合、目标与模型操作 |
+| backend/wechat.mjs / wechat-actions.mjs | 腾讯 iLink、消息/附件和发送动作 |
+| backend/official-browser.mjs / macos-*.mjs | 官方浏览运行库、会话归属、Mac MCP 与进程生命周期 |
+| backend/store.mjs / conversations.mjs | 加密应用状态、独立对话备份与恢复 |
+| native/Program.cs / native/cef | Windows 宿主与 CEF 客户端 |
+| native/macos | Mac AppKit/WebKit 主界面、CEF 桥和系统功能 |
+| ui / shared | 前端、布局、菜单、审阅与共享逻辑 |
+| scripts / .github/workflows | 构建、资源校验与云端原生检查 |
 
-两条链路的提取过程、接口与复用示例见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-
-## macOS 与对话数据
-
-Mac 适配面向 macOS 13.3+，使用 AppKit + 系统 WebKit，支持 Intel / Apple Silicon 通用构建。界面使用原生标题栏、Cmd 快捷键和系统剪贴板，安装页识别 Mac 的 Node/Codex 路径。
-
-在 Mac 安装 Xcode 15+ 的 Command Line Tools 和 Node.js 22.13+，执行 `npm ci`、`npm run build:mac`。产物为 `release/macos/QQClaw.dmg`，内含一个 `QQClaw.app`、Applications 快捷入口和中文安装说明。源码已保存到 [mumuhaha487/wechatclaw](https://github.com/mumuhaha487/wechatclaw)。Windows 可在该仓库的 [Mac 构建工作流](https://github.com/mumuhaha487/wechatclaw/actions/workflows/macos.yml) 点击 Run workflow，由 macOS 云端机器完成编译并下载产物。
-
-Mac 应用数据位于 `~/Library/Application Support/QQClaw`，加密密钥存放在系统钥匙串。删除 EXE 或 .app 不会主动删除账户数据、Codex 原生历史或独立对话备份。**独立备份是可读的 JSON/Markdown，附件只保存原路径；个人备份时还需保留 Codex 用户目录、项目和附件本体。**
-
-真实 Codex 已验证关闭后由新进程读取原生历史并继续原会话。其他 Codex 客户端是否在侧栏显示该会话由它的列表过滤规则决定；可以用 `codex resume <threadId>` 继续。Mac 成品使用本地签名，尚未做 Apple Developer ID 签名或公证。完整的数据位置、恢复步骤、构建和未验证边界见 [docs/MACOS-AND-DATA.md](docs/MACOS-AND-DATA.md)。
+详细功能与当前开发入口见 [开发交接.md](开发交接.md)，接口提取说明见 [架构](docs/ARCHITECTURE.md)。
 
 ## 来源
 
-微信传输提取自 [mumuhaha487/codex-wechat](https://github.com/mumuhaha487/codex-wechat)，保留 MIT 许可证。附件、发送动作、消息标准化与提示词缓冲基于 [XavierJiezou/codex-weixin](https://github.com/XavierJiezou/codex-weixin) 的实际源码和测试集集成；MIT 许可证保存在 `docs/CODEX-WEIXIN-LICENSE.txt` 并嵌入 EXE。协议对应腾讯公开的 [iLink 文档](https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol_zh_CN.md)。UI 参考 [vastsa/pi-desktop](https://github.com/vastsa/pi-desktop)，首页吉祥物图片沿用上游资源，其 LGPL-3.0 许可证保存在 `docs/PI-DESKTOP-LICENSE.txt`，随 EXE 分发的第三方声明也包含该许可证。图片原文件随本项目源码保留在 `ui/assets/`。
-
-Codex 对接依据 [App Server](https://developers.openai.com/codex/app-server)、[自定义 Provider](https://developers.openai.com/codex/config-advanced/) 与 [Windows 沙箱](https://developers.openai.com/codex/windows/) 文档。QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。
-
-微信功能的源码核对表、消息路由及验证边界见 [docs/WECHAT-PARITY.md](docs/WECHAT-PARITY.md)。
-
-## 0.3.10 历史交付记录（2026-10-31）
-
-黑白配色默认深色，已移除绿色强调色。浏览器在主窗口右侧展示真实网页，提供标签、后退、前进、刷新、停止及搜索地址栏；保留会话和账户隔离。窄窗口使用可收起的浏览器面板，图片/二维码受容器约束，长代码与表格在各自区域滚动。
-
-修复旧微信会话继承 Desktop 浏览器工具而报“访问服务不可用”的根因。QQClaw 子进程隔离不适用的宿主插件，并用每轮应用上下文更新浏览器说明；不更改全局 Codex 配置。以用户原话和完整旧会话历史的副本验证，实际完成 19 次自有浏览器操作并读取新闻原文，未调用 cua_repl；原会话未被测试修改。测试输入未点名正确工具。
-
-Windows 唯一 `release/QQClaw.exe` 已替换并重启，597,504 字节，SHA-256 `0D7DB893E00C9B29384F873C2DB2A453A1D8AB674ACEA18B1B7C8ABE01790A39`。替换前无运行、排队及待发送消息，正常退出；重开后保留原 2 个账户、3 个会话及全部 134 条历史消息，深色外观迁移成功。正式字节与实际测试候选一致。
-
-Mac 唯一 `release/macos/QQClaw.dmg` 已更新，656,659 字节，SHA-256 `186e32e98f3fa4aae86cf3f98d448e1b58ee14d734ad226ccb452795dbb46c7b`。源码提交 `281fa2f`，[云编译与原生自检](https://github.com/mumuhaha487/wechatclaw/actions/runs/41191371199) 通过 Universal 双架构、DMG/签名、原生 WKWebView 导航/填写/提交/截图/标签、钥匙串及对话保存恢复检查，下载的 Artifact digest/ZIP CRC/DMG 文件尾核对通过。
-
-本地 119 项既有回归、24 项浏览器检查通过；实际 EXE 完成普通指令→真实 Codex→网页填写搜索→读取结果。实际界面检查覆盖标签、地址栏、前后退/刷新、收起重开和弹窗遮挡，并在多个窗口尺寸、20 号字体、超长文本、代码、表格及附件名下核对边界。空 Codex 配置和现有配置均可启动；未使用 CodexHost 程序。
-
-微信 API 夹具通过真实 App/Codex/WebView2 完成 Google“AI 热点”搜索并读取新闻页，核对 typing、推送额度、桌面任务不回微信、加密重载及原生 Codex 历史。该验证不等于线上微信实发。其他独立网页检查中 Google 偶尔出现人机验证，需如实报告，不能绕过或当作搜索完成。Mac 完整人工 GUI、真实微信及 Intel 实机仍未验证。测试、截图、诊断副本、旧程序及依赖全部在项目外。
-
-## 0.3.9 历史交付记录（2026-10-31）
-
-原验收只覆盖明确指定浏览器工具的新会话，未覆盖带有 Desktop 浏览器失败历史的普通微信指令。该验收不足以认定用户完整流程通过；0.3.10 重新覆盖此情况。
-
-Windows 唯一 `release/QQClaw.exe` 已更新并重启（589,312 字节），替换前确认没有运行、排队或待回复任务，正常关闭后保留现有 2 个账户和 3 个会话。正式文件与通过真实界面测试的候选完全一致，SHA-256 `A57DFE69A7474D7365A928AE45736AFC457AAFCDE2E4897C765DFB77709D7435`；新版后台和浏览器资源已启动。
-
-Mac 唯一 `release/macos/QQClaw.dmg` 已更新（633,978 字节），SHA-256 `2d2c44f037fbfd139dd7432006d52ee744ea08ecd4a4ff0abf884e77e42fdff0`。[云构建 41188625183](https://github.com/mumuhaha487/wechatclaw/actions/runs/41188625183) 通过双架构编译、安装映像检查、原生 WKWebView 填写/提交/截图、钥匙串及对话保存恢复验证。
-
-本地 119 项既有回归及 24 项浏览器检查通过。真实 Codex 在全自动、询问模式均完成页面填写与提交；Windows EXE 实际输入任务后显示网页真实结果，无界面脚本错误。另以微信 API 夹具验证真实 App → Codex → WebView2 → 进度/结果出站，核对 typing、推送额度、桌面消息不回微信及原生 Codex 历史；该检查不等于微信线上实发。
-
-Google 实际导航触发异常流量人机验证，程序已如实回报，**本次没有验收 Google 热点搜索结果**。Mac 云端原生浏览器检查通过，Mac 线上微信、完整人工界面和网站兼容性仍需实机确认。
-
-## 0.3.8 历史交付记录（2026-10-31）
-
-142 项检查及真实 Codex 的第三方 API、原会话恢复和副本接续验证通过。用户确认退出后，Windows 唯一 `release/QQClaw.exe` 已替换为已验证的 0.3.8 候选原字节并启动；新版运行资源与内嵌代码一致，后台启动记录已核对。替换前后应用数据文件指纹一致。Mac 唯一 `release/macos/QQClaw.dmg` 已更新为 0.3.8，[云构建及原生验证通过](https://github.com/mumuhaha487/wechatclaw/actions/runs/41182366453)。
-
-0.3.8 当时的浏览器方案依赖 Desktop 接续，未验收 QQClaw 副本的浏览器操作。0.3.9 已改为本项目自带浏览器，上述历史限制不再适用。
-
-## 0.3.11 阶段性交付
-
-本轮不宣称整体目标完成。已修复界面、面板/标签关闭、上下文累计值错误，新增消息更改卡片及时间/菜单；官方扩展自动调用、截图中部分原生交互仍未完成。具体实现、实测范围、代码与证据索引以 [result.md](result.md) 为准。上面的 0.3.10 等交付记录属于历史，不能作为官方扩展验收证据。
-> 开发状态（2026-11-01）：正式 EXE/DMG 为 0.3.32。未发布源码已接实际 BrowserHost、CEF及正式归属校验 helper；QQClaw配置的真实模型通过原版扩展新建、读原文、关闭并再查确认。检查宿主是隐藏原生Form，尚不是完整EXE GUI、真实微信、Google、安装或Mac验收。最新范围及索引见 docs/OFFICIAL-BROWSER-INTEGRATION.md 开头。
+微信逻辑参考并集成 [codex-weixin](https://github.com/XavierJiezou/codex-weixin)，界面参考 [pi-desktop](https://github.com/vastsa/pi-desktop)。相关许可证保留在 docs 并随包分发，图片原件在 ui/assets。QQClaw 非腾讯或 OpenAI 官方客户端。

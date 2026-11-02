@@ -1,8 +1,12 @@
 # macOS 适配与对话保存
 
-## 后续Mac官方浏览组件（正式0.3.37未变）
+## 0.3.38 Mac 集成与数据现状
 
-Apple Silicon原版官方运行库已缓存到项目 `runtime/macos/official-browser/`，含完整原版CodexCLI.app，独立运行、REPL执行与browser-client导入通过。CEF扩展页面退出追踪已修复并退出0；官方getInfo直连仍失败，生产Host尚未接入。Intel官方primary-runtime实际档案只有办公依赖，没有所需Node REPL及扩展宿主，未作为浏览器运行库打包。来源、失败和摘要见[result.md](../result.md)首节。本轮未改变对话存储、生产退出保存或正式安装包。
+原版官方浏览已通过Apple Silicon真实接口和主程序实际绑定检查。CEF156使用本应用独立的浏览器钥匙串项，账户/对话仍沿用原来的Vault钥匙串密钥和mac1: AES-GCM格式，不改变原数据目录。主程序/真实空后台实际完成设置保存、加密历史与下载记录及正常退出。41370219810/1cfe2bd已通过，删除临时密钥子进程方案后仍可正常保存退出。
+
+Universal包保留Apple Silicon/Intel主程序与Node/npm。Apple Silicon包含CEF和原版官方浏览资源；Intel保留原有聊天/手动网页能力，官方自动浏览尚未接通。最终同名安装包、摘要与当前更细的弹窗/关闭下载检查状态见根目录交付说明和result.md。原生数据及Codex对话都保存在应用包外，删除App不会主动删除。
+
+下面为历史记录；其中旧版“未接通/正式版本”等描述不覆盖本节。
 
 ## 当前进展：0.3.34 内置运行环境（2026-11-02）
 
