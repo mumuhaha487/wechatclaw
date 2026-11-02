@@ -1,6 +1,6 @@
 # QQClaw
 
-QQClaw 是独立的 Windows / macOS Codex 与微信工作台，默认白色为主、黑色为辅。当前源码 **0.3.39**；Windows 同名 EXE 与 Mac Universal 安装包均已更新。交付状态以 [交付说明](交付说明.md) 为准。
+QQClaw 是独立的 Windows / macOS Codex 与微信工作台，默认白色为主、黑色为辅。当前源码 **0.3.40**；Windows 同名 EXE 与 Mac Universal 安装包均已更新。交付状态以 [交付说明](交付说明.md) 为准。
 
 ## 使用
 

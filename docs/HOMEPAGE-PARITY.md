@@ -16,7 +16,7 @@
 | 用户长消息“显示更多”、设为目标、会话目录 | ui/conversation-view.mjs；ui/app.mjs的message-goal；shared/goal.mjs | 已实现展开收起、提问定位和持续目标；目标功能不以进程存活代替任务完成 |
 | 过程折叠、最终Markdown、网站卡片、本地文件、文件更改 | ui/app.mjs的runSummary、changeCard；ui/website-cards.mjs；shared/review-view.mjs；backend/checkpoints.mjs | 有真实文件及前端检查记录；本轮未重跑每一种文件撤销情形 |
 | 多行输入、附件、切换会话保留草稿、运行中继续输入 | ui/render-frame.mjs、composer-drafts.mjs、attachments.mjs；ui/app.mjs的composer | 本轮真实App和Codex进程运行中可编辑18行草稿，切到另一会话后后退能恢复；任务完成仍保留焦点、光标和原生撤销记录 |
-| 权限、模型与思考等级、动态刷新、自定义模型 | ui/composer-model.mjs、controls.mjs、model-catalog.mjs；backend/models.mjs | 保留服务/模型/思考等级及手填模型ID；模型列表来自发现接口，不能按固定名单冒充动态列表 |
+| 权限、模型与思考等级、动态刷新、自定义模型 | ui/composer-model.mjs、controls.mjs、model-catalog.mjs；backend/app.mjs、codex.mjs | 保留服务/模型/思考等级及手填模型ID；模型列表来自发现接口，不能按固定名单冒充动态列表 |
 | 上下文圆环和统计详情 | shared/context-usage.mjs；ui/app.mjs的contextUsage、context-info；backend/codex.mjs | 本轮两轮真实Codex app-server事件使界面从待统计变为3.9%、10.1%。最后一轮26100/258400，累计36200，界面使用last而非total；未知窗口仍显示待统计 |
 | 面板宽度、展开/还原、收起、关闭、隐藏标签数量 | ui/app.mjs的panelSplitter、workspace、close-panel；ui/desktop.css | 0.3.37/39真实前端拖动、关闭及后台更新检查通过；本轮补查延迟扩展检测返回后面板仍关闭 |
 | 浏览/文件标签、新建、选择、关闭、排序、恢复关闭标签 | ui/panel-tabs.mjs、panel-tab-actions.mjs、closed-panel-tabs.mjs | 用户界面操作已实现，Mac实际原生主程序检查覆盖页面打开/选择/关闭；不代表官方tabs.new新窗口内嵌已通过 |
