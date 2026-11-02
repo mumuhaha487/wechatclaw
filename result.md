@@ -1,5 +1,17 @@
 # QQClaw 本轮需求、实现与验收记录
 
+## 当前 Windows 交付：0.3.42（2026-11-02）
+
+发现并复现输入法相关的两个逻辑缺口：模型下拉框在 isComposing=true 的 Enter 上仍采用搜索文字，把“中文候选”保存为模型 ID；对话框仅检查事件 isComposing，在组合状态仍开启但标记不可靠、keyCode229 的确认键上触发了发送。已在 ui/controls.mjs 为下拉键盘处理添加组合状态判断，在 ui/app.mjs 让应用快捷键避开组合事件、保留浏览器输入法默认处理，并对发送入口保留组合状态判断。没有修改布局、官方扩展、运行库、原生浏览器或会话权限。
+
+隔离的实际前端/App/Store 复现并回归：组合 Enter 不改模型、不发消息；方向键和 Esc 不关闭模型弹窗；keyCode229 不误采用模型；正常 Enter 仍保存自定义模型并产生 1 次发送请求。最终回归期间模型调用被明确禁止，正常发送请求由受控接口拒绝，验证的是发送意图，不是模型答案。使用合成 DOM composition/input/keydown 事件；IAB 的 Input.imeSetComposition 接口不可用，没有将其称为硬件输入法验收。基线复制的检查服务器最初允许实际 Codex app-server 连接本机 Responses 夹具，误按键启动了 1 个夹具回合；随后已正常结束，未调用外部模型或原微信账户。中间第一次修复只保护下拉框，父弹窗的 Esc 仍关闭它，检查继续向已移除输入框发事件时产生 active.query 空对象错误；中间失败保留在 audit，最终阶段起点另有记录，最终新增前端/服务端异常为 0，没有抹掉历史失败。
+
+证据根：C:/Users/admin/AppData/Local/Temp/qqclaw-windows-ime-780bc02f。baseline.json/baseline-backend-audit.json 保留旧行为；intermediate-backend-audit.json 保存中间失败；fixed.json、final-start.json、fixed-backend-audit.json、verification.json 保存最终回归与统计范围。检查脚本仅追加到项目外的测试构建，正式包已确认没有 ime-qa、vendor-ime-check 等检查代码。
+
+Windows0.3.42已编译，空数据/系统PATH启动实际使用包内 Node v24.22.1，后台就绪通过，检查进程已退出。唯一成品 release/QQClaw.exe 已更新：307445248字节，SHA256 5e942d46de9a032577d7a170cdec6f3952d53cee2659003a0c79c4050f671278。构建源码 edc5040667c610002b703bfcf0332c015fd5011f，97个代码输入与Git副本匹配（只规范化LF/CRLF）。打包验证最初按斜杠查找 Windows ZIP 条目而未命中，修正分隔符后版本、资源和无检查脚本检查通过；该读取工具错误不是打包丢文件。package目录保留编译、启动、源文件及payload核对证据。
+
+Mac安装包按用户要求继续保留0.3.41，未改动或触发新的Mac构建。原始完整目标仍保留，物理输入法/鼠标、其他显示器缩放、全部参考操作与腾讯线上微信等尚未整体通过；0.3.41的原生显示/隐藏及入口恢复检查见下方。本文后续0.3.41版本与成品摘要为历史证据，不覆盖本节。
+
 ## 最新交付范围：Windows（2026-11-02）
 
 ### 补充：正式 Windows 程序集入口与原生窗口检查

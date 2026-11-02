@@ -1,6 +1,6 @@
 # QQClaw
 
-QQClaw 是独立的 Windows / macOS Codex 与微信工作台，默认白色为主、黑色为辅。当前源码 **0.3.41**；Windows 同名 EXE 与 Mac Universal 安装包均已更新。交付状态以 [交付说明](交付说明.md) 为准。
+QQClaw 是独立的 Windows / macOS Codex 与微信工作台，默认白色为主、黑色为辅。当前源码与 Windows EXE 为 **0.3.42**；Mac 安装包按用户要求保留 **0.3.41**。交付状态以 [交付说明](交付说明.md) 为准。
 
 当前优先交付 Windows：双击 `release/QQClaw.exe`。Mac 按用户要求冻结在 0.3.41，后续迁移时再继续适配。
 
@@ -19,6 +19,7 @@ QQClaw 是独立的 Windows / macOS Codex 与微信工作台，默认白色为�
 - 常用微信命令：/help、/status、/bind、/new、/resume、/model、/effort、/stream、/prompt、/stop。详细行为见 [微信功能核对](docs/WECHAT-PARITY.md)。
 - 项目/聊天侧栏支持菜单、搜索和展开收起；右侧文件/浏览器共用工作面板，支持拖宽、展开还原、收起、关闭、标签排序和关闭标签恢复。
 - 保留加密草稿与导入附件、真实上下文用量、持续目标、文件更改审阅和撤销/重新应用。
+- 输入法组合期间不会把 Enter 当作发送或采用模型；确认文字后，普通 Enter 仍按原来的方式操作。
 
 ## 官方浏览器
 
