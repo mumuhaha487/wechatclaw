@@ -18,6 +18,8 @@ Windows0.3.41空数据/系统PATH下使用包内Node v24.22.1启动真实后台�
 
 证据根：C:\Users\admin\AppData\Local\Temp\qqclaw-wechat-browser-18deeadf。首轮result.json/events.json/wechat-wire.json；retry为Google验证阻断；resume保存原会话恢复、真实命令、加密投递和桌面隔离的通过结果；integration-proof.json组合核对了三个阶段。package保存两端构建、源文件核对和交付回执。初次宿主Windows --import路径错误保留在bootstrap-path-error.txt，不计为产品故障。
 
+补充真实上下文证据：这轮实际模型的Codex通知共21条。末条last=41737、total=655163、modelContextWindow=258400；生产前端计算函数使用当前last得16.152%，累计total虽超过窗口也不会据此显示100%。原始及计算结果在同一证据根real-context-samples.json。这是实际在线模型事件与生产计算函数核对，本轮没有为这组在线数值另录GUI；此前真实前端/CLI配合受控usage的显示检查仍保留。
+
 未完成项保留：Google重新搜索被真人验证阻断的这一轮、腾讯线上微信整条链路、Mac官方tabs.new新普通窗口内嵌、Intel官方自动浏览、官方Blob下载与全部参考主页/物理GUI/输入法/DPI核验。没有使用替代自动浏览驱动，也不把局部检查当成整体验收。
 
 以下为历史记录，不覆盖本节。
