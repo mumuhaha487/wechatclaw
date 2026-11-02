@@ -26,6 +26,8 @@
 
 ## 本轮统计证据的范围
 
+Windows 0.3.41 另有当前前端/App/Store 的 6 项实际交互检查：文件预览、快捷键关闭/恢复、最小窗口关闭面板、模型弹窗 Esc 关闭、视图菜单恢复面板。1280×720 聊天 582.98px、面板 367.35px；1000×680 无横向溢出，覆盖面板关闭后聊天 670px。证据根 C:/Users/admin/AppData/Local/Temp/qqclaw-windows-homepage-1571d95f；原生环境、模型发现和浏览路由为夹具，chat.send=0，不能据此补齐独立 EXE 的物理输入法/DPI或腾讯线上验收。检查服务和临时页面均已关闭。
+
 证据根：C:/Users/admin/AppData/Local/Temp/qqclaw-homepage-326e0f8f。
 
 - context-ui.json/png与context-backend-audit.json：实际前端、App、Store及安装的官方Codex进程；Responses接口在本机提供受控结果及usage字段，没有调用外部模型。两次last分别为10100、26100 tokens，窗口258400，第二次total为36200。它证明统计事件传递和显示逻辑，不证明某个线上服务的计费准确性。
