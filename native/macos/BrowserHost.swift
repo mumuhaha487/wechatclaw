@@ -1,5 +1,161 @@
 import AppKit
 import WebKit
+import CryptoKit
+
+// Native UI controls only. Model browser operations stay on the original
+// extension's MCP connection and cannot call this controller.
+@MainActor final class CefBrowserController {
+    let runtime: MacCefRuntime, directory: URL, parent: WKWebView
+    let history: BrowserHistory
+    let downloads: BrowserDownloads
+    let notify: ([String: Any]) -> Void
+    var profiles: [String: String] = [:], ready = Set<String>()
+    var selected: [String: Int] = [:], revisions: [String: Int64] = [:]
+    var visibleOwner = "", visible = false
+    var navigation: [Int: Int64] = [:]
+    var errors: [Int: String] = [:]
+    var findRequests: [String: CheckedContinuation<[String: Any], Error>] = [:]
+    init(runtime: MacCefRuntime, directory: URL, parent: WKWebView, history: BrowserHistory, downloads: BrowserDownloads, notify: @escaping ([String: Any]) -> Void) {
+        self.runtime = runtime; self.directory = directory; self.parent = parent; self.history = history; self.downloads = downloads; self.notify = notify
+    }
+    func tabs(_ owner: String) throws -> [[String: Any]] { try runtime.control(["action": "tabs", "owner": owner])["tabs"] as? [[String: Any]] ?? [] }
+    func state(_ owner: String, reveal: Bool = false) throws -> [String: Any] {
+        let pages = try tabs(owner)
+        if !pages.contains(where: { ($0["id"] as? Int) == selected[owner] }) { selected[owner] = pages.first?["id"] as? Int }
+        let active = pages.first { ($0["id"] as? Int) == selected[owner] }
+        revisions[owner, default: 0] += 1
+        func display(_ url: Any?) -> String { let value = url as? String ?? ""; return value.hasPrefix("about:blank") ? "" : value }
+        return ["owner": owner, "revision": revisions[owner]!, "reveal": reveal, "activeTab": selected[owner].map(String.init) ?? "",
+          "tabs": pages.map { page -> [String: Any] in
+            let id = page["id"] as? Int ?? 0
+            return ["id": String(id), "url": display(page["url"]), "title": page["title"] as? String ?? "新标签页", "loading": page["loading"] as? Bool ?? false, "navigationRevision": String(navigation[id, default: 0])]
+          }, "url": display(active?["url"]), "title": active?["title"] as? String ?? "", "loading": active?["loading"] as? Bool ?? false,
+          "canGoBack": active?["canGoBack"] as? Bool ?? false, "canGoForward": active?["canGoForward"] as? Bool ?? false, "error": selected[owner].flatMap { errors[$0] } ?? ""]
+    }
+    func publish(_ owner: String, reveal: Bool = false) { if profiles[owner] != nil, let value = try? state(owner, reveal: reveal) { notify(value) } }
+    func event(_ value: [String: Any]) {
+        let event = value["event"] as? String ?? "", owner = value["owner"] as? String ?? ""
+        if event == "find-result", let token = value["token"] as? String { findRequests.removeValue(forKey: token)?.resume(returning: value); return }
+        if event == "download-start", let id = value["downloadId"] as? String {
+            do {
+                let path = try downloads.externalStart(id: id, owner: owner, name: value["name"] as? String ?? "download", url: value["url"] as? String ?? "", total: (value["total"] as? NSNumber)?.int64Value ?? 0) { [weak self] in
+                    _ = try? self?.runtime.control(["action": "downloadCancel", "owner": owner, "downloadId": id])
+                }
+                _ = try runtime.control(["action": "downloadDestination", "owner": owner, "downloadId": id, "path": path])
+            } catch {
+                _ = try? runtime.control(["action": "downloadCancel", "owner": owner, "downloadId": id])
+                downloads.externalUpdate(id: id, received: 0, total: 0, status: "interrupted", error: error.localizedDescription)
+            }
+            return
+        }
+        if event == "download-progress", let id = value["downloadId"] as? String {
+            downloads.externalUpdate(id: id, received: (value["received"] as? NSNumber)?.int64Value ?? 0,
+              total: (value["total"] as? NSNumber)?.int64Value ?? 0, status: value["status"] as? String ?? "interrupted", error: value["error"] as? String ?? "")
+            return
+        }
+        if event == "profile-ready" { ready.insert(owner) }
+        let id = value["tabId"] as? Int ?? 0
+        if event == "navigation" { navigation[id, default: 0] += 1; errors.removeValue(forKey: id) }
+        if event == "load-error" { errors[id] = value["error"] as? String ?? "网页加载失败。" }
+        if event == "load-end", let url = value["url"] as? String, BrowserHost.allowed(url) {
+            let page = try? tabs(owner).first { ($0["id"] as? Int) == id }
+            history.visit(url, title: page?["title"] as? String ?? "")
+        }
+        if event == "title", let page = try? tabs(owner).first(where: { ($0["id"] as? Int) == id }) {
+            history.updateTitle(page["url"] as? String ?? "", title: value["title"] as? String ?? "")
+        }
+        if event == "browser-closed" { errors.removeValue(forKey: id); navigation.removeValue(forKey: id) }
+        publish(owner)
+        if event == "browser-closed", visible && owner == visibleOwner { selectVisible() }
+    }
+    func setView(_ p: [String: Any]) {
+        visibleOwner = p["owner"] as? String ?? ""
+        let width = (p["viewportWidth"] as? NSNumber)?.doubleValue ?? 0, height = (p["viewportHeight"] as? NSNumber)?.doubleValue ?? 0
+        visible = p["visible"] as? Bool == true && width > 0 && height > 0
+        selectVisible()
+        func number(_ key: String) -> Double { let value = (p[key] as? NSNumber)?.doubleValue ?? 0; return value.isFinite ? max(-10000, min(30000, value)) : 0 }
+        let sx = width > 0 ? parent.bounds.width / width : 1, sy = height > 0 ? parent.bounds.height / height : 1
+        runtime.bounds(NSRect(x: number("x") * sx, y: number("y") * sy, width: max(0, number("width") * sx), height: max(0, number("height") * sy)), visible: visible && selected[visibleOwner] != nil)
+    }
+    func selectVisible() {
+        if visible, let id = selected[visibleOwner] { _ = try? runtime.control(["action": "selectTab", "owner": visibleOwner, "tabId": id]) }
+    }
+    func focus(owner: String, tabId: String) -> Bool {
+        guard visible, owner == visibleOwner, let id = Int(tabId), selected[owner] == id else { return false }
+        return (try? runtime.control(["action": "focus", "owner": owner, "tabId": id])) != nil
+    }
+    func ensure(_ owner: String, manifest: String? = nil) async throws {
+        if profiles[owner] == nil {
+            let key = SHA256.hash(data: Data("qqclaw-official:\(owner)".utf8)).map { String(format: "%02x", $0) }.joined().prefix(32)
+            if let manifest {
+                let source = URL(fileURLWithPath: manifest)
+                let target = directory.appendingPathComponent("browser-profiles/NativeMessagingHosts/com.openai.codexextension.json")
+                try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(contentsOf: source).write(to: target, options: .atomic)
+            }
+            profiles[owner] = String(key)
+            do { _ = try runtime.control(["action": "createProfile", "owner": owner, "profile": String(key), "activate": visible && visibleOwner == owner]) }
+            catch { profiles.removeValue(forKey: owner); throw error }
+        }
+        for _ in 0..<300 {
+            if ready.contains(owner) { return }
+            guard profiles[owner] != nil else { throw failure("浏览器会话已关闭。") }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        throw failure("浏览配置初始化超时，请重试。")
+    }
+    func handle(_ p: [String: Any]) async throws -> Any {
+        let owner = p["owner"] as? String ?? "", action = p["action"] as? String ?? ""
+        guard UUID(uuidString: owner) != nil else { throw failure("浏览器会话无效。") }
+        if action == "dispose" {
+            _ = try runtime.control(["action": "dispose", "owner": owner]); profiles.removeValue(forKey: owner); ready.remove(owner); selected.removeValue(forKey: owner)
+            if visibleOwner == owner { visible = false; runtime.bounds(.zero, visible: false) }; return ["disposed": true]
+        }
+        try await ensure(owner, manifest: p["nativeHostManifest"] as? String)
+        if action == "prepareOfficial" {
+            return ["engine": "cef", "browserFamily": "chrome", "tabCreation": false, "extensionId": "hehggadaopoacecdllhhajmbjkdcmajg",
+              "browserProcessId": Int(getpid()), "applicationProcessId": Int(getpid()), "applicationPath": Bundle.main.executableURL!.path,
+              "nativeProfileDirectory": directory.appendingPathComponent("browser-profiles/\(profiles[owner]!)").path, "identityUrl": "about:blank#qqclaw-profile-\(profiles[owner]!)"]
+        }
+        if action == "state" { return try state(owner) }
+        var target = (p["tabId"] as? String).flatMap(Int.init) ?? selected[owner]
+        if action == "newTab" || action == "restoreTab" || action == "open" && target == nil {
+            guard try tabs(owner).count < 12 else { throw failure("最多打开 12 个标签页。") }
+            let created = try runtime.control(["action": "newTab", "owner": owner, "activate": action != "restoreTab" && visible && visibleOwner == owner])
+            guard let id = created["tabId"] as? Int, id > 0 else { throw failure("无法创建网页标签。") }
+            target = id
+            if action != "restoreTab" { selected[owner] = id }
+        }
+        guard let id = target, try tabs(owner).contains(where: { ($0["id"] as? Int) == id }) else { throw failure("浏览器标签页已关闭。") }
+        if action == "find" {
+            if let revision = p["navigationRevision"] as? String, revision != String(navigation[id, default: 0]) { return ["stale": true] }
+            return try await withCheckedThrowingContinuation { continuation in
+                let token = UUID().uuidString; findRequests[token] = continuation
+                do {
+                    var request = p; request["tabId"] = id; request["token"] = token
+                    let result = try runtime.control(request)
+                    if result["pending"] as? Bool != true { findRequests.removeValue(forKey: token)?.resume(returning: result) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                        self?.findRequests.removeValue(forKey: token)?.resume(throwing: failure("网页查找超时，请重试。"))
+                    }
+                } catch { findRequests.removeValue(forKey: token)?.resume(throwing: error) }
+            }
+        }
+        if action == "selectTab" { selected[owner] = id; selectVisible() }
+        else if action == "open" || action == "restoreTab" {
+            let url = p["url"] as? String ?? ""
+            guard action == "restoreTab" && url.isEmpty || BrowserHost.allowed(url) else { throw failure("浏览器仅支持 HTTP/HTTPS 网页。") }
+            if !url.isEmpty { _ = try runtime.control(["action": "open", "owner": owner, "tabId": id, "url": url]) }
+        } else if action != "newTab" {
+            var request = p; request["tabId"] = id
+            _ = try runtime.control(request)
+        }
+        if action == "closeTab" { _ = try state(owner); selectVisible() }
+        publish(owner, reveal: ["open", "newTab"].contains(action))
+        if action == "restoreTab" { return ["tabId": String(id), "state": try state(owner)] }
+        return try state(owner)
+    }
+}
 
 private struct BrowserHistoryRecord: Codable {
     let id: String, url: String, title: String
@@ -477,6 +633,7 @@ private struct BrowserDownloadRecord: Codable {
     private let directory: URL, history: URL, vault: Vault, notify: ([String: Any]) -> Void
     private var items: [BrowserDownloadRecord] = []
     private var running: [ObjectIdentifier: (id: String, download: WKDownload, source: BrowserWindow)] = [:]
+    private var externalIds: [String: String] = [:], externalCancel: [String: () -> Void] = [:]
     private var storageError = "", timer: Timer?
     private var revision: Int64 = 0
     init(directory: URL, notify: @escaping ([String: Any]) -> Void) {
@@ -505,6 +662,35 @@ private struct BrowserDownloadRecord: Codable {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try Data(encrypted.utf8).write(to: history, options: .atomic)
         } catch { storageError = "下载记录保存失败，现有记录文件已保留，请检查磁盘空间和数据目录权限。"; throw failure(storageError) }
+    }
+    private func destination(_ suggested: String) throws -> URL {
+        let cleaned = suggested.replacingOccurrences(of: "\\", with: "/").components(separatedBy: "/").last ?? "download"
+        let name = String(String.UnicodeScalarView(cleaned.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) || $0 == ":" ? "_" : $0 })).trimmingCharacters(in: .whitespacesAndNewlines)
+        var filename = name.isEmpty || name == "." || name == ".." ? "download" : name
+        while filename.utf8.count > 200 { filename.removeLast() }
+        let root: URL
+        if let override = ProcessInfo.processInfo.environment["QQCLAW_DOWNLOADS_DIR"], !override.isEmpty { root = URL(fileURLWithPath: override, isDirectory: true) }
+        else { root = try FileManager.default.url(for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("QQClaw", isDirectory: true) }
+        let folder = root.appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent(filename)
+    }
+    func externalStart(id: String, owner: String, name: String, url: String, total: Int64, cancel: @escaping () -> Void) throws -> String {
+        guard storageError.isEmpty, externalIds[id] == nil else { throw failure(storageError.isEmpty ? "下载标识重复。" : storageError) }
+        let target = try destination(name), recordId = UUID().uuidString.lowercased()
+        var record = BrowserDownloadRecord(id: recordId, owner: owner, name: target.lastPathComponent, path: target.path, url: url, at: ISO8601DateFormatter().string(from: Date()), status: "running", error: "")
+        record.total = max(0, total); items.append(record)
+        do { try save() } catch { items.removeAll { $0.id == recordId }; throw error }
+        externalIds[id] = recordId; externalCancel[recordId] = cancel; publish(); return target.path
+    }
+    func externalUpdate(id: String, received: Int64, total: Int64, status: String, error: String) {
+        guard let recordId = externalIds[id], let index = items.firstIndex(where: { $0.id == recordId }) else { return }
+        if items[index].status == "running" || status != "running" {
+            items[index].received = max(0, received); items[index].total = max(0, total)
+            items[index].status = status; items[index].error = error
+        }
+        if status != "running" { externalIds.removeValue(forKey: id); externalCancel.removeValue(forKey: recordId); if storageError.isEmpty { try? save() } }
+        publish()
     }
     func start(_ download: WKDownload, source: BrowserWindow, owner: String) {
         // Keep the source web view alive even after its visible tab is closed.
@@ -535,17 +721,9 @@ private struct BrowserDownloadRecord: Codable {
         guard let i = index(download) else { completionHandler(nil); return }
         do {
             guard storageError.isEmpty else { throw failure(storageError) }
-            let cleaned = suggestedFilename.replacingOccurrences(of: "\\", with: "/").components(separatedBy: "/").last ?? "download"
-            let name = String(String.UnicodeScalarView(cleaned.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) || $0 == ":" ? "_" : $0 })).trimmingCharacters(in: .whitespacesAndNewlines)
-            var filename = name.isEmpty || name == "." || name == ".." ? "download" : name
-            while filename.utf8.count > 200 { filename.removeLast() }
-            let root: URL
-            if let override = ProcessInfo.processInfo.environment["QQCLAW_DOWNLOADS_DIR"], !override.isEmpty { root = URL(fileURLWithPath: override, isDirectory: true) }
-            else { root = try FileManager.default.url(for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("QQClaw", isDirectory: true) }
-            let folder = root.appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true); try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let destination = folder.appendingPathComponent(filename)
-            items[i].name = filename; items[i].path = destination.path; items[i].total = max(0, response.expectedContentLength)
-            try save(); completionHandler(destination); publish()
+            let target = try destination(suggestedFilename)
+            items[i].name = target.lastPathComponent; items[i].path = target.path; items[i].total = max(0, response.expectedContentLength)
+            try save(); completionHandler(target); publish()
         } catch { completionHandler(nil); finish(download, status: "interrupted", error: error.localizedDescription) }
     }
     func downloadDidFinish(_ download: WKDownload) { finish(download, status: "completed") }
@@ -556,6 +734,7 @@ private struct BrowserDownloadRecord: Codable {
         if action == "cancel" {
             guard let item = items.first(where: { $0.id == p["id"] as? String }) else { throw failure("下载记录已不存在。") }
             if let entry = running.values.first(where: { $0.id == item.id }) { entry.download.cancel(nil); finish(entry.download, status: "cancelled") }
+            if let cancel = externalCancel[item.id] { cancel() }
             return state()
         }
         guard storageError.isEmpty else { throw failure(storageError) }

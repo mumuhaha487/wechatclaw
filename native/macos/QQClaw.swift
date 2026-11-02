@@ -15,6 +15,16 @@ func launchBackendIfRequested() {
     exit(71)
 }
 
+func launchVaultIfRequested() {
+    guard CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--vault-key" else { return }
+    do {
+        let vault = Vault(directory: URL(fileURLWithPath: CommandLine.arguments[2]))
+        let key = try vault.localKey(create: CommandLine.arguments[3] == "create")
+        try FileHandle.standardOutput.write(contentsOf: key.withUnsafeBytes { Data($0) })
+        exit(0)
+    } catch { fputs(error.localizedDescription + "\n", stderr); exit(1) }
+}
+
 func failure(_ text: String) -> NSError { NSError(domain: "QQClaw", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }
 func jsonData(_ value: Any) throws -> Data { try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .sortedKeys]) }
 func jsonText(_ value: Any) throws -> String { String(decoding: try jsonData(value), as: UTF8.self) }
@@ -147,9 +157,42 @@ enum Runtime {
 }
 
 final class Vault: Sendable {
+    private final class Cache: @unchecked Sendable {
+        let lock = NSLock()
+        var values: [String: SymmetricKey] = [:]
+        var helper = false
+    }
+    private static let cache = Cache()
+    static func isolateFromChromium() { cache.lock.lock(); cache.helper = true; cache.lock.unlock() }
     let account: String
-    init(directory: URL) { account = SHA256.hash(data: Data(directory.path.utf8)).map { String(format: "%02x", $0) }.joined() }
+    private let directory: URL
+    init(directory: URL) { self.directory = directory; account = SHA256.hash(data: Data(directory.path.utf8)).map { String(format: "%02x", $0) }.joined() }
     func key(create: Bool) throws -> SymmetricKey {
+        Self.cache.lock.lock(); defer { Self.cache.lock.unlock() }
+        if let key = Self.cache.values[account] { return key }
+        let key: SymmetricKey
+        if Self.cache.helper {
+            // Security's legacy Keychain client can wait inside a Chromium
+            // process. Retrieve the same OS-held key in this executable before
+            // it initializes Chromium; secret bytes stay on a private pipe.
+            let child = Process(), output = Pipe(), errors = Pipe()
+            child.executableURL = Bundle.main.executableURL
+            child.arguments = ["--vault-key", directory.path, create ? "create" : "read"]
+            child.standardInput = FileHandle.nullDevice; child.standardOutput = output; child.standardError = errors
+            try child.run()
+            let timeout = DispatchWorkItem { if child.isRunning { child.terminate() } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: timeout)
+            let bytes = output.fileHandleForReading.readDataToEndOfFile(), error = errors.fileHandleForReading.readDataToEndOfFile()
+            child.waitUntilExit(); timeout.cancel()
+            guard child.terminationStatus == 0, bytes.count == 32 else {
+                let text = String(decoding: error, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                throw failure(text.isEmpty ? "无法读取 macOS 钥匙串密钥，请解锁系统钥匙串后重试。原数据已保留。" : text)
+            }
+            key = SymmetricKey(data: bytes)
+        } else { key = try localKey(create: create) }
+        Self.cache.values[account] = key; return key
+    }
+    func localKey(create: Bool) throws -> SymmetricKey {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.qqclaw.desktop.vault", kSecAttrAccount as String: account]
         var lookup = query; lookup[kSecReturnData as String] = true; lookup[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
@@ -160,7 +203,7 @@ final class Vault: Sendable {
         var insert = query; insert[kSecValueData as String] = bytes
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let added = SecItemAdd(insert as CFDictionary, nil)
-        if added == errSecDuplicateItem { return try self.key(create: false) }
+        if added == errSecDuplicateItem { return try localKey(create: false) }
         guard added == errSecSuccess else { throw failure("无法保存 macOS 钥匙串密钥（\(added)）。") }
         return key
     }
@@ -226,6 +269,7 @@ final class Backend: @unchecked Sendable {
     var quitting = false, allowQuit = false, restarting = false, installing = false
     var requestSequence = 0
     var browserHost: BrowserHost?
+    var cefBrowser: CefBrowserController?
     var cef: MacCefRuntime?
     var menuAvailable = false, menuReady = false, menuSidebar = true, menuPanel = false, menuHasSession = false
     var menuFont = 14
@@ -240,7 +284,44 @@ final class Backend: @unchecked Sendable {
         guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw failure("此数据目录的 QQClaw 已运行，请打开现有窗口。") }
         resources = Bundle.main.resourceURL!; vault = Vault(directory: data)
     }
+    func cefOptions() throws -> [String: Any] {
+        let browserRoot = data.appendingPathComponent("browser-profiles")
+        var options: [String: Any] = ["profile": browserRoot.path,
+          "helperPath": Bundle.main.privateFrameworksURL!.appendingPathComponent("QQClawBrowser Helper.app/Contents/MacOS/QQClawBrowser Helper").path]
+        #if arch(arm64)
+        let arch = "arm64"
+        #else
+        let arch = "x64"
+        #endif
+        let original = resources.appendingPathComponent("official-browser/\(arch)")
+        let file = original.appendingPathComponent("runtime.json")
+        if FileManager.default.fileExists(atPath: file.path) {
+            guard let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any],
+                  let paths = manifest["paths"] as? [String: Any], let version = manifest["vendorVersion"] as? String,
+                  version.range(of: "^[0-9.]+$", options: .regularExpression) != nil else { throw failure("内置浏览运行库清单无效。") }
+            func component(_ key: String) throws -> String {
+                guard let path = paths[key] as? String else { throw failure("内置浏览运行库组件缺失。") }
+                let value = original.appendingPathComponent(path).standardizedFileURL
+                guard value.path.hasPrefix(original.path + "/") else { throw failure("内置浏览组件路径无效。") }; return value.path
+            }
+            let home = data.appendingPathComponent("browser-runtime"), hostDirectory = home.appendingPathComponent("native-host/\(version)")
+            try FileManager.default.createDirectory(at: hostDirectory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: home.appendingPathComponent("codex"), withIntermediateDirectories: true)
+            let host = hostDirectory.appendingPathComponent("ChatGPT for Chrome")
+            if !FileManager.default.fileExists(atPath: host.path) { try FileManager.default.copyItem(atPath: component("host"), toPath: host.path) }
+            try jsonData(["schemaVersion": 1, "channel": "prod", "codexCliPath": component("codexCliPath"), "codexHome": home.appendingPathComponent("codex").path,
+              "nodePath": component("nodePath"), "nodeReplPath": component("nodeReplPath"), "browserClientPath": component("browserClientPath"), "proxyHost": "127.0.0.1", "proxyPort": 0]).write(to: hostDirectory.appendingPathComponent("extension-host-config.json"), options: .atomic)
+            let registration: [String: Any] = ["name": "com.openai.codexextension", "type": "stdio", "description": "QQClaw bundled official ChatGPT host", "path": host.path,
+              "allowed_origins": ["chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/"]]
+            let target = browserRoot.appendingPathComponent("NativeMessagingHosts/com.openai.codexextension.json")
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try jsonData(registration).write(to: target, options: .atomic)
+            options["extensionPath"] = original.appendingPathComponent("extension").path
+        }
+        return options
+    }
     func cefEvent(_ value: [String: Any]) {
+        cefBrowser?.event(value)
         switch value["event"] as? String {
         case "root-created":
             if web == nil { applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification)) }
@@ -392,12 +473,19 @@ final class Backend: @unchecked Sendable {
             window?.backgroundColor = background; web?.underPageBackgroundColor = background
             return true
         case "window.minimize": window.miniaturize(nil); return true
-        case "window.focusBrowser": return browserHost?.focus(owner: p["owner"] as? String ?? "", tabId: p["tabId"] as? String ?? "") ?? false
+        case "window.focusBrowser":
+            if let cefBrowser { return cefBrowser.focus(owner: p["owner"] as? String ?? "", tabId: p["tabId"] as? String ?? "") }
+            return browserHost?.focus(owner: p["owner"] as? String ?? "", tabId: p["tabId"] as? String ?? "") ?? false
         case "window.maximize": window.zoom(nil); return true
         case "window.close": NSApp.terminate(nil); return true
         case "window.drag", "window.resize": return true // Native titlebar and resize handles.
         case "browser.view", "browser.control", "browser.downloads", "browser.history":
             if browserHost == nil { browserHost = BrowserHost(resources: resources, parent: web, data: data, downloadNotify: { [weak self] value in self?.event("browser-downloads", value) }, historyNotify: { [weak self] value in self?.event("browser-history", value) }) { [weak self] value in self?.event("browser-state", value) } }
+            if let cef {
+                if cefBrowser == nil { cefBrowser = CefBrowserController(runtime: cef, directory: data, parent: web, history: browserHost!.history, downloads: browserHost!.downloads) { [weak self] value in self?.event("browser-state", value) } }
+                if method == "browser.view" { cefBrowser!.setView(p); return true }
+                if method == "browser.control" { return try await cefBrowser!.handle(p) }
+            }
             if method == "browser.view" { browserHost!.setView(p); return true }
             if method == "browser.downloads" { return try browserHost!.downloads.handle(p) }
             if method == "browser.history" { return try browserHost!.history.handle(p) }
@@ -466,6 +554,8 @@ final class Backend: @unchecked Sendable {
             guard let node = Runtime.node(data) else { throw failure("未检测到 Node.js，请在设置中安装。") }
             _ = try await Runtime.version(node)
             let child = Backend(); var env = Runtime.environment(node: node); env["QQCLAW_DATA_DIR"] = data.path
+            env["QQCLAW_RUNTIME_DIR"] = resources.path
+            if cef != nil { env["QQCLAW_MAC_BROWSER_READY"] = "1" }
             child.process.executableURL = Bundle.main.executableURL
             child.process.arguments = ["--backend", node, resources.appendingPathComponent("backend.cjs").path]
             child.process.environment = env; child.process.currentDirectoryURL = data
@@ -572,6 +662,7 @@ final class Backend: @unchecked Sendable {
 @main struct QQClawMain {
     @MainActor static func main() {
         launchBackendIfRequested()
+        launchVaultIfRequested()
         signal(SIGPIPE, SIG_IGN)
         let host = Host()
         // The CEF integration stays opt-in until native tabs, ownership and
@@ -581,8 +672,7 @@ final class Backend: @unchecked Sendable {
                 try host.prepareEnvironment()
                 let runtime = try MacCefRuntime(frameworks: Bundle.main.privateFrameworksURL!)
                 host.cef = runtime; runtime.onEvent = { [weak host] value in host?.cefEvent(value) }
-                try runtime.start(options: ["profile": host.data.appendingPathComponent("browser-profiles").path,
-                    "helperPath": Bundle.main.privateFrameworksURL!.appendingPathComponent("QQClawBrowser Helper.app/Contents/MacOS/QQClawBrowser Helper").path])
+                try runtime.start(options: host.cefOptions())
                 withExtendedLifetime(host) { runtime.run() }
                 host.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
                 return

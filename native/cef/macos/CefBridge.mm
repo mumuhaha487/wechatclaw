@@ -4,6 +4,7 @@
 #include <memory>
 #include <map>
 #include <set>
+#include <deque>
 #include <string>
 #include <algorithm>
 #include "include/cef_app.h"
@@ -11,6 +12,7 @@
 #include "include/cef_client.h"
 #include "include/cef_command_line.h"
 #include "include/cef_frame.h"
+#include "include/cef_find_handler.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
 #include "include/views/cef_browser_view.h"
@@ -38,6 +40,14 @@ std::map<int, std::string> owners;
 std::map<int, CefRefPtr<CefBrowserView>> views;
 std::map<int, NSString*> titles;
 std::set<int> markers;
+struct FindJob { NSString* token; std::string query; bool forward; };
+struct FindState {
+  std::deque<FindJob> queue;
+  std::string query;
+  bool running = false;
+  int last = -1, floor = -1, identifier = -1;
+};
+std::map<int, FindState> finding;
 std::unique_ptr<CefScopedLibraryLoader> loader;
 bool closing = false;
 CefRect requestedBounds;
@@ -66,6 +76,21 @@ NSWindow* nativeWindowFor(CefRefPtr<CefWindow> window) {
   return [handle isKindOfClass:NSView.class] ? [(NSView*)handle window] : nil;
 }
 NSWindow* nativeWindow() { return nativeWindowFor(root); }
+void stopFind(CefRefPtr<CefBrowser> page) {
+  auto& state = finding[page->GetIdentifier()];
+  state.running = false; state.identifier = -1; state.query.clear();
+  auto pending = std::move(state.queue); state.queue.clear();
+  page->GetHost()->StopFinding(true);
+  for (auto& job : pending) emit(@{@"event": @"find-result", @"token": job.token, @"stale": @YES});
+}
+void startFind(CefRefPtr<CefBrowser> page) {
+  auto& state = finding[page->GetIdentifier()];
+  if (state.running || state.queue.empty()) return;
+  const auto& job = state.queue.front();
+  if (state.query != job.query) { page->GetHost()->StopFinding(true); state.query = job.query; }
+  state.running = true; state.floor = state.last; state.identifier = -1;
+  page->GetHost()->Find(job.query, job.forward, false, true);
+}
 }
 
 // WebKit draws the application chrome above the Views root. Its hole reveals
@@ -115,12 +140,22 @@ namespace { __weak QQClawCefShell* shell; }
 
 namespace {
 class BrowserClient final : public CefClient, public CefLifeSpanHandler,
-                            public CefLoadHandler, public CefDisplayHandler {
+                            public CefLoadHandler, public CefDisplayHandler, public CefFindHandler {
  public:
   explicit BrowserClient(bool marker = false) : marker_(marker) {}
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+  CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
+  void OnFindResult(CefRefPtr<CefBrowser> page, int identifier, int count, const CefRect& rect, int ordinal, bool final) override {
+    auto& state = finding[page->GetIdentifier()]; state.last = std::max(state.last, identifier);
+    if (!state.running || identifier <= state.floor) return;
+    if (state.identifier < 0) state.identifier = identifier;
+    if (identifier != state.identifier || !final) return;
+    auto job = state.queue.front(); state.queue.pop_front(); state.running = false;
+    emit(@{@"event": @"find-result", @"token": job.token, @"found": @(count > 0), @"total": @(std::max(0, count)), @"index": ordinal > 0 && ordinal <= count ? @(ordinal) : NSNull.null});
+    startFind(page);
+  }
   void OnAfterCreated(CefRefPtr<CefBrowser> value) override {
     if (pages.empty()) browser = value;
     pages[value->GetIdentifier()] = value;
@@ -134,6 +169,7 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
     if (closing) value->GetHost()->CloseBrowser(true);
   }
   void OnBeforeClose(CefRefPtr<CefBrowser> value) override {
+    stopFind(value); finding.erase(value->GetIdentifier());
     if (browser && browser->IsSame(value)) browser = nullptr;
     pages.erase(value->GetIdentifier());
     NSString* owner = @(owners[value->GetIdentifier()].c_str());
@@ -151,19 +187,25 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
   }
   void OnLoadEnd(CefRefPtr<CefBrowser> value, CefRefPtr<CefFrame> frame, int status) override {
     if (!frame->IsMain()) return;
-    emit(@{@"event": @"load-end", @"tabId": @(value->GetIdentifier()), @"status": @(status),
+    emit(@{@"event": @"load-end", @"owner": ownerFor(value), @"tabId": @(value->GetIdentifier()), @"status": @(status),
            @"url": @(frame->GetURL().ToString().c_str())});
+  }
+  void OnLoadStart(CefRefPtr<CefBrowser> value, CefRefPtr<CefFrame> frame, TransitionType transition) override {
+    if (frame->IsMain()) { stopFind(value); emit(@{@"event": @"navigation", @"owner": ownerFor(value), @"tabId": @(value->GetIdentifier())}); }
+  }
+  void OnLoadError(CefRefPtr<CefBrowser> value, CefRefPtr<CefFrame> frame, ErrorCode code, const CefString& text, const CefString& url) override {
+    if (frame->IsMain() && code != ERR_ABORTED) emit(@{@"event": @"load-error", @"owner": ownerFor(value), @"tabId": @(value->GetIdentifier()), @"error": @(text.ToString().c_str())});
   }
   void OnTitleChange(CefRefPtr<CefBrowser> value, const CefString& title) override {
     titles[value->GetIdentifier()] = @(title.ToString().c_str());
-    emit(@{@"event": @"title", @"tabId": @(value->GetIdentifier()), @"title": @(title.ToString().c_str())});
+    emit(@{@"event": @"title", @"owner": ownerFor(value), @"tabId": @(value->GetIdentifier()), @"title": @(title.ToString().c_str())});
   }
   void OnLoadingStateChange(CefRefPtr<CefBrowser> value, bool loading, bool back, bool forward) override {
-    emit(@{@"event": @"loading", @"tabId": @(value->GetIdentifier()),
+    emit(@{@"event": @"loading", @"owner": ownerFor(value), @"tabId": @(value->GetIdentifier()),
       @"loading": @(loading), @"canGoBack": @(back), @"canGoForward": @(forward)});
   }
   void OnAddressChange(CefRefPtr<CefBrowser> value, CefRefPtr<CefFrame> frame, const CefString& url) override {
-    if (frame->IsMain()) emit(@{@"event": @"address", @"tabId": @(value->GetIdentifier()), @"url": @(url.ToString().c_str())});
+    if (frame->IsMain()) emit(@{@"event": @"address", @"owner": ownerFor(value), @"tabId": @(value->GetIdentifier()), @"url": @(url.ToString().c_str())});
   }
  private:
   bool marker_;
@@ -502,6 +544,18 @@ const char* QQClawCefControl(const char* json) {
       else if ([action isEqual:@"reload"]) value->Reload();
       else if ([action isEqual:@"stop"]) value->StopLoad();
       else if ([action isEqual:@"focus"]) value->GetHost()->SetFocus(true);
+      else if ([action isEqual:@"find"]) {
+        NSString* operation = request[@"operation"], *query = request[@"query"], *token = request[@"token"];
+        if (![@[@"search", @"next", @"previous", @"clear"] containsObject:operation] ||
+            ![query isKindOfClass:NSString.class] || query.length > 512 || ![token isKindOfClass:NSString.class]) result = @{@"error": @"Invalid page find request"};
+        else {
+          std::string term = [query stringByReplacingOccurrencesOfString:@"\r" withString:@""].UTF8String;
+          if ([operation isEqual:@"search"] || [operation isEqual:@"clear"] || term.empty() || term != finding[identifier].query) stopFind(value);
+          if ([operation isEqual:@"clear"] || term.empty()) result = @{@"cleared": @YES, @"found": @NO, @"total": @0, @"index": NSNull.null};
+          else if (finding[identifier].queue.size() >= 64) result = @{@"error": @"Too many pending page find requests"};
+          else { finding[identifier].queue.push_back({token, term, ![operation isEqual:@"previous"]}); startFind(value); result = @{@"pending": @YES}; }
+        }
+      }
       else result = @{@"error": @"Unsupported native browser command"};
       if (!result) result = @{@"accepted": @YES};
     }

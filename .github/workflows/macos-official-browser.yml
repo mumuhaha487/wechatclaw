@@ -124,7 +124,7 @@ jobs:
           const main=String.raw`
           @main struct HostPreview {
             @MainActor static func main() {
-              launchBackendIfRequested(); signal(SIGPIPE,SIG_IGN); setbuf(stdout,nil);print("HOST_BEGIN")
+              launchBackendIfRequested(); launchVaultIfRequested(); signal(SIGPIPE,SIG_IGN); setbuf(stdout,nil);print("HOST_BEGIN")
               func signingStatus() -> OSStatus { var code:SecCode?;let status=SecCodeCopySelf(SecCSFlags(rawValue:0),&code);return status == errSecSuccess ? SecCodeCheckValidity(code!,SecCSFlags(rawValue:0),nil) : status }
               print("HOST_SIGNING_BEFORE_CEF " + String(signingStatus()))
               let host=Host(); var errorText="",checking=false
@@ -181,8 +181,6 @@ jobs:
           }
           `;
           const instrumented=source.slice(0,offset)
-            .replace('let status = SecItemCopyMatching(lookup as CFDictionary, &result)','print("HOST_VAULT_LOOKUP_BEGIN");let status = SecItemCopyMatching(lookup as CFDictionary, &result);print("HOST_VAULT_LOOKUP_STATUS "+String(status))')
-            .replace('let added = SecItemAdd(insert as CFDictionary, nil)','print("HOST_VAULT_ADD_BEGIN");let added = SecItemAdd(insert as CFDictionary, nil);print("HOST_VAULT_ADD_STATUS "+String(added))')
             .replace('guard backend === child else { return }','print("HOST_RECV " + String(describing:message["kind"]) + " " + String(describing:message["method"]) + " " + String(describing:message["id"]));guard backend === child else { return }')
             .replace('try child.process.run(); backend = child','try child.process.run();print("HOST_BACKEND_PID "+String(child.process.processIdentifier)); backend = child')
             .replace('while let chunk = try? readPipe(child.errors.fileHandleForReading), !chunk.isEmpty {}','while let chunk = try? readPipe(child.errors.fileHandleForReading), !chunk.isEmpty { print("HOST_BACKEND_STDERR "+String(decoding:chunk.prefix(2048),as:UTF8.self)) }');

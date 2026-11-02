@@ -41,6 +41,7 @@ import Darwin
         library = handle
     }
     func start(options: [String: Any]) throws {
+        Vault.isolateFromChromium()
         Self.active = self
         let json = try jsonText(options)
         let code = json.withCString { startFunction(Int32(CommandLine.argc), CommandLine.unsafeArgv, $0, { pointer in
