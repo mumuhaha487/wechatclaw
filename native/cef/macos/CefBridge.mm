@@ -12,6 +12,7 @@
 #include "include/cef_command_line.h"
 #include "include/cef_frame.h"
 #include "include/cef_request_context.h"
+#include "include/cef_request_context_handler.h"
 #include "include/views/cef_browser_view.h"
 #include "include/views/cef_browser_view_delegate.h"
 #include "include/views/cef_box_layout.h"
@@ -32,6 +33,7 @@ std::map<int, CefRefPtr<CefWindow>> windows;
 int windowSequence = 0;
 bool rootReported = false;
 std::map<std::string, CefRefPtr<CefRequestContext>> profiles;
+std::set<std::string> readyProfiles;
 std::map<int, std::string> owners;
 std::map<int, CefRefPtr<CefBrowserView>> views;
 std::map<int, NSString*> titles;
@@ -231,9 +233,11 @@ class RootDelegate final : public CefWindowDelegate {
   IMPLEMENT_REFCOUNTING(RootDelegate);
 };
 void openBrowserWindow(CefRefPtr<CefBrowserView> view, bool activate) {
+  if (!view) { emit(@{@"event": @"browser-error", @"error": @"The native browser view could not be created"}); return; }
   CefWindow::CreateTopLevelWindow(new RootDelegate(view, activate));
 }
 void activateWindow(CefRefPtr<CefWindow> window, CefRefPtr<CefBrowserView> view) {
+  if (!window || !view) return;
   NSWindow* previous = nativeWindow();
   QQClawCefShell* retainedShell = shell;
   const bool changed = root && !root->IsSame(window);
@@ -254,6 +258,31 @@ void activateWindow(CefRefPtr<CefWindow> window, CefRefPtr<CefBrowserView> view)
   layoutSignature.clear(); layoutBrowser(); window->Show();
   if (changed) emit(@{@"event": @"root-selected", @"windowId": @(window->GetID())});
 }
+class ProfileHandler final : public CefRequestContextHandler {
+ public:
+  ProfileHandler(std::string owner, std::string key, bool activate)
+      : owner_(std::move(owner)), key_(std::move(key)), activate_(activate) {}
+  void OnRequestContextInitialized(CefRefPtr<CefRequestContext> context) override {
+    auto found = profiles.find(owner_);
+    if (closing || found == profiles.end() || !found->second->IsSame(context)) return;
+    // CreateBrowserView returns null until this callback. A newly allocated
+    // request context is not yet ready for synchronous Views creation.
+    CefBrowserSettings settings;
+    auto marker = CefBrowserView::CreateBrowserView(new BrowserClient(true),
+        "about:blank#qqclaw-profile-" + key_, settings, nullptr, context, new BrowserViewDelegate);
+    auto view = CefBrowserView::CreateBrowserView(new BrowserClient,
+        "about:blank#qqclaw-working-" + key_, settings, nullptr, context, new BrowserViewDelegate);
+    if (!marker || !view) { emit(@{@"event": @"browser-error", @"owner": @(owner_.c_str()), @"error": @"The profile's native views could not be created"}); return; }
+    readyProfiles.insert(owner_);
+    openBrowserWindow(marker, false);
+    openBrowserWindow(view, activate_);
+    emit(@{@"event": @"profile-ready", @"owner": @(owner_.c_str())});
+  }
+ private:
+  std::string owner_, key_;
+  bool activate_;
+  IMPLEMENT_REFCOUNTING(ProfileHandler);
+};
 class BrowserApp final : public CefApp, public CefBrowserProcessHandler {
  public:
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
@@ -416,27 +445,22 @@ const char* QQClawCefControl(const char* json) {
       CefRequestContextSettings settings;
       NSString* directory = [options[@"profile"] stringByAppendingPathComponent:key];
       CefString(&settings.cache_path) = directory.UTF8String;
-      auto context = CefRequestContext::CreateContext(settings, nullptr);
+      auto context = CefRequestContext::CreateContext(settings, new ProfileHandler(owner.UTF8String, key.UTF8String,
+          request[@"activate"] == nil || [request[@"activate"] boolValue]));
       profiles[owner.UTF8String] = context;
-      CefBrowserSettings browserSettings;
       NSString* identity = [@"about:blank#qqclaw-profile-" stringByAppendingString:key];
       NSString* initial = [@"about:blank#qqclaw-working-" stringByAppendingString:key];
-      auto marker = CefBrowserView::CreateBrowserView(new BrowserClient(true), identity.UTF8String, browserSettings, nullptr, context, new BrowserViewDelegate);
-      openBrowserWindow(marker, false);
-      auto view = CefBrowserView::CreateBrowserView(new BrowserClient, initial.UTF8String, browserSettings, nullptr, context, new BrowserViewDelegate);
-      openBrowserWindow(view, request[@"activate"] == nil || [request[@"activate"] boolValue]);
-      auto page = view->GetBrowser();
-      result = @{@"created": @YES, @"owner": owner, @"profileDirectory": directory,
-        @"identityUrl": identity, @"initialUrl": initial, @"tabId": page ? @(page->GetIdentifier()) : @0};
+      result = @{@"created": @YES, @"pending": @YES, @"owner": owner, @"profileDirectory": directory,
+        @"identityUrl": identity, @"initialUrl": initial};
     }
   } else if ([action isEqual:@"newTab"]) {
     auto context = [owner isKindOfClass:NSString.class] ? profiles.find(owner.UTF8String) : profiles.end();
-    if (context == profiles.end()) result = @{@"error": @"The browser profile is not prepared"};
+    if (context == profiles.end() || !readyProfiles.count(owner.UTF8String)) result = @{@"error": @"The browser profile is not prepared"};
     else {
       CefBrowserSettings settings;
       auto view = CefBrowserView::CreateBrowserView(new BrowserClient, "about:blank", settings, nullptr, context->second, new BrowserViewDelegate);
       openBrowserWindow(view, request[@"activate"] == nil || [request[@"activate"] boolValue]);
-      auto page = view->GetBrowser();
+      auto page = view ? view->GetBrowser() : nullptr;
       result = @{@"created": @YES, @"tabId": page ? @(page->GetIdentifier()) : @0};
     }
   } else if ([action isEqual:@"dispose"]) {
@@ -444,7 +468,7 @@ const char* QQClawCefControl(const char* json) {
     else {
       const auto open = pages;
       for (const auto& page : open) if (owners[page.first] == owner.UTF8String) page.second->GetHost()->CloseBrowser(true);
-      profiles.erase(owner.UTF8String); result = @{@"disposed": @YES};
+      readyProfiles.erase(owner.UTF8String); profiles.erase(owner.UTF8String); result = @{@"disposed": @YES};
     }
   } else {
     int identifier = [request[@"tabId"] intValue];

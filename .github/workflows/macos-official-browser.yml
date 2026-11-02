@@ -30,6 +30,18 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare an unlocked disposable CI keychain for native encrypted storage
+        run: |
+          node --input-type=module <<'NODE'
+          import {execFile} from 'node:child_process';import {promisify} from 'node:util';import {randomBytes} from 'node:crypto';import path from 'node:path';
+          const run=promisify(execFile),keychain=path.join(process.env.RUNNER_TEMP,'qqclaw-native-check.keychain-db'),password=randomBytes(32).toString('hex');
+          await run('/usr/bin/security',['create-keychain','-p',password,keychain]);
+          await run('/usr/bin/security',['set-keychain-settings','-lut','7200',keychain]);
+          await run('/usr/bin/security',['unlock-keychain','-p',password,keychain]);
+          await run('/usr/bin/security',['default-keychain','-d','user','-s',keychain]);
+          await run('/usr/bin/security',['list-keychains','-d','user','-s',keychain]);
+          console.log('Using a real encrypted disposable keychain in this ephemeral CI runner.');
+          NODE
       - name: Typecheck the production Swift runtime adapter
         run: xcrun swiftc -swift-version 5 -parse-as-library -typecheck native/macos/QQClaw.swift native/macos/BrowserHost.swift native/macos/CefRuntime.swift
       - name: Package the product MCP entry
