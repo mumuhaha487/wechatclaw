@@ -38,4 +38,6 @@ Windows 0.3.41 另有当前前端/App/Store 的 6 项实际交互检查：文件
 
 模型自动浏览使用官方ChatGPT扩展ID hehggadaopoacecdllhhajmbjkdcmajg、原版浏览运行库及原签名宿主。应用自己的原生browser.control只服务于界面，不作为模型的备用远控工具。连接状态提示本身不证明浏览任务完成。
 
+Windows 0.3.41 已补查真实 Codex 工作进程重启：同一隔离原生宿主持有页面，两个不同 CLI 进程恢复同一 Codex thread，分别通过官方 node_repl/js 读取同一 cef:3 页面的唯一校验文字。首次站点授权在可见验收面板批准一次。证据根 C:/Users/admin/AppData/Local/Temp/qqclaw-windows-reconnect-da02b6a5/retry；这不覆盖整个独立 EXE 退出重启、物理 GUI 或腾讯线上投递，生产代码和成品没有变化。
+
 Mac目前通过官方claimTab接管本会话预备页；官方tabs.new产生的新普通窗口还未全部内嵌。Intel的官方运行资源、官方Blob下载、线上微信完整浏览，以及全部主页操作与物理GUI/输入法/DPI仍有缺口。不能把这些项目从目标中删掉，也不能以其他浏览驱动替代后宣称通过。
