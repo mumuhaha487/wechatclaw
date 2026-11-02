@@ -89,6 +89,9 @@ export function workspaceFileReference(value, baseFile = "", windows = false) {
   if (typeof value !== "string" || !value || value.length > 8192 || value.includes("\0") || value.startsWith("#")) return null;
   const fragment = value.match(/#L?(\d+)(?:[C:-].*)?$/i);
   let file = value.split("#")[0].split("?")[0];
+  const suffix = file.match(/:(\d+)(?::\d+)?$/);
+  const location = suffix && /\.[^\\/.:]+$/.test(file.slice(0, suffix.index)) ? suffix : null;
+  if (location) file = file.slice(0, location.index);
   if (/^file:/i.test(file)) {
     try {
       const url = new URL(file);
@@ -98,13 +101,13 @@ export function workspaceFileReference(value, baseFile = "", windows = false) {
       else if (/^\/[a-z]:\//i.test(file)) file = file.slice(1);
     } catch { return null; }
   } else {
+    try { file = decodeURIComponent(file); } catch { return null; }
     if (/^[a-z][\w+.-]*:/i.test(file) && !/^[a-z]:[\\/]/i.test(file)) return null;
     if (file.startsWith("//")) return null;
-    try { file = decodeURIComponent(file); } catch { return null; }
     if (!/^(?:[a-z]:[\\/]|[\\/])/i.test(file) && baseFile) {
       const parts = baseFile.split(windows ? /[\\/]/ : /\//); parts.pop();
       file = [...parts, file].join("/");
     }
   }
-  return file && !file.includes("\0") ? { file, line: fragment ? Number(fragment[1]) : 0 } : null;
+  return file && !file.includes("\0") ? { file, line: fragment ? Number(fragment[1]) : location ? Number(location[1]) : 0 } : null;
 }

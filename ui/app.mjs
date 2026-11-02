@@ -45,10 +45,39 @@ const md = new MarkdownIt({ html: false, breaks: true, linkify: true });
 const defaultValidateLink = md.validateLink;
 md.validateLink = href => /^file:|^[a-z]:[\\/]/i.test(href) || defaultValidateLink(href);
 const defaultLinkOpen = md.renderer.rules.link_open || ((tokens, index, options, env, renderer) => renderer.renderToken(tokens, index, options));
+const fileMention = value => !/^(?:[a-z][\w+.-]*:\/\/|www\.)/i.test(value) && /(?:\.(?:md|markdown|txt|json|jsonc|js|jsx|mjs|cjs|ts|tsx|css|html|htm|xml|svg|yml|yaml|toml|ini|cfg|conf|py|sh|ps1|cs|swift|rs|go|c|cpp|h|hpp|sql|log|csv)|(?:^|[\\/])(?:README|LICENSE|Dockerfile|Makefile))(?::\d+(?::\d+)?)?(?:#L?\d+(?:C\d+)?)?$/i.test(value) && workspaceFileReference(value);
 md.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
-  const href = tokens[index].attrGet("href");
+  const token = tokens[index], text = tokens[index + 1]?.content || "";
+  const href = token.markup === "linkify" && fileMention(text) ? text : token.attrGet("href");
   return workspaceFileReference(href) ? `<a href="#" data-workspace-file="${esc(href)}">` : defaultLinkOpen(tokens, index, options, env, renderer);
 };
+md.core.ruler.after("linkify", "workspace-file-mentions", state => {
+  for (const block of state.tokens) {
+    if (block.type !== "inline") continue;
+    const output = []; let links = 0;
+    const link = token => {
+      const open = new state.Token("link_open", "a", 1); open.attrSet("href", token.content);
+      output.push(open, token, new state.Token("link_close", "a", -1));
+    };
+    for (const token of block.children) {
+      if (token.type === "link_open") links++;
+      if (!links && token.type === "code_inline" && fileMention(token.content)) link(token);
+      else if (!links && token.type === "text") {
+        const pattern = /(^|[\s（(【\[])((?:[a-z]:[\\/]|\.{1,2}[\\/]|\/)?[\w@.-]+(?:[\\/][\w@.-]+)*\.(?:md|markdown|txt|json|jsonc|js|jsx|mjs|cjs|ts|tsx|css|html|htm|xml|svg|yml|yaml|toml|ini|cfg|conf|py|sh|ps1|cs|swift|rs|go|c|cpp|h|hpp|sql|log|csv)(?::\d+(?::\d+)?)?(?:#L?\d+(?:C\d+)?)?)(?=$|[\s，。！？、;；)）\]】])/gi;
+        let end = 0;
+        for (const match of token.content.matchAll(pattern)) {
+          const start = match.index + match[1].length;
+          if (start > end) { const before = new state.Token("text", "", 0); before.content = token.content.slice(end, start); output.push(before); }
+          const file = new state.Token("text", "", 0); file.content = match[2]; link(file); end = start + match[2].length;
+        }
+        if (!end) output.push(token);
+        else if (end < token.content.length) { const after = new state.Token("text", "", 0); after.content = token.content.slice(end); output.push(after); }
+      } else output.push(token);
+      if (token.type === "link_close") links--;
+    }
+    block.children = output;
+  }
+});
 // Sanitization is fixed; file previews keep links as written, while completed
 // assistant replies can decorate standalone website links.
 const renderMarkdown = (value) => DOMPurify.sanitize(md.render(value), {
@@ -1050,7 +1079,8 @@ async function loadFileTab(tab, owner = panelOwner(), workspace = session()?.wor
     if (owner === panelOwner() && ui.panelPage === "file" && panelTabs.group(owner).selected === resolved.key) ui.filePreview = resolved;
   } catch (error) {
     if (!panelTabs.group(owner).tabs.includes(tab) || revision !== tab.revision || request !== tab.request) return;
-    tab.error = error.message;
+    tab.error = /ENOENT|ENOTDIR/.test(error.message)
+      ? "当前工作区中找不到这个文件，请在文件管理器中确认路径。" : error.message;
   }
   if (revision !== tab.revision || request !== tab.request) return;
   tab.loading = false;
