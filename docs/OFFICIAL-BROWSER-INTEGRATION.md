@@ -1,5 +1,9 @@
 # 官方 ChatGPT 扩展接入调查
 
+## 当前 Windows 交付索引（2026-11-02）
+
+Windows正式版0.3.43已内置原版官方扩展、运行库和CEF；真实模型的Google读取、CLI重连及微信加密文件协议记录见result.md当前索引。本轮另完成39项原生主页集成断言，未修改自动浏览组件或增加模型备用驱动。官方Blob自动下载仍不支持，腾讯线上完整投递未在本轮验证。Mac按用户要求冻结0.3.41。以下分阶段调查保留原始描述，其中“尚未接通”等结论只适用于各节当时版本，不能覆盖当前交付记录。
+
 ## Mac原版运行库（后续源码）
 
 Apple Silicon原版官方Node/Node REPL、Chrome插件、官方CRX及完整CodexCLI.app已缓存到项目 `runtime/macos/official-browser/`。最新云运行41353878675使用原包CLI 0.166.0-alpha.5.1，完整包深层签名、卸载原镜像后的CLI运行、原版REPL执行42及browser-client导入通过。早期松散CLI的restricted entitlements问题通过保留原包自带的完整CLI应用解决，原签名与身份未改。独立npm CLI虽能执行REPL，但尚未通过Mac原生浏览握手。scripts/macos-browser-runtime.mjs提供统一打包解包入口。

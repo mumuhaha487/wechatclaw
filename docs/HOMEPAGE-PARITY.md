@@ -2,6 +2,8 @@
 
 对应当前0.3.43源码；Mac成品冻结在0.3.41。原始目标保留在根目录result.md；本表用于逐项复查，不能据此宣布整个目标已完成。
 
+2026-11-02补充：当前正式包相同资源、生产native源码及独立检查入口完成39项原生集成断言，覆盖模型与组合键、真实CLI两轮、文件审阅、原生指针拖宽376→408px、X关闭真实surface、后台不重开及重启保存恢复。证据根C:/Users/admin/AppData/Local/Temp/qqclaw-windows-full-e0e5cfbd，具体范围及检查宿主失败见result.md首节。SDK生成的trusted事件不等于硬件输入法；菜单部分使用DOM click，模型答案/usage为本机夹具。
+
 ## 参照对象
 
 原附件7adf2833-39a5-4665-83ca-8c1f6902b047中，image-1和image-3画面标题为Codex，是参照界面；image-2和image-4为旧QQClaw。按实际画面辨认，不能把旧QQClaw当成参照。界面以白色为主、黑色为辅；应用自己的微信、模型服务及环境设置保留。
