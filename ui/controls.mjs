@@ -143,6 +143,7 @@ function open(control, trigger) {
       onOpen(control.dataset.modelProvider, true);
   });
   surface.querySelector("input")?.addEventListener("input", (event) => {
+    if (active?.surface !== surface) return;
     active.query = event.target.value;
     renderRows();
   });
