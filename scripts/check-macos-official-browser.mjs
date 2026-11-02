@@ -179,9 +179,9 @@ try {
   await call("browser-documentation", `var browser=await agent.browsers.get(${JSON.stringify(connected[0].id)}); nodeRepl.write(await browser.documentation())`);
   const selectTab = tabMode === "create" ? 'var tab=await browser.tabs.new();' :
     'var openTabs=await browser.user.openTabs(); var fixtureTab=openTabs.find(item=>item.url===' + JSON.stringify(fixtureOwner ? workingUrl : url) + '); if(!fixtureTab) throw Error("The actual embedded fixture tab was not found"); var tab=await browser.user.claimTab(fixtureTab);';
-  await call("tab-open", 'await browser.nameSession("🔎 Mac 浏览验证"); ' + selectTab + ' await tab.goto(' + JSON.stringify(createdUrl) + '); nodeRepl.write("QQCLAW_AX_AVAILABLE="+!!tab.ax); if(tab.ax) await tab.ax.write(); else nodeRepl.write(await tab.playwright.domSnapshot()); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
+  await call("tab-open", 'await browser.nameSession("🔎 Mac 浏览验证"); ' + selectTab + ' await tab.goto(' + JSON.stringify(createdUrl) + '); nodeRepl.write(await tab.playwright.domSnapshot()); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
   const entered = "QQClaw Mac 输入验证";
-  await call("tab-input", 'var axState=await tab.ax.get("state",{disableDiffing:true}); nodeRepl.write(axState); var inputMatch=axState.match(/^\\s*(\\d+)\\s+text field \\(settable\\) Verification input\\b/m); if(!inputMatch) throw Error("The actual AX state did not expose the fixture input"); await tab.ax.typeText(Number(inputMatch[1]),' + JSON.stringify(entered) + '); await tab.ax.write(); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
+  await call("tab-input", 'await tab.playwright.getByRole("textbox",{name:"Verification input",exact:true}).fill(' + JSON.stringify(entered) + ',{timeoutMs:10000}); nodeRepl.write(await tab.playwright.domSnapshot()); await nodeRepl.emitImage(await tab.screenshot({fullPage:false}))');
   for (let retry = 0; retry < 20 && !observations.includes(entered); retry++) await delay(100);
   if (!observations.includes(entered)) throw Error("The real local page did not receive the expected input event");
   let nativeTabs;
@@ -201,8 +201,8 @@ try {
       schema.push({ file, text: await fs.readFile(path.join(schemaFolder, file), "utf8") });
     await write("original-process-api.json", schema);
   } catch (error) { await write("original-process-api.json", { error: error.message }); }
-  result = { passed: true, connected: true, tabMode, tabCreated: tabMode === "create", tabOpened: true, inputObserved: entered, tabClosed: true, embedded: true, nativeTabs, fixtureOwner, transport, task, accessEvents, unexpectedRequests,
-    scope: "Actual original official extension on Mac CEF; tabMode=" + tabMode + ": navigate, read AX, type Chinese, observe real input event, screenshot, verify embedding and close. Claim mode does not prove tabs.new embedding. Owned local fixture only; no model, WeChat or full product GUI." };
+  result = { passed: true, connected: true, tabMode, tabCreated: tabMode === "create", tabOpened: true, inputObserved: entered, inputApi: "original-official-documented-locator-fill", tabClosed: true, embedded: true, nativeTabs, fixtureOwner, transport, task, accessEvents, unexpectedRequests,
+    scope: "Actual original official extension on Mac CEF; tabMode=" + tabMode + ": navigate, read DOM, enter Chinese through the documented original locator API, observe real input event, screenshot, verify embedding and close. Claim mode does not prove tabs.new embedding. Owned local fixture only; no model, WeChat or full product GUI." };
 } catch (error) { result = { ...result, error: error.stack, accessEvents }; process.exitCode = 1; }
 finally {
   active = false;

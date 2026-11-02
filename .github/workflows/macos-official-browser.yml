@@ -181,6 +181,12 @@ jobs:
                         _=try await host.handle("browser.view",["owner":owner,"visible":true,"viewportWidth":host.web.bounds.width,"viewportHeight":host.web.bounds.height,"x":650,"y":80,"width":400,"height":550])
                         guard runtime.state["browserWindowMatchesRoot"] as? Bool == true,runtime.state["shellWindowMatchesRoot"] as? Bool == true,
                           runtime.state["hasHoleMask"] as? Bool == true else { throw failure("The product browser is not embedded with its existing UI") }
+                        guard host.cefBrowser!.focus(owner:owner,tabId:tab) else { throw failure("Native browser focus request failed") }
+                        for _ in 0..<100 {
+                          if host.cefBrowser!.focusedPage()?.id == tab { break }
+                          try await Task.sleep(nanoseconds:50_000_000)
+                        }
+                        guard host.cefBrowser!.focusedPage()?.owner == owner,host.cefBrowser!.focusedPage()?.id == tab else { throw failure("Native browser focus cannot be routed to the correct find bar") }
                         let found=try await control("find",["tabId":tab,"navigationRevision":revision,"operation":"search","query":"fixture"])
                         guard found["found"] as? Bool == true,(found["total"] as? Int ?? 0)>0 else { throw failure("Native page find returned no actual match") }
                         _=try await control("find",["tabId":tab,"navigationRevision":revision,"operation":"clear","query":""])

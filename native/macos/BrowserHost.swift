@@ -85,6 +85,11 @@ import CryptoKit
         guard visible, owner == visibleOwner, let id = Int(tabId), selected[owner] == id else { return false }
         return (try? runtime.control(["action": "focus", "owner": owner, "tabId": id])) != nil
     }
+    func focusedPage() -> (owner: String, id: String)? {
+        guard visible, let id = selected[visibleOwner], let responder = runtime.window?.firstResponder as? NSView,
+              responder !== parent, !responder.isDescendant(of: parent) else { return nil }
+        return (visibleOwner, String(id))
+    }
     func ensure(_ owner: String, manifest: String? = nil) async throws {
         if profiles[owner] == nil {
             let key = SHA256.hash(data: Data("qqclaw-official:\(owner)".utf8)).map { String(format: "%02x", $0) }.joined().prefix(32)

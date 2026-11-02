@@ -370,9 +370,11 @@ final class Backend: @unchecked Sendable {
     @objc func menuCommand(_ sender: NSMenuItem) {
         guard validateMenuItem(sender), let name = sender.representedObject as? String else { return }
         let page = browserHost?.focusedPage()
+        let cefPage = cefBrowser?.focusedPage()
         window?.makeFirstResponder(web)
-        if let page, let command = ["find-current": "find-browser", "find-next": "find-browser-next", "find-previous": "find-browser-previous", "find-close": "find-browser-close"][name] {
-            event("browser-shortcut", ["owner": page.owner, "tabId": page.id, "command": command]); return
+        if let command = ["find-current": "find-browser", "find-next": "find-browser-next", "find-previous": "find-browser-previous", "find-close": "find-browser-close"][name] {
+            if let cefPage { event("browser-shortcut", ["owner": cefPage.owner, "tabId": cefPage.id, "command": command]); return }
+            if let page { event("browser-shortcut", ["owner": page.owner, "tabId": page.id, "command": command]); return }
         }
         event("menu-action", ["action": name])
     }
