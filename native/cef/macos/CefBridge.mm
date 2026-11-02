@@ -13,6 +13,7 @@
 #include "include/cef_command_line.h"
 #include "include/cef_frame.h"
 #include "include/cef_find_handler.h"
+#include "include/cef_download_handler.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
 #include "include/views/cef_browser_view.h"
@@ -48,6 +49,15 @@ struct FindState {
   int last = -1, floor = -1, identifier = -1;
 };
 std::map<int, FindState> finding;
+struct Download {
+  int tab = 0;
+  std::string owner;
+  bool announced = false;
+  CefRefPtr<CefBeforeDownloadCallback> before;
+  CefRefPtr<CefDownloadItemCallback> callback;
+};
+std::map<uint32_t, Download> downloads;
+std::set<int> retiredPages;
 std::unique_ptr<CefScopedLibraryLoader> loader;
 bool closing = false;
 CefRect requestedBounds;
@@ -90,6 +100,22 @@ void startFind(CefRefPtr<CefBrowser> page) {
   if (state.query != job.query) { page->GetHost()->StopFinding(true); state.query = job.query; }
   state.running = true; state.floor = state.last; state.identifier = -1;
   page->GetHost()->Find(job.query, job.forward, false, true);
+}
+bool hasDownload(int tab) {
+  for (const auto& entry : downloads) if (entry.second.tab == tab) return true;
+  return false;
+}
+void requestPageClose(CefRefPtr<CefBrowser> page, bool cancel) {
+  int tab = page->GetIdentifier();
+  retiredPages.insert(tab);
+  if (cancel) {
+    const auto active = downloads;
+    for (const auto& entry : active) if (entry.second.tab == tab) {
+      if (entry.second.callback) entry.second.callback->Cancel();
+      auto pending = downloads.find(entry.first); if (pending != downloads.end()) pending->second.before = nullptr;
+    }
+  }
+  if (!hasDownload(tab)) page->GetHost()->CloseBrowser(true);
 }
 }
 
@@ -140,13 +166,38 @@ namespace { __weak QQClawCefShell* shell; }
 
 namespace {
 class BrowserClient final : public CefClient, public CefLifeSpanHandler,
-                            public CefLoadHandler, public CefDisplayHandler, public CefFindHandler {
+                            public CefLoadHandler, public CefDisplayHandler, public CefFindHandler, public CefDownloadHandler {
  public:
   explicit BrowserClient(bool marker = false) : marker_(marker) {}
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
+  CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+  bool CanDownload(CefRefPtr<CefBrowser> page, const CefString& url, const CefString& method) override {
+    return !closing && ownerFor(page).length > 0 && !retiredPages.count(page->GetIdentifier());
+  }
+  bool OnBeforeDownload(CefRefPtr<CefBrowser> page, CefRefPtr<CefDownloadItem> item,
+                        const CefString& suggested, CefRefPtr<CefBeforeDownloadCallback> callback) override {
+    if (closing || retiredPages.count(page->GetIdentifier()) || !ownerFor(page).length || downloads.size() >= 100) return true;
+    auto& value = downloads[item->GetId()]; value.tab = page->GetIdentifier(); value.owner = ownerFor(page).UTF8String;
+    value.before = callback; value.announced = true;
+    emit(@{@"event": @"download-start", @"owner": @(value.owner.c_str()), @"downloadId": @(std::to_string(item->GetId()).c_str()),
+      @"tabId": @(value.tab), @"name": @(suggested.ToString().c_str()), @"url": @(item->GetURL().ToString().c_str()), @"total": @(item->GetTotalBytes())});
+    return true;
+  }
+  void OnDownloadUpdated(CefRefPtr<CefBrowser> page, CefRefPtr<CefDownloadItem> item, CefRefPtr<CefDownloadItemCallback> callback) override {
+    const uint32_t id = item->GetId();
+    auto& value = downloads[id]; value.tab = page->GetIdentifier(); value.owner = ownerFor(page).UTF8String; value.callback = callback;
+    const bool ended = !item->IsInProgress();
+    if (value.announced) emit(@{@"event": @"download-progress", @"owner": @(value.owner.c_str()), @"downloadId": @(std::to_string(id).c_str()),
+      @"tabId": @(value.tab), @"received": @(item->GetReceivedBytes()), @"total": @(item->GetTotalBytes()),
+      @"status": item->IsComplete() ? @"completed" : item->IsCanceled() ? @"cancelled" : ended ? @"interrupted" : @"running"});
+    if (ended) {
+      downloads.erase(id);
+      if (retiredPages.count(page->GetIdentifier()) && !hasDownload(page->GetIdentifier())) page->GetHost()->CloseBrowser(true);
+    } else if (closing) callback->Cancel();
+  }
   void OnFindResult(CefRefPtr<CefBrowser> page, int identifier, int count, const CefRect& rect, int ordinal, bool final) override {
     auto& state = finding[page->GetIdentifier()]; state.last = std::max(state.last, identifier);
     if (!state.running || identifier <= state.floor) return;
@@ -170,6 +221,13 @@ class BrowserClient final : public CefClient, public CefLifeSpanHandler,
   }
   void OnBeforeClose(CefRefPtr<CefBrowser> value) override {
     stopFind(value); finding.erase(value->GetIdentifier());
+    retiredPages.erase(value->GetIdentifier());
+    for (auto it = downloads.begin(); it != downloads.end();) {
+      if (it->second.tab != value->GetIdentifier()) { ++it; continue; }
+      auto download = it->second; const auto id = it->first; it = downloads.erase(it);
+      if (download.callback) download.callback->Cancel();
+      if (download.announced) emit(@{@"event": @"download-progress", @"owner": @(download.owner.c_str()), @"downloadId": @(std::to_string(id).c_str()), @"status": @"interrupted", @"error": @"下载页面已关闭。"});
+    }
     if (browser && browser->IsSame(value)) browser = nullptr;
     pages.erase(value->GetIdentifier());
     NSString* owner = @(owners[value->GetIdentifier()].c_str());
@@ -463,7 +521,7 @@ const char* QQClawCefState() {
 void QQClawCefClose() {
   closing = true;
   const auto open = pages;
-  if (!open.empty()) for (const auto& page : open) page.second->GetHost()->CloseBrowser(true);
+  if (!open.empty()) for (const auto& page : open) requestPageClose(page.second, true);
   else {
     const auto pendingWindows = windows;
     for (const auto& entry : pendingWindows) entry.second->Close();
@@ -509,8 +567,22 @@ const char* QQClawCefControl(const char* json) {
     if (![owner isKindOfClass:NSString.class] || ![[NSUUID alloc] initWithUUIDString:owner]) result = @{@"error": @"Invalid browser owner"};
     else {
       const auto open = pages;
-      for (const auto& page : open) if (owners[page.first] == owner.UTF8String) page.second->GetHost()->CloseBrowser(true);
+      for (const auto& page : open) if (owners[page.first] == owner.UTF8String) requestPageClose(page.second, true);
       readyProfiles.erase(owner.UTF8String); profiles.erase(owner.UTF8String); result = @{@"disposed": @YES};
+    }
+  } else if ([action isEqual:@"downloadCancel"] || [action isEqual:@"downloadDestination"]) {
+    NSString* key = request[@"downloadId"];
+    auto found = downloads.end();
+    if ([key isKindOfClass:NSString.class]) for (auto it = downloads.begin(); it != downloads.end(); ++it)
+      if ([key isEqualToString:@(std::to_string(it->first).c_str())]) { found = it; break; }
+    if (found == downloads.end() || ![owner isKindOfClass:NSString.class] || found->second.owner != owner.UTF8String) result = @{@"error": @"The download has ended or belongs to another session"};
+    else if ([action isEqual:@"downloadCancel"]) {
+      auto active = found->second.callback; found->second.before = nullptr;
+      if (active) active->Cancel(); result = @{@"accepted": @YES};
+    } else {
+      NSString* path = request[@"path"];
+      if (![path isKindOfClass:NSString.class] || !path.isAbsolutePath || !found->second.before) result = @{@"error": @"Invalid download destination"};
+      else { auto callback = found->second.before; found->second.before = nullptr; callback->Continue(path.UTF8String, false); result = @{@"accepted": @YES}; }
     }
   } else {
     int identifier = [request[@"tabId"] intValue];
@@ -519,7 +591,7 @@ const char* QQClawCefControl(const char* json) {
     bool valid = found != pages.end() && [owner isKindOfClass:NSString.class] && owned != owners.end() && owned->second == owner.UTF8String;
     if ([action isEqual:@"tabs"]) {
       NSMutableArray* tabs = [NSMutableArray new];
-      for (const auto& page : pages) if (!markers.count(page.first) && owners[page.first] == (owner ? owner.UTF8String : "")) {
+      for (const auto& page : pages) if (!markers.count(page.first) && !retiredPages.count(page.first) && owners[page.first] == (owner ? owner.UTF8String : "")) {
         auto frame = page.second->GetMainFrame();
         auto view = CefBrowserView::GetForBrowser(page.second);
         id handle = (__bridge id)(void*)page.second->GetHost()->GetWindowHandle();
@@ -534,7 +606,7 @@ const char* QQClawCefControl(const char* json) {
     else {
       auto value = found->second;
       if ([action isEqual:@"selectTab"]) { if (!selectBrowser(value)) result = @{@"error": @"This tab is not embedded in an application window"}; }
-      else if ([action isEqual:@"closeTab"]) value->GetHost()->CloseBrowser(false);
+      else if ([action isEqual:@"closeTab"]) { requestPageClose(value, false); emit(@{@"event": @"tab-retired", @"owner": owner, @"tabId": @(identifier)}); }
       else if ([action isEqual:@"open"]) {
         NSString* url = request[@"url"]; NSURL* parsed = [url isKindOfClass:NSString.class] ? [NSURL URLWithString:url] : nil;
         if (([parsed.scheme isEqual:@"http"] || [parsed.scheme isEqual:@"https"]) && !parsed.user && !parsed.password) value->GetMainFrame()->LoadURL(url.UTF8String);

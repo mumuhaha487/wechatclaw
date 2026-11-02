@@ -129,7 +129,7 @@ import CryptoKit
         guard let id = target, try tabs(owner).contains(where: { ($0["id"] as? Int) == id }) else { throw failure("浏览器标签页已关闭。") }
         if action == "find" {
             if let revision = p["navigationRevision"] as? String, revision != String(navigation[id, default: 0]) { return ["stale": true] }
-            return try await withCheckedThrowingContinuation { continuation in
+            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[String: Any], Error>) in
                 let token = UUID().uuidString; findRequests[token] = continuation
                 do {
                     var request = p; request["tabId"] = id; request["token"] = token
