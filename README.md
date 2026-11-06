@@ -1,8 +1,8 @@
 # QQClaw
 
-QQClaw 是独立的 Windows / macOS Codex 与微信工作台，默认白色为主、黑色为辅。当前源码与 Windows EXE 为 **0.3.46**；Mac 安装包按用户要求保留 **0.3.41**。交付状态以 [交付说明](交付说明.md) 为准。
+QQClaw 是独立的 Windows / macOS Codex 与微信工作台，默认白色为主、黑色为辅。当前源码与 Windows EXE 为 **0.3.47**；Mac 安装包按用户要求保留 **0.3.41**。交付状态以 [交付说明](交付说明.md) 为准。
 
-当前优先交付 Windows：双击 `release/QQClaw.exe`。Mac 按用户要求冻结在 0.3.41，后续迁移时再继续适配。
+Windows 下载页：[claw.inc.re](https://claw.inc.re)。推荐运行 `release/QQClaw-Setup.exe` 安装，也可双击 `release/QQClaw.exe` 免安装运行。Mac 按用户要求冻结在 0.3.41，后续迁移时再继续适配。
 
 ## 使用
 
@@ -12,6 +12,9 @@ QQClaw 是独立的 Windows / macOS Codex 与微信工作台，默认白色为�
 - 点击左下角「连接到微信」扫码，给每个账户绑定项目目录、模型服务、模型和思考等级。项目菜单也提供「绑定微信账号」。
 
 ## 功能
+
+- 关闭窗口可退出到托盘，继续运行微信和任务；首次关闭询问并可记住选择，在设置中可随时更改。
+- 启动及每6小时自动检查、下载新版，下载完成后点击“重启更新”；关于页可手动检查。
 
 - 桌面聊天与微信任务通过底层 Codex 在各自工作目录执行；同目录任务排队，不同目录可并行。桌面发起的结果不会发送到微信。
 - 模型目录来自当前 Codex 或服务接口，支持刷新、任意手填模型 ID、Responses / Chat Completions 服务、自定义 URL / Key，以及不发送思考参数。
@@ -71,3 +74,11 @@ Mac 需要 macOS 与 Xcode Command Line Tools；默认 npm run build:mac 编译 
 ## 来源
 
 微信逻辑参考并集成 [codex-weixin](https://github.com/XavierJiezou/codex-weixin)，界面参考 [pi-desktop](https://github.com/vastsa/pi-desktop)。相关许可证保留在 docs 并随包分发，图片原件在 ui/assets。QQClaw 非腾讯或 OpenAI 官方客户端。
+
+## Windows 安装包与 Cloudflare 发布
+
+执行 `npm run build` 生成独立EXE；使用 Inno Setup 6 执行 `npm run build:installer -- --compiler <ISCC.exe路径>` 生成 release/QQClaw-Setup.exe。安装器提供目录选择、快捷方式及正常卸载入口。
+
+配置 CLOUDFLARE_ACCOUNT_ID、CLOUDFLARE_API_TOKEN、R2_ACCESS_KEY_ID、R2_SECRET_ACCESS_KEY 后，执行 `node scripts/publish-cloudflare.mjs --notes "更新说明"` 发布。当前开发机也可运行 scripts/publish-cloudflare.ps1，读取项目外、按Windows账户加密的部署凭证。新版成品上传后才切换版本API。客户端不需要这些凭证。
+
+下载页为 https://claw.inc.re；版本API为 https://claw.inc.re/api/version。GitHub保存源码，Windows下载以Cloudflare页面为准。

@@ -38,7 +38,7 @@ export class ApplicationMenu {
       item("新网页标签", "browser-new-tab", "Ctrl+T", s.ready && s.workspaceAvailable), item("关闭工作标签", "panel-close-active", "Ctrl+W", s.ready && s.workspaceAvailable && s.panel),
       item("重新打开关闭的标签页", "panel-reopen-tab", "Ctrl+Shift+T", s.ready && s.workspaceAvailable && s.canReopen),
       item("打开工作目录", "open-folder", "", s.ready && s.workspace), null,
-      item("设置…", "settings", "Ctrl+,", s.ready), item("配置运行环境…", "runtime"), null, item("退出", "window.close", "Alt+F4"),
+      item("设置…", "settings", "Ctrl+,", s.ready), item("配置运行环境…", "runtime"), null, item("退出程序", s.isMac ? "window.close" : "window.exit"),
     ];
     if (group === "edit") return [
       item("撤销输入", "edit:undo", "Ctrl+Z", e.writable && e.undo), item("重做输入", "edit:redo", "Ctrl+Shift+Z", e.writable && e.redo), null,

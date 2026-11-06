@@ -203,6 +203,8 @@ const ui = {
   codexPathDraft: null,
   savingCodexSource: false,
   desktopHandoff: false,
+  desktopPreferences: { closeBehavior: "ask" },
+  updates: { status: "idle" },
   search: "",
   loading: false,
   sending: false,
@@ -526,7 +528,7 @@ function applyTheme() {
   );
 }
 const windowButtons = () =>
-  isMac ? "" : `<div class="window-buttons"><button class="window-button" data-action="window.minimize" aria-label="最小化">${icon("minus")}</button><button class="window-button" data-action="window.maximize" aria-label="最大化或还原">${icon("maximize")}</button><button class="window-button" data-action="window.close" aria-label="关闭">${icon("close")}</button></div>`;
+  isMac ? "" : `<div class="window-buttons">${ui.updates.status === "ready" ? '<button class="update-ready" data-action="install-update">重启更新</button>' : ""}<button class="window-button" data-action="window.minimize" aria-label="最小化">${icon("minus")}</button><button class="window-button" data-action="window.maximize" aria-label="最大化或还原">${icon("maximize")}</button><button class="window-button" data-action="window.close" aria-label="关闭">${icon("close")}</button></div>`;
 const resizeEdges = () =>
   Object.entries(isMac ? {} : { w: 1, e: 2, n: 3, nw: 4, ne: 5, s: 6, sw: 7, se: 8 })
     .map(
@@ -1341,8 +1343,9 @@ function workPanel() {
     "</aside>"
   );
 }
+function closeBehaviorSettings() { return isMac ? "" : `<h2>窗口关闭</h2><div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">点击关闭按钮时</div><p class="setting-description">退出到托盘会继续运行微信连接和任务；可从托盘打开窗口或退出程序。</p></div><select id="close-behavior-setting" aria-label="点击关闭按钮时">${[["ask", "每次询问"], ["tray", "退出到托盘"], ["exit", "退出程序"]].map(([value, label]) => option(value, label, ui.desktopPreferences.closeBehavior)).join("")}</select></div></div>`; }
 function generalSettings() {
-  return `<h1>常规</h1><h2>外观</h2><div class="settings-card"><div class="setting-row"><div class="setting-title">主题</div><select id="theme-setting" aria-label="主题">${[
+  return `<h1>常规</h1>${closeBehaviorSettings()}<h2>外观</h2><div class="settings-card"><div class="setting-row"><div class="setting-title">主题</div><select id="theme-setting" aria-label="主题">${[
     ["light", "亮色"],
     ["dark", "暗色"],
     ["system", "跟随系统"],
@@ -1426,21 +1429,33 @@ function runtimeSettings() {
     r?.nodeReady ? "NodeJS 环境配置成功，Codex 未检测到配置" :
     r?.nodePath ? "NodeJS 版本不符合要求，请安装 Node.js 22.13 或更新版本。" : "请先安装 NodeJS，再安装 Codex。";
   return `<h1>运行环境</h1><p class="modal-description">正式安装包包含 Node.js、npm 与浏览组件。配置 Codex 后，桌面编程和微信连接即可共用；也可以手动选择已有的运行环境。</p>
-    <div class="runtime-setup-status" role="status">${icon(environmentReady() ? "check" : "info")}<span>${notice}</span></div>
+    ${!environmentReady() ? closeBehaviorSettings() : ""}<div class="runtime-setup-status" role="status">${icon(environmentReady() ? "check" : "info")}<span>${notice}</span></div>
     <h2>1. NodeJS</h2><div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">${r?.nodeReady ? `${r.nodeBundled ? "正在使用内置" : "已检测到"} Node.js ${esc(r.nodeVersion)}` : "尚未配置可用的 NodeJS"}</div><p class="setting-description">${esc(r?.nodeError || r?.nodePath || "需要 Node.js 22.13 或更新版本，包含 npm。下载安装后会自动检测。")}</p></div>${button("install-node", r?.nodeReady ? "官网下载" : "前往官网下载", "external", "outline", installing ? "disabled" : "")}${ib("choose-node", isMac ? "手动选择 node" : "手动选择 node.exe", "folder", installing ? "disabled" : "")}</div></div>
     <h2>2. Codex</h2><div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">${e?.codexPath ? `Codex 已就绪 · ${sourceName}` : "尚未检测到 Codex"}</div><p class="setting-description">${esc(e?.codexPath || e?.error || (r?.nodeReady ? "可以使用 Desktop 附带的程序，也可以一键安装独立 CLI。" : "请先完成 NodeJS 安装，然后配置 Codex。"))}</p></div>${button("install-codex", installing ? "正在安装…" : "一键安装 CLI", "plus", "primary", !r?.nodeReady || installing ? "disabled" : "")}</div><div style="margin-top:19px" class="code-command">npm install -g @openai/codex</div><div class="row" style="margin-top:15px">${button("login-codex", "登录 Codex", "external", "outline", !e?.codexPath || installing ? "disabled" : "")}${button("codex-docs", "安装说明", "info", "outline")}</div></div>
     <div class="settings-card"><label class="field"><span class="field-label">Codex 来源</span><select id="codex-source" ${!r?.nodeReady || installing || ui.savingCodexSource ? "disabled" : ""}>${[["auto", "自动检测（Desktop 优先，CLI 回退）"], ["desktop", "Desktop 附带的运行程序"], ["cli", "独立 Codex CLI"], ["custom", "手动指定程序"]].map(([value, label]) => `<option value="${value}" ${source === value ? "selected" : ""}>${label}</option>`).join("")}</select><small>运行程序来源不等于官方浏览器授权。官方扩展连接状态见下方。</small></label>${source === "custom" ? `<label class="field"><span class="field-label">Codex 程序路径</span><div class="field-row"><input id="codex-path" value="${esc(ui.codexPathDraft ?? state.settings.codexPath ?? "")}" placeholder="选择可用的 Codex 程序" ${installing || ui.savingCodexSource ? "disabled" : ""}>${button("choose-codex", "选择", "folder", "outline", installing || ui.savingCodexSource ? "disabled" : "")}</div></label>` : ""}${button("save-codex-source", ui.savingCodexSource ? "正在保存…" : "保存来源", "check", "outline", !r?.nodeReady || installing || ui.savingCodexSource ? "disabled" : "")}</div>
     <div class="settings-card"><div class="setting-row"><div class="grow"><div class="setting-title">Codex Desktop · ${desktop?.installed ? "已检测到" : "未安装或未注册"}</div><p class="setting-description">可选：将对话副本接续到 Desktop；后续回复不会同步回微信。此入口不等于微信自动调用官方扩展。</p></div>${button("open-desktop", "打开 Desktop", "external", "outline", !desktop?.installed ? "disabled" : "")}${button("install-desktop", "安装入口", "external", "outline")}</div></div>
     <div class="settings-actions">${button("refresh-environment", ui.checkingEnvironment ? "正在检测…" : "重新检测", "refresh", "outline", ui.checkingEnvironment || installing ? "disabled" : "")}</div>
-    ${officialBrowserSettings()}<h2>本地数据</h2><div class="settings-card"><div class="setting-row"><div><div class="setting-title">账户、设置与会话</div><p class="setting-description">${esc(e?.dataDir || r?.dataDir || (isMac ? "~/Library/Application Support/QQClaw" : "%LOCALAPPDATA%\\QQClaw"))}<br>${isMac ? "使用 macOS 钥匙串保护的密钥加密保存" : "使用 Windows 账户加密保存"}；关闭应用会停止微信接收。删除程序不会清除此目录。</p></div>${button("open-data", "打开目录", "folder", "outline")}</div></div>${isMac ? "" : `<div class="settings-card"><div class="setting-row"><div><div class="setting-title">WebView2 Runtime</div><p class="setting-description">${esc(r?.webview || "使用 Windows 系统组件")}</p></div>${button("install-webview", "安装入口", "external", "outline")}</div></div>`}
+    ${officialBrowserSettings()}<h2>本地数据</h2><div class="settings-card"><div class="setting-row"><div><div class="setting-title">账户、设置与会话</div><p class="setting-description">${esc(e?.dataDir || r?.dataDir || (isMac ? "~/Library/Application Support/QQClaw" : "%LOCALAPPDATA%\\QQClaw"))}<br>${isMac ? "使用 macOS 钥匙串保护的密钥加密保存" : "使用 Windows 账户加密保存"}；退出程序会停止微信接收；退出到托盘会继续运行。删除程序不会清除此目录。</p></div>${button("open-data", "打开目录", "folder", "outline")}</div></div>${isMac ? "" : `<div class="settings-card"><div class="setting-row"><div><div class="setting-title">WebView2 Runtime</div><p class="setting-description">${esc(r?.webview || "使用 Windows 系统组件")}</p></div>${button("install-webview", "安装入口", "external", "outline")}</div></div>`}
     <h2>对话保存与恢复</h2><div class="settings-card"><p class="setting-title">Codex 原生历史</p><p class="setting-description">${esc(e?.codexHome || "启动后台后显示")}<br>已执行的会话由 Codex 持久化，可使用 codex resume 会话ID 继续；首次发送消息后才产生原生历史。是否显示在其他客户端的列表中由该客户端决定。</p></div>
     <div class="settings-card"><p class="setting-title">独立对话备份</p><p class="setting-description">${esc(e?.backupDir || "启动后台后显示")}<br>每次保存同步写入 JSON 和 Markdown，移除应用中的会话时仍保留。备份为可读文本，不包含账户凭证或 API 配置；附件保存路径，不复制文件本体。请将此目录和 Codex 用户目录一起纳入个人备份。</p>${e?.backupError ? `<p role="alert">${esc(e.backupError)}</p>` : ""}<div class="row" style="margin-top:15px">${button("open-conversations", "打开备份目录", "folder", "outline", !e ? "disabled" : "")}${button("restore-conversations", "恢复缺失对话", "refresh", "outline", !e ? "disabled" : "")}</div></div>`;
 }
 function setupGate() {
   return `<div class="setup-screen"><header data-drag>${windowButtons()}</header><main class="setup-gate" role="dialog" aria-modal="true" aria-label="环境配置提醒"><span class="setup-mark">${icon("logo")}</span><h1>${ui.environmentChecked ? "先配置运行环境" : "正在检测运行环境…"}</h1><p>当前环境未配置 Codex 环境，请在设置中进行配置</p>${button("runtime", "前往配置", "", "primary", ui.environmentChecked ? "" : "disabled")}</main></div>`;
 }
+function updateStatusText() {
+  const u = ui.updates;
+  if (u.status === "checking") return "正在检查新版本…";
+  if (u.status === "downloading") return `正在下载 v${u.latestVersion} · ${Math.round((u.downloadedBytes || 0) / 1048576)} / ${Math.round((u.totalBytes || 0) / 1048576)} MiB`;
+  if (u.status === "ready") return `v${u.latestVersion} 已下载，重启即可更新。`;
+  if (u.status === "current") return "当前已是最新版本。";
+  if (u.status === "error") return u.error || "暂时无法检查更新。";
+  return "启动后会自动检查并下载新版本。";
+}
+function updateSettings() {
+  return isMac ? "" : `<h2>软件更新</h2><div class="settings-card"><p class="setting-title">当前版本 v${appVersion}</p><p class="setting-description" id="update-status-text">${esc(updateStatusText())}</p><div class="row">${button("check-updates", "检查更新", "refresh", "outline", ["checking", "downloading"].includes(ui.updates.status) ? "disabled" : "")}${ui.updates.status === "ready" ? button("install-update", "重启更新", "check", "primary") : ""}${button("update-website", "官方下载页", "external", "outline")}</div></div>`;
+}
 function aboutSettings() {
-  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v${appVersion} · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div><h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
+  return `<h1>关于</h1><div class="about-mark"><span class="brand-mark">${icon("logo")}</span><div><h2>QQClaw</h2><p>v${appVersion} · ${isMac ? "macOS" : "Windows"} 桌面工作台</p></div></div><div class="settings-card"><p class="setting-title">在电脑上编程，从微信里继续。</p><p class="setting-description">腾讯 iLink / ClawBot 连接 · 本机 Codex App Server<br>独立微信账户与工作目录 · 自定义 API、模型和思考等级</p></div>${updateSettings()}<h2>项目来源</h2><div class="settings-card"><p class="setting-description">微信协议实现来自 codex-wechat，并集成 codex-weixin 的附件与消息处理（MIT）。界面按 PI-Desktop 的布局与交互重新实现。</p><div class="row" style="margin-top:15px">${button("source-wechat", "codex-weixin", "external", "outline")}${button("source-ui", "UI 参考", "external", "outline")}</div></div><p class="empty-note">QQClaw 是独立项目，非腾讯或 OpenAI 官方客户端。</p>`;
 }
 function settings() {
   if (!environmentReady())
@@ -1736,6 +1751,7 @@ async function checkEnvironment(restart) {
   const nodeWasReady = ui.runtime?.nodeReady;
   ui.checkingEnvironment = true;
   try {
+    if (!isMac) ui.desktopPreferences = await rpc("window.preferences");
     ui.runtime = await rpc("system.status");
     if (!isMac && (browserComponent.status === null || browserComponent.installing)) await browserComponent.refresh().catch(() => {
       if (!browserComponent.status) browserComponent.status = { packaged: false, installed: false, reason: "未能检测浏览器组件，请重新检测。" };
@@ -1883,11 +1899,16 @@ const external = {
 async function action(name, element) {
   const id = element?.dataset.id;
   if (!environmentReady() && !name.startsWith("window.") && ![
-    "runtime", "refresh-environment", "choose-node", "choose-codex", "save-codex-source", "open-desktop", "install-desktop",
+    "check-updates", "install-update", "update-website", "runtime", "refresh-environment", "choose-node", "choose-codex", "save-codex-source", "open-desktop", "install-desktop",
     "install-node", "install-webview", "install-codex", "codex-docs", "login-codex", "open-data", "open-conversations", "restore-conversations",
     "app-menu", "app-command", "source-project", "official-browser-docs", "official-browser-store",
     "install-browser-component", "cancel-browser-component", "check-browser-component",
   ].includes(name)) return;
+  if (["check-updates", "install-update", "update-website"].includes(name)) {
+    if (name === "update-website") return rpc("shell.open", { url: "https://claw.inc.re" });
+    if (name === "install-update") return rpc("update.install");
+    ui.updates = await rpc("update.check"); render(); return;
+  }
   if (external[name]) return rpc("shell.open", { url: external[name] });
   if (name.startsWith("window.")) return rpc(name);
   switch (name) {
@@ -2843,6 +2864,11 @@ document.addEventListener("drop", event => {
 document.addEventListener("change", (event) => {
   const el = event.target;
   (async () => {
+    if (el.id === "close-behavior-setting") {
+      ui.desktopPreferences = await rpc("window.preferences", { closeBehavior: el.value });
+      render();
+      toast("关闭方式已保存。");
+    }
     if (el.id === "codex-source") {
       ui.codexSourceDraft = el.value;
       render();
@@ -2965,6 +2991,19 @@ document.addEventListener("keydown", (event) => {
   }
 });
 function onEvent(event, data) {
+  if (event === "update-status") {
+    const previous = ui.updates.status;
+    ui.updates = data;
+    if (previous !== data.status) render();
+    else if ($("update-status-text")) $("update-status-text").textContent = updateStatusText();
+    if (data.status === "ready" && previous !== "ready") toast("新版本已下载，可点击右上角重启更新。");
+    return;
+  }
+  if (event === "desktop-preferences") {
+    ui.desktopPreferences = data;
+    if (ui.page === "general") render();
+    return;
+  }
   if (event === "menu-action") {
     action(data.action).catch(error => toast(error.message));
   } else if (event === "browser-shortcut") {
@@ -3139,6 +3178,10 @@ matchMedia("(prefers-color-scheme:dark)").addEventListener(
 render();
 (async () => {
     await refreshEnvironment();
+    if (!isMac && ui.runtime?.nodeReady) {
+      setTimeout(() => rpc("update.check").catch(() => {}), 3000);
+      setInterval(() => rpc("update.check").catch(() => {}), 6 * 60 * 60 * 1000);
+    }
     if (environmentReady())
     for (const p of state.providers)
       catalog.refresh(p.id, true);

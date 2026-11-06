@@ -1,5 +1,36 @@
 # QQClaw 本轮需求、实现与验收记录
 
+## Windows 0.3.47：托盘、安装包与 Cloudflare 更新（2026-11-06）
+
+正式程序、安装包与 https://claw.inc.re 均已交付0.3.47。Worker标识wechatclaw（页面品牌Wechatclaw），绑定claw.inc.re；R2桶wechatclaw-releases。https://claw.inc.re/api/version 提供版本、下载URL、大小与SHA256。Mac按要求继续0.3.41，没有新Mac构建。
+
+关闭主窗口默认询问“退出程序”或“退出到托盘”，提供“下次不再询问”。设置→常规→窗口关闭可改为每次询问、退出到托盘或退出程序。未配置Codex时，运行环境页也提供此设置。转托盘只隐藏窗口，保留后台、微信轮询与Codex任务；双击托盘或再次启动EXE恢复同一窗口。托盘及文件菜单可真正退出；安装Codex后的重启走真正退出路径。
+
+安装包采用中文Windows安装向导，可选目录、桌面快捷方式，创建开始菜单与Windows已安装应用/卸载入口。卸载保留账户、聊天和工作目录。程序启动及每6小时自动检查更新，发现新版自动下载，右上角及关于页提供“重启更新”；运行任务完成后可安装。安装版使用静默安装器，免安装版使用替换器，均自动重启。
+
+| 文件索引 | 责任 |
+| --- | --- |
+| native/Program.cs、Tray.cs | NotifyIcon、首次关闭对话框、偏好持久化、托盘/退出分流、单实例恢复 |
+| ui/app.mjs、application-menu.mjs、desktop.css | 关闭设置、更新状态、检查及重启入口 |
+| backend/updates.mjs、app.mjs | 版本比较、流式下载、SHA256核验与更新路由 |
+| native/Updater.cs | 安装版静默安装、免安装版文件替换及重启 |
+| native/installer.iss、scripts/build-installer.mjs | 中文安装向导、快捷方式及卸载器 |
+| cloudflare/worker.mjs、wrangler.jsonc | 下载页、版本API、R2流式文件、HEAD/Range |
+| scripts/publish-cloudflare.mjs / .ps1 | 上传成品后更新latest.json；支持开发机加密凭证 |
+
+验收：tray-check 17项；tray-exit-check 3项；installer-checks 14项；update-checks 5项；cloudflare-live 4项，均通过。托盘检查运行真实EXE程序集入口及其实际前后端、NotifyIcon；通过Codex JSON-RPC夹具发起任务，关闭后由原后台PID继续完成，无turn/interrupt。首次选择退出、勾选记住、取消、设置修改、重新打开和退出清理均有实际检查。没有向原微信账户发送测试消息，不把夹具任务称为腾讯线上或真实模型验收。关闭对话框截图已检查，无文字溢出。
+
+安装检查实际执行带空格目录安装、快捷方式目标、注册表版本、卸载器。两个生产更新应用路径均实际替换成完整0.3.47程序并启动真实后台，核对初始化记录及运行版本；卸载后数据标记保留。线上页面/API、两个成品的HEAD/Range通过；生产更新模块以较低当前版本检查线上0.3.47，完整下载307266929字节安装包且SHA256通过。
+
+中间失败保留：广播通知未恢复托盘窗口，改为按数据目录命名的事件后回归通过；构建缓存缺WebView2Loader已补齐；原生局部变量命名冲突已修正。R2完整对象也返回range元数据，原Worker普通HEAD误返回206，已按请求是否有Range选择200/206并重部署实测通过。安装检查器的程序组预期、临时目录准备曾出错，已修正为核对实际快捷方式目标。正式替换的PowerShell字符串比较曾不通过，后使用原始解密JSON严格结构对比重启前后，通过消息角色/正文/时间/全部附件、session/thread ID与工作目录核对，没有将首次比较计为成功。
+
+正式进程39956，后台39672，3个会话/195条消息保留。EXE SHA256：182aa61e733568b87aab7f9e88ebb2bf7b9415fe880122c2ad019e72ed83c5d9；安装包SHA256：7ff1a057989a9228cc8a6661f84d7dee79f17321b5c2727fc82fd57719606419。证据位于项目外 C:/Users/admin/AppData/Local/Temp/qqclaw-tray-047，见以上各json及close-dialog.png、installed-local.json。发布目录只有QQClaw.exe、QQClaw-Setup.exe与原Mac DMG。
+
+部署凭证不在项目或成品中；开发机加密凭证位于%LOCALAPPDATA%/QQClawDev/cloudflare.protected，仅用于发布，客户端通过公开HTTPS接口更新。发布脚本先上传版本目录中的两个文件，再更新latest.json。
+
+以下为历史记录，不覆盖本节。
+
+
 ## Windows 0.3.46：微信远程优先，移除确认与访问拦截（2026-11-02）
 
 本轮仅实现用户明确列出的权限、确认、微信队列、浏览器和文件/API变更。自动模式采用 approvalPolicy=never 与 danger-full-access，浏览器/MCP/命令/文件请求直接同意，无桌面弹窗或阻塞微信的 /allow。ask 模式保留手动选择，但微信 /allow 可以接受复杂表单并生成默认值；不支持渲染的 schema 自动接受。没有增加文件快照、扫描或其他新安全功能。

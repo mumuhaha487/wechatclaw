@@ -285,6 +285,8 @@ const args = [
   ...(browserArtifact ? [`/resource:${browserArtifact.resource},QQClaw.browser-engine`] : []),
   ...references.map((r) => `/reference:${r}`),
   path.join(root, "native", "Program.cs"),
+  path.join(root, "native", "Tray.cs"),
+  path.join(root, "native", "Updater.cs"),
   path.join(root, "native", "BrowserHost.cs"),
   path.join(root, "native", "OfficialBrowser.cs"),
   path.join(root, "native", "CefBrowserEngine.cs"),
@@ -306,7 +308,7 @@ try {
   await fs.copyFile(compiledExe, output);
 } catch (error) {
   if (["EBUSY", "EPERM", "EACCES"].includes(error.code))
-    throw new Error("请先关闭 QQClaw，再重新构建。成品始终只有 QQClaw.exe。");
+    throw new Error("QQClaw.exe 正在使用，请先退出应用再重新构建。");
   throw error;
 }
 const bytes = await fs.readFile(output);

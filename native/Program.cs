@@ -63,6 +63,7 @@ internal static class Program {
     private static Mutex mutex;
     private static bool ownsMutex;
     internal static bool RestartRequested;
+    internal static EventWaitHandle ActivateEvent;
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool SetDllDirectory(string path);
     [STAThread]
     static void Main(string[] commandLine) {
@@ -87,7 +88,8 @@ internal static class Program {
             using (var sha = SHA256.Create()) identity = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(DataDirectory.ToLowerInvariant()))).Replace("-", "").Substring(0, 20);
             mutex = new Mutex(true, "Local\\QQClaw-" + identity, out created);
             ownsMutex = created;
-            if (!created) { MessageBox.Show("QQClaw 已经运行，请在任务栏打开窗口。", "QQClaw"); return; }
+            ActivateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\QQClaw-Show-" + identity);
+            if (!created) { ActivateEvent.Set(); return; }
             byte[] archive;
             using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("payload.zip"))
             using (var memory = new MemoryStream()) { stream.CopyTo(memory); archive = memory.ToArray(); }
@@ -129,7 +131,7 @@ internal static class Program {
             Run();
         } catch (OperationCanceledException) { }
         catch (Exception error) { LogNativeFailure(error); MessageBox.Show(error.Message, "QQClaw 启动失败", MessageBoxButtons.OK, MessageBoxIcon.Error); }
-        finally { if (mutex != null) { if (ownsMutex) mutex.ReleaseMutex(); mutex.Dispose(); } }
+        finally { if (ActivateEvent != null) ActivateEvent.Dispose(); if (mutex != null) { if (ownsMutex) mutex.ReleaseMutex(); mutex.Dispose(); } }
         if (RestartRequested) Process.Start(new ProcessStartInfo(Application.ExecutablePath) { UseShellExecute = false, CreateNoWindow = true });
     }
     [MethodImpl(MethodImplOptions.NoInlining)] static void Run() { Application.Run(new DesktopWindow()); }
@@ -176,6 +178,11 @@ internal sealed class DesktopWindow : Form {
     private long lastBackendWarning;
     private int internalId;
     private bool exiting;
+    private bool forceExit;
+    private bool closePromptOpen;
+    private readonly DesktopPreferences desktopPreferences;
+    private readonly NotifyIcon trayIcon;
+    private RegisteredWaitHandle activationWait;
     private IntPtr job;
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wparam, IntPtr lparam);
@@ -187,11 +194,41 @@ internal sealed class DesktopWindow : Form {
         StartPosition = FormStartPosition.CenterScreen; BackColor = Color.White; ForeColor = Color.FromArgb(32, 32, 32); FormBorderStyle = FormBorderStyle.None;
         AutoScaleMode = AutoScaleMode.Dpi;
         try { Icon = new Icon(Path.Combine(Program.RuntimeDirectory, "app.ico")); } catch { }
+        desktopPreferences = new DesktopPreferences(Program.DataDirectory);
+        var trayMenu = new ContextMenuStrip();
+        trayMenu.Items.Add("打开 QQClaw", null, delegate { RestoreFromTray(); });
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add("退出程序", null, delegate { RequestExit(); });
+        trayIcon = new NotifyIcon { Text = "QQClaw", Icon = Icon ?? SystemIcons.Application, ContextMenuStrip = trayMenu };
+        trayIcon.DoubleClick += delegate { RestoreFromTray(); };
+        FormClosed += delegate { if (activationWait != null) activationWait.Unregister(null); trayIcon.Visible = false; trayIcon.Dispose(); trayMenu.Dispose(); };
         fallback = new Label { Dock = DockStyle.Fill, Text = "正在打开 QQClaw…", TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Microsoft YaHei UI", 13) };
         Controls.Add(fallback);
         CreateJob();
         Shown += async delegate { await InitializeView(); };
+        Shown += delegate {
+            activationWait = ThreadPool.RegisterWaitForSingleObject(Program.ActivateEvent, delegate {
+                if (!exiting && IsHandleCreated) try { BeginInvoke(new Action(RestoreFromTray)); } catch (InvalidOperationException) { }
+            }, null, Timeout.Infinite, false);
+        };
         FormClosing += OnClosing;
+    }
+    private void RestoreFromTray() {
+        if (exiting) return;
+        ShowInTaskbar = true; Show();
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Activate(); trayIcon.Visible = false;
+    }
+    private void HideToTray() {
+        trayIcon.Visible = true; Hide();
+    }
+    private void RequestExit() { forceExit = true; Close(); }
+    private object SetDesktopPreferences(Dictionary<string, object> values) {
+        if (values.ContainsKey("closeBehavior")) {
+            desktopPreferences.Save(Get(values, "closeBehavior"));
+            Post(new { kind = "event", @event = "desktop-preferences", data = desktopPreferences.Snapshot() });
+        }
+        return desktopPreferences.Snapshot();
     }
     protected override void OnHandleCreated(EventArgs e) {
         base.OnHandleCreated(e);
@@ -248,7 +285,8 @@ internal sealed class DesktopWindow : Form {
             var request = json.Deserialize<Dictionary<string, object>>(args.WebMessageAsJson);
             id = request["id"]; var method = Get(request, "method"); var p = Params(request);
             object result;
-            if (method == "window.focusBrowser") result = browserHost != null && await browserHost.FocusAsync(Get(p, "owner"), Get(p, "tabId"));
+            if (method == "window.preferences") result = SetDesktopPreferences(p);
+            else if (method == "window.focusBrowser") result = browserHost != null && await browserHost.FocusAsync(Get(p, "owner"), Get(p, "tabId"));
             else if (method.StartsWith("window.")) {
                 if (method == "window.theme") {
                     bool dark = Get(p, "theme") == "dark";
@@ -259,6 +297,7 @@ internal sealed class DesktopWindow : Form {
                 else if (method == "window.minimize") WindowState = FormWindowState.Minimized;
                 else if (method == "window.maximize") { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized; }
                 else if (method == "window.close") Close();
+                else if (method == "window.exit") RequestExit();
                 else if (method == "window.drag") { if (WindowState != FormWindowState.Maximized) { ReleaseCapture(); SendMessage(Handle, 0xA1, new IntPtr(2), IntPtr.Zero); } }
                 else if (method == "window.resize") { int direction; if (WindowState != FormWindowState.Maximized && Int32.TryParse(Get(p, "direction"), out direction) && direction >= 1 && direction <= 8) { ReleaseCapture(); SendMessage(Handle, 0x112, new IntPtr(0xF000 + direction), IntPtr.Zero); } }
                 result = true;
@@ -306,7 +345,7 @@ internal sealed class DesktopWindow : Form {
             } else if (method == "system.status") {
                 result = await RuntimeStatus();
             } else if (method == "system.reload") { await ShutdownBackend(); StopBackend(); await StartBackend(); result = true; }
-            else if (method == "system.restart") { Program.RestartRequested = true; result = true; BeginInvoke(new Action(Close)); }
+            else if (method == "system.restart") { Program.RestartRequested = true; result = true; BeginInvoke(new Action(RequestExit)); }
             else if (method == "system.nodePath") {
                 var nodePath = Get(p, "path"); if (!File.Exists(nodePath)) throw new Exception("Node.js 路径不存在。");
                 await ReadNodeVersion(nodePath);
@@ -480,6 +519,15 @@ internal sealed class DesktopWindow : Form {
         if (backend != owner) return;
         try {
             if (Get(message, "kind") == "native") {
+                if (Get(message, "method") == "update.apply") {
+                    BeginInvoke(new Action(delegate {
+                        string updateError = null;
+                        try { UpdateInstaller.Apply(Params(message)); } catch (Exception failure) { updateError = failure.Message; }
+                        WriteBackend(new { kind = "nativeResponse", id = message["id"], result = updateError == null, error = updateError });
+                        if (updateError == null) BeginInvoke(new Action(RequestExit));
+                    }));
+                    return;
+                }
                 if (Get(message, "method") == "browser.control") {
                     BeginInvoke(new Action(async delegate {
                         object browserResult = null; string browserError = null;
@@ -495,6 +543,7 @@ internal sealed class DesktopWindow : Form {
                     if (method == "vault.encrypt") result = Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(value), Encoding.UTF8.GetBytes("QQClaw/v1"), DataProtectionScope.CurrentUser));
                     else if (method == "vault.decrypt") result = Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(value), Encoding.UTF8.GetBytes("QQClaw/v1"), DataProtectionScope.CurrentUser));
                     else if (method == "desktop.status") result = DesktopIntegration.Status();
+                    else if (method == "update.location") result = UpdateInstaller.Location();
                     else if (method == "desktop.open") result = DesktopIntegration.Open(p);
                     else if (method == "shell.folder") {
                         var directory = Path.GetFullPath(Get(p, "path"));
@@ -553,7 +602,24 @@ internal sealed class DesktopWindow : Form {
     }
     private async void OnClosing(object sender, FormClosingEventArgs e) {
         if (exiting) return;
-        e.Cancel = true; exiting = true;
+        e.Cancel = true;
+        if (closePromptOpen) return;
+        if (!forceExit && e.CloseReason == CloseReason.UserClosing) {
+            string behavior = desktopPreferences.CloseBehavior;
+            if (behavior == "ask") {
+                closePromptOpen = true;
+                try {
+                    using (var choice = new CloseChoiceDialog()) {
+                        if (choice.ShowDialog(this) != DialogResult.OK) return;
+                        behavior = choice.Choice;
+                        if (choice.Remember) SetDesktopPreferences(new Dictionary<string, object> { { "closeBehavior", behavior } });
+                    }
+                } catch (Exception error) { MessageBox.Show(this, error.Message, "无法保存关闭方式"); return; }
+                finally { closePromptOpen = false; }
+            }
+            if (behavior == "tray") { HideToTray(); return; }
+        }
+        exiting = true; trayIcon.Visible = false;
         CefBrowserInstaller.Cancel();
         await ShutdownBackend();
         await CefBrowserInstaller.Shutdown();

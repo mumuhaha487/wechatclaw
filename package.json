@@ -1,6 +1,6 @@
 {
   "name": "qqclaw-desktop",
-  "version": "0.3.46",
+  "version": "0.3.47",
   "private": true,
   "type": "module",
   "description": "轻量 Windows / macOS Codex 与微信 ClawBot 工作台",
@@ -12,7 +12,8 @@
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
     "build:mac": "node scripts/build-macos.mjs",
-    "build:browser": "node scripts/build-browser-engine.mjs"
+    "build:browser": "node scripts/build-browser-engine.mjs",
+    "build:installer": "node scripts/build-installer.mjs"
   },
   "dependencies": {
     "dompurify": "^3.3.0",

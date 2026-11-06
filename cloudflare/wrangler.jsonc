@@ -1,0 +1,7 @@
+{
+  "name": "wechatclaw",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-06",
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "wechatclaw-releases" }],
+  "routes": [{ "pattern": "claw.inc.re", "custom_domain": true }]
+}

@@ -15,6 +15,7 @@ import { DesktopAttachments, attachmentPreview } from "./desktop-attachments.mjs
 import { viewPreferences } from "../shared/view-preferences.mjs";
 import { goalRequest, goalSnapshot } from "../shared/goal.mjs";
 import { validDraftKey, draftValue, readDrafts } from "./composer-drafts.mjs";
+import { AppUpdates } from "./updates.mjs";
 
 export const EFFORTS = [
   "",
@@ -115,6 +116,7 @@ export class App {
     this.removingSessions = new Set();
     this.closing = false;
     this.idleTimeoutMs = idleTimeoutMs;
+    this.updates = new AppUpdates({ directory: directory || this.store.directory, native, emit });
     this.idleTimer = setInterval(() => this.reapIdleClients(), Math.min(60000, idleTimeoutMs));
     this.idleTimer.unref();
     this.bridge = new WeChatBridge({
@@ -547,6 +549,11 @@ export class App {
   async handle(method, p = {}) {
     const state = this.store.state;
     switch (method) {
+      case "update.status": return this.updates.state;
+      case "update.check": return this.updates.check();
+      case "update.install":
+        if (state.sessions.some(session => session.busy || session.queued)) throw new Error("任务正在运行，完成后即可重启更新。");
+        return this.updates.install();
       case "approval.respond": {
         const client = this.clients.get(p.sessionId)?.client;
         if (!client) throw new Error("此会话已结束。");
